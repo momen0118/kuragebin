@@ -1,5 +1,7 @@
-// 現地時刻（時）から光の状態を決める。three.js に依存しない純粋な関数。
-import { LIGHT_KEYS, RIM_WARM, type LightKey, type Vec3 } from '../config';
+// 時刻から光の状態を決める。three.js に依存しない純粋な関数。
+// 光の移り変わりは、その日の日の出・日の入りを基準に置く。
+import { LIGHT_LOOKS, LIGHT_SCHEDULE, RIM_WARM, SUN, type LightKey, type Vec3 } from '../config';
+import { sunTimes, type SunTimes } from '../sim/sun';
 
 export interface LightState {
   /** 背景写真の重み（合計1） */
@@ -14,7 +16,8 @@ export interface LightState {
   ambient: Vec3;
   /** 海月の発光の倍率 */
   glow: number;
-  caustics: number;
+  /** 瓶がレンズになって集める光 */
+  lensLight: number;
   shadow: number;
   /** 瓶の縁に乗る夕方の温度（0〜1） */
   rimWarm: number;
@@ -35,8 +38,26 @@ export function wrapHour(hour: number): number {
   return h < 0 ? h + 24 : h;
 }
 
-export function lightAt(hourIn: number, keys: readonly LightKey[] = LIGHT_KEYS): LightState {
+/**
+ * 光の移り変わりをキーフレームにする。前後の日の分も並べるので、
+ * 端末のタイムゾーンで日の出・日の入りが0時をまたいでもつながる
+ */
+export function buildKeys(sun: SunTimes): LightKey[] {
+  // 日の入りが日の出より前に来る（0時をまたぐ）ときは、日の入りを翌日側に寄せる
+  const sunset = sun.sunset < sun.sunrise ? sun.sunset + 24 : sun.sunset;
+  const keys: LightKey[] = [];
+  for (const day of [-24, 0, 24]) {
+    for (const k of LIGHT_SCHEDULE) {
+      keys.push({ hour: day + (k.from === 'sunrise' ? sun.sunrise : sunset) + k.minutes / 60, ...LIGHT_LOOKS[k.look] });
+    }
+  }
+  keys.sort((a, b) => a.hour - b.hour);
+  return keys;
+}
+
+export function lightAt(hourIn: number, sun: SunTimes): LightState {
   const hour = wrapHour(hourIn);
+  const keys = buildKeys(sun);
   let i = 0;
   while (i < keys.length - 2 && hour >= keys[i + 1]!.hour) i++;
   const a = keys[i]!;
@@ -49,7 +70,9 @@ export function lightAt(hourIn: number, keys: readonly LightKey[] = LIGHT_KEYS):
   const night = mix(a.night, b.night, t);
   const sum = day + dusk + night || 1;
 
-  const rimD = (hour - RIM_WARM.peakHour) / RIM_WARM.widthHours;
+  const rimHour = wrapHour(sun.sunset - RIM_WARM.minutesBeforeSunset / 60);
+  let rimD = Math.abs(hour - rimHour);
+  rimD = Math.min(rimD, 24 - rimD) / RIM_WARM.widthHours;
   return {
     day: day / sum,
     dusk: dusk / sum,
@@ -59,10 +82,15 @@ export function lightAt(hourIn: number, keys: readonly LightKey[] = LIGHT_KEYS):
     keyDir: normalize(mix3(a.keyDir, b.keyDir, t)),
     ambient: mix3(a.ambient, b.ambient, t),
     glow: mix(a.glow, b.glow, t),
-    caustics: mix(a.caustics, b.caustics, t),
+    lensLight: mix(a.lensLight, b.lensLight, t),
     shadow: mix(a.shadow, b.shadow, t),
     rimWarm: Math.exp(-rimD * rimD),
   };
+}
+
+/** その日の日の出・日の入り（場所は config の SUN） */
+export function sunOf(date: Date): SunTimes {
+  return sunTimes(date, SUN.latitude, SUN.longitude);
 }
 
 /** Date から現地時刻（時、小数） */

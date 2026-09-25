@@ -15,7 +15,8 @@ import {
   Vector3,
   type Side,
 } from 'three';
-import { BELL, WATER } from '../../config';
+import { BELL } from '../../config';
+import { PROFILE_SEGMENTS } from './profile';
 import type { SharedUniforms } from '../uniforms';
 import common from '../shaders/common.glsl?raw';
 import { frag } from '../shaders/glsl';
@@ -24,24 +25,18 @@ import { frag } from '../shaders/glsl';
 const GONAD_S = 0.52;
 
 const DEFINES = /* glsl */ `
-#define BELL_RR ${BELL.relaxed[0].toFixed(5)}
-#define BELL_HR ${BELL.relaxed[1].toFixed(5)}
-#define BELL_AR ${BELL.relaxed[2].toFixed(5)}
-#define BELL_RC ${BELL.contracted[0].toFixed(5)}
-#define BELL_HC ${BELL.contracted[1].toFixed(5)}
-#define BELL_AC ${BELL.contracted[2].toFixed(5)}
+#define PROFILE_N ${PROFILE_SEGMENTS}
 #define THICK_APEX ${BELL.thicknessApex.toFixed(5)}
 #define THICK_MARGIN ${BELL.thicknessMargin.toFixed(5)}
 #define NOTCH_DEPTH ${BELL.notchDepth.toFixed(5)}
 #define GONAD_S ${GONAD_S.toFixed(3)}
-#define CAUSTIC_SCALE ${WATER.causticScale.toFixed(3)}
-#define CAUSTIC_SPEED ${WATER.causticSpeed.toFixed(3)}
 `;
 
 const VERT = /* glsl */ `
 ${common}
 ${DEFINES}
-uniform vec3 uPulse;
+// 断面の点列（profile.ts の BellShape が毎フレーム作る）
+uniform vec2 uProfile[PROFILE_N + 1];
 uniform float uLayer;
 uniform float uSMax;
 uniform float uInset;
@@ -50,22 +45,10 @@ out vec3 vWorldNormal;
 out vec3 vViewNormal;
 out vec2 vST;
 
-// profile.ts の bellProfile と同じ式
-vec2 bellProfile(float s, float p) {
-  float a0 = s * BELL_AR;
-  float a1 = s * BELL_AC;
-  float r = BELL_RR * sin(a0) + (BELL_RC * sin(a1) - BELL_RR * sin(a0)) * p;
-  float y0 = BELL_HR * cos(a0);
-  float y1 = BELL_HC * cos(a1) + (BELL_HR - BELL_HC);
-  return vec2(r, y0 + (y1 - y0) * p);
-}
-
-// 頂点・中ほど・縁の3点の p をなめらかにつなぐ。縁ほど遅れて動く
-float pulseAt(float s) {
-  float a = uPulse.x;
-  float b = uPulse.y;
-  float c = uPulse.z;
-  return a + s * (-3.0 * a + 4.0 * b - c) + s * s * (2.0 * a - 4.0 * b + 2.0 * c);
+vec2 profileAt(float s) {
+  float f = clamp(s, 0.0, 1.0) * float(PROFILE_N);
+  int i = int(min(floor(f), float(PROFILE_N - 1)));
+  return mix(uProfile[i], uProfile[i + 1], f - float(i));
 }
 
 float notchK(float th, float s) {
@@ -78,11 +61,9 @@ float notchK(float th, float s) {
 void main() {
   float s = max(uv.x * uSMax, 0.0008);
   float th = uv.y * TAU;
-  float p = pulseAt(s);
-  vec2 pr = bellProfile(s, p);
-  float s2 = s + 0.004;
-  vec2 pr2 = bellProfile(s2, pulseAt(s2));
-  vec2 tg = normalize(pr2 - pr);
+  vec2 pr = profileAt(s);
+  float h = 0.5 / float(PROFILE_N);
+  vec2 tg = normalize(profileAt(s + h) - profileAt(max(s - h, 0.0)));
   // 外向きの法線（頂点では真上）
   vec2 n2 = vec2(-tg.y, tg.x);
   vec3 dirR = vec3(cos(th), 0.0, sin(th));
@@ -108,10 +89,9 @@ void main() {
 const FRAG = /* glsl */ `
 ${common}
 ${DEFINES}
-uniform float uTime, uCaustics, uGlowPass, uLayer;
+uniform float uGlowPass, uLayer, uContract;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
-uniform vec3 uPulse;
 uniform sampler2D tRoom;
 uniform vec2 uResolution;
 in vec3 vWorldPos;
@@ -169,12 +149,10 @@ void main() {
   // 縁の近くの細い輪（筋肉）
   float rings = inner ? (0.5 + 0.5 * cos(s * 150.0)) * smoothstep(0.62, 0.9, s) * 0.5 : 0.0;
 
-  // 光：窓からの光は透けて届き、コースティクスが揺れる
+  // 光：窓からの光が透けて届く
   float wrap = saturate(dot(Nf, uKeyDir) * 0.5 + 0.5);
   float trans = pow(saturate(dot(-V, uKeyDir) * 0.5 + 0.5), 3.0);
-  float ca = caustics(vWorldPos.xz * CAUSTIC_SCALE * 1.3 + vWorldPos.y * 5.0, uTime * CAUSTIC_SPEED);
-  ca = ca / (1.0 + 0.5 * ca) * uCaustics;
-  vec3 light = uAmbient * 0.9 + uKey * (0.18 * wrap + 0.35 * trans + 0.5 * ca * wrap);
+  vec3 light = uAmbient * 0.9 + uKey * (0.18 * wrap + 0.35 * trans);
 
   // 縁では背景の光がずれて見える（屈折のかわり）
   vec2 aspect = vec2(uResolution.y / uResolution.x, 1.0);
@@ -201,7 +179,7 @@ void main() {
   float alpha = density * 0.5 + refr;
 
   // 発光：縁と生殖腺。縮むとわずかに強まる
-  float pulseGlow = 0.85 + 0.3 * uPulse.z;
+  float pulseGlow = 0.85 + 0.3 * uContract;
   vec3 glow;
   if (gonad) {
     glow = uGonad * gon * 0.4;
@@ -256,11 +234,14 @@ export interface BellLook {
 
 export interface Bell {
   meshes: Mesh[];
-  pulse: { value: Vector3 };
+  /** 断面の点列（BellShape.points を毎フレーム書き込む） */
+  profile: { value: Float32Array };
+  contract: { value: number };
 }
 
 export function createBell(shared: SharedUniforms, look: BellLook): Bell {
-  const pulse = { value: new Vector3() };
+  const profile = { value: new Float32Array((PROFILE_SEGMENTS + 1) * 2) };
+  const contract = { value: 0 };
   const bellGeo = grid(BELL.ringSegments, BELL.radialSegments, 1.35);
   const gonadGeo = grid(14, 64, 1);
 
@@ -277,12 +258,11 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
       blendSrc: OneFactor,
       blendDst: OneMinusSrcAlphaFactor,
       uniforms: {
-        uPulse: pulse,
+        uProfile: profile,
+        uContract: contract,
         uLayer: { value: layer },
         uSMax: { value: sMax },
         uInset: { value: inset },
-        uTime: shared.uTime,
-        uCaustics: shared.uCaustics,
         uGlowPass: shared.uGlowPass,
         uKey: shared.uKey,
         uKeyDir: shared.uKeyDir,
@@ -308,5 +288,5 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
     make(bellGeo, 1, FrontSide, 35),
     make(bellGeo, 0, FrontSide, 36),
   ];
-  return { meshes, pulse };
+  return { meshes, profile, contract };
 }

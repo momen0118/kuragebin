@@ -1,6 +1,6 @@
 // 拍動のリズム。縮みは速く、開きはゆっくり。テンポにはわずかな揺らぎを入れる。
 // three.js に依存しない。p = 0 が緩んだ状態、1 が縮みきった状態。
-import { PULSE } from '../../config';
+import { POKE, PULSE } from '../../config';
 import type { Rng } from '../../sim/rng';
 
 interface Cycle {
@@ -28,7 +28,7 @@ export function relaxCurve(u: number, overshoot: number = PULSE.overshoot): numb
   if (u <= 0) return 1;
   const lnOs = Math.log(Math.max(overshoot, 1e-4));
   const zeta = -lnOs / Math.sqrt(Math.PI * Math.PI + lnOs * lnOs);
-  const omega = 4.2;
+  const omega = PULSE.relaxOmega;
   const wd = omega * Math.sqrt(1 - zeta * zeta);
   const e = Math.exp(-zeta * omega * u);
   return e * (Math.cos(wd * u) + (zeta / Math.sqrt(1 - zeta * zeta)) * Math.sin(wd * u));
@@ -67,6 +67,21 @@ export class Pulse {
       amp: this.rng.range(PULSE.ampMin, PULSE.ampMax) * this.style.amp,
       p0,
     };
+  }
+
+  /** つつかれたとき：その場できゅっと深く縮み、数秒かけて緩む。strength は 0〜1 */
+  startle(strength: number): void {
+    const p0 = this.value(0);
+    const amp = Math.max(p0, POKE.depth * (0.65 + 0.35 * strength));
+    this.cycles.push({
+      start: this.time,
+      tc: POKE.contract,
+      tr: POKE.relax,
+      rest: this.rng.range(PULSE.restMin, PULSE.restMax),
+      amp,
+      p0,
+    });
+    if (this.cycles.length > 4) this.cycles.shift();
   }
 
   /** 次の周期からの拍動の深さ・休み・テンポ（1 が標準） */

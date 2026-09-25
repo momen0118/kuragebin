@@ -1,5 +1,5 @@
 :root {
-  --bg: #0b0b0c;
+  --bg: #000000;
   --fg: #cfcfcf;
   --panel: rgba(12, 12, 13, 0.72);
   color-scheme: dark;
@@ -78,4 +78,19 @@ body {
 
 .debug-panel .time {
   font-variant-numeric: tabular-nums;
+}
+
+.debug-panel select {
+  flex: 1;
+  margin-left: 6px;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.debug-panel .sun {
+  opacity: 0.7;
+  font-size: 11px;
 }

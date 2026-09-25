@@ -149,6 +149,8 @@ export class Bubble {
   private active = false;
   private timeToNext: number;
   private readonly pos = new Vector3();
+  /** 上がりはじめてからの時間と、揺れの位相 */
+  private age = 0;
   private phase = 0;
   private readonly alpha = { value: 0 };
 
@@ -187,17 +189,19 @@ export class Bubble {
         const r = Math.sqrt(this.rng.next()) * INNER_R * 0.75;
         const th = this.rng.next() * Math.PI * 2;
         this.pos.set(r * Math.cos(th), JAR.bottomThickness + 0.008, r * Math.sin(th));
+        this.age = 0;
         this.phase = this.rng.next() * 10;
       }
     }
     if (this.active) {
+      this.age += dt;
       this.phase += dt;
-      const speed = WATER.bubbleRiseSpeed * Math.min(1, this.phase * 2.5);
+      const speed = WATER.bubbleRiseSpeed * Math.min(1, this.age * 2.5);
       this.pos.y += speed * dt;
       this.pos.x += Math.sin(this.phase * 9.0) * 0.012 * dt;
       this.pos.z += Math.cos(this.phase * 7.3) * 0.01 * dt;
       const top = JAR.waterLevel - 0.004;
-      this.alpha.value = Math.min(1, this.phase * 4) * Math.min(1, (top - this.pos.y) / 0.01);
+      this.alpha.value = WATER.bubbleOpacity * Math.min(1, this.age * 4) * Math.min(1, (top - this.pos.y) / 0.01);
       if (this.pos.y >= top) {
         this.active = false;
         this.timeToNext = this.rng.range(WATER.bubbleIntervalMin, WATER.bubbleIntervalMax);

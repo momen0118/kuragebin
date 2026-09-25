@@ -1,7 +1,7 @@
 // 泳ぎ。収縮の瞬間に前へ進み、緩和中はゆっくり沈む。
 // 壁・底・水面が近づくと向きを緩やかに変え、ぶつからない。
 import { Quaternion, Vector2, Vector3 } from 'three';
-import { BELL, JAR, SWIM } from '../../config';
+import { BELL, JAR, POKE, SWIM } from '../../config';
 import type { Rng } from '../../sim/rng';
 import type { Pulse } from './pulse';
 
@@ -22,7 +22,7 @@ export function swimBounds(bellRadius: number = BELL.radius): SwimBounds {
   return {
     radius: inner - bellRadius - SWIM.sidePadding,
     bottom: JAR.bottomThickness + SWIM.bottomPadding,
-    top: JAR.waterLevel - bellRadius * BELL.relaxed[1] - SWIM.topPadding,
+    top: JAR.waterLevel - bellRadius * BELL.apexY - SWIM.topPadding,
   };
 }
 
@@ -39,8 +39,12 @@ export class Swimmer {
   private wanderTimer = 0;
   private readonly goal = new Vector2();
   /** 上へ泳ぐか、ゆっくり沈むか */
-  private mode: 'cruise' | 'drift' = 'cruise';
+  private mode: 'cruise' | 'drift' = 'drift';
   private modeTimer = 0;
+  /** 今の調子で目指す高さ */
+  private modeTarget = 0;
+  /** 瓶の中のごくゆるい流れ（向きがゆっくり変わる） */
+  private currentPhase: number;
 
   constructor(
     private readonly rng: Rng,
@@ -56,8 +60,29 @@ export class Swimmer {
     this.axis.copy(UP).applyQuaternion(this.quat);
     this.wander.copy(this.axis);
     this.pickWander();
-    this.modeTimer = rng.range(SWIM.cruiseMin, SWIM.cruiseMax) * 0.5;
+    this.modeTimer = SWIM.driftMaxTime;
+    this.modeTarget = this.pickTarget('drift');
     this.rollVel = rng.range(-1, 1) * SWIM.rollSpeed;
+    this.currentPhase = rng.range(0, Math.PI * 2);
+  }
+
+  /** つつかれた点から離れる。strength は 0〜1 */
+  flee(point: Vector3, strength: number): void {
+    const away = tmpB.copy(this.pos).sub(point);
+    away.y *= 0.5;
+    if (away.lengthSq() < 1e-8) away.set(0, 1, 0);
+    away.normalize();
+    this.vel.addScaledVector(away, POKE.push * strength);
+    // 傘の向きも少し離れる方へ
+    const torque = tmpA.crossVectors(this.axis, away);
+    this.angVel.addScaledVector(torque, POKE.turn * strength);
+  }
+
+  /** 次に沈んでいく先、または泳いで上がる先の高さ */
+  private pickTarget(mode: 'cruise' | 'drift'): number {
+    const b = this.bounds;
+    const [lo, hi] = mode === 'drift' ? SWIM.driftTargetLow : SWIM.cruiseTargetHigh;
+    return b.bottom + (b.top - b.bottom) * this.rng.range(lo, hi);
   }
 
   /** 瓶の中の行きたい場所（水平）を決めなおす */
@@ -84,11 +109,17 @@ export class Swimmer {
     const push = Math.max(rate, 0);
 
     // 推進：縮む速さに応じて傘の向きへ
-    this.vel.addScaledVector(this.axis, SWIM.thrust * push * dt);
+    const thrust = this.mode === 'drift' ? SWIM.thrust * SWIM.driftThrust : SWIM.thrust;
+    this.vel.addScaledVector(this.axis, thrust * push * dt);
     // 沈む力と水の抵抗
     this.vel.y -= SWIM.sink * dt;
     this.vel.multiplyScalar(Math.exp(-SWIM.drag * dt));
     this.pos.addScaledVector(this.vel, dt);
+    // ごくゆるい水の流れに乗って漂う
+    this.currentPhase += dt * 0.021;
+    const cp = this.currentPhase;
+    this.pos.x += Math.cos(cp) * Math.cos(cp * 0.37) * SWIM.current * dt;
+    this.pos.z += Math.sin(cp * 1.3) * SWIM.current * dt;
 
     // 気まぐれな向き
     this.wanderTimer -= dt;
@@ -125,12 +156,14 @@ export class Swimmer {
 
     // 上へ泳ぐ／弱い拍動でゆっくり沈む、を行き来する。水面が近づいたら沈む方へ、底が近づいたら泳ぐ方へ
     this.modeTimer -= dt;
-    if (this.mode === 'cruise' && (this.modeTimer <= 0 || this.pos.y > b.top - 0.1)) {
+    if (this.mode === 'cruise' && (this.modeTimer <= 0 || this.pos.y > this.modeTarget)) {
       this.mode = 'drift';
-      this.modeTimer = this.rng.range(SWIM.driftMin, SWIM.driftMax);
-    } else if (this.mode === 'drift' && (this.modeTimer <= 0 || this.pos.y < b.bottom + 0.08)) {
+      this.modeTimer = SWIM.driftMaxTime;
+      this.modeTarget = this.pickTarget('drift');
+    } else if (this.mode === 'drift' && (this.modeTimer <= 0 || this.pos.y < this.modeTarget)) {
       this.mode = 'cruise';
-      this.modeTimer = this.rng.range(SWIM.cruiseMin, SWIM.cruiseMax);
+      this.modeTimer = SWIM.cruiseMaxTime;
+      this.modeTarget = this.pickTarget('cruise');
     }
     if (this.mode === 'drift') pulse.setStyle(SWIM.driftAmp, SWIM.driftRest, SWIM.driftTempo);
     else pulse.setStyle(1, 0, 1);

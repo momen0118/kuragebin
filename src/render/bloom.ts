@@ -2,6 +2,7 @@
 import { Vector2, type Texture, type WebGLRenderer, type WebGLRenderTarget } from 'three';
 import { FullscreenPass } from './fullscreen';
 import { createTarget } from './targets';
+import { RENDER } from '../config';
 
 const DOWN = /* glsl */ `
 uniform sampler2D tSrc;
@@ -22,6 +23,7 @@ const UP = /* glsl */ `
 uniform sampler2D tSrc;
 uniform sampler2D tBase;
 uniform vec2 uTexel;
+uniform float uScatter;
 in vec2 vUv;
 void main() {
   vec2 h = uTexel;
@@ -33,7 +35,8 @@ void main() {
   s += texture(tSrc, vUv + vec2(h.x, -h.y)).rgb * 2.0;
   s += texture(tSrc, vUv + vec2(0.0, -h.y * 2.0)).rgb;
   s += texture(tSrc, vUv + vec2(-h.x, -h.y)).rgb * 2.0;
-  gl_FragColor = vec4(texture(tBase, vUv).rgb + s / 12.0, 1.0);
+  // 広い段ほど弱く足す（にじみが瓶全体に広がりすぎないように）
+  gl_FragColor = vec4(texture(tBase, vUv).rgb + s / 12.0 * uScatter, 1.0);
 }
 `;
 
@@ -48,6 +51,7 @@ export class Bloom {
     tSrc: { value: null as Texture | null },
     tBase: { value: null as Texture | null },
     uTexel: { value: new Vector2() },
+    uScatter: { value: RENDER.bloomScatter },
   });
 
   constructor(private readonly levels: number) {}

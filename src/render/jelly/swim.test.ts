@@ -18,7 +18,7 @@ describe('泳ぎ', () => {
         const p = j.swimmer.pos;
         // 傘の縁が瓶の内側に収まっている
         expect(Math.hypot(p.x, p.z) + BELL.radius).toBeLessThan(inner);
-        expect(p.y + BELL.radius * BELL.contracted[1]).toBeLessThan(JAR.waterLevel);
+        expect(p.y + BELL.radius * BELL.apexY).toBeLessThan(JAR.waterLevel);
         expect(p.y).toBeGreaterThan(b.bottom - 0.05);
         low = Math.min(low, p.y);
         high = Math.max(high, p.y);

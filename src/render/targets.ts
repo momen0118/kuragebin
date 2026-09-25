@@ -1,5 +1,13 @@
 // 描画先（オフスクリーンの画像）。暗部の縞を避けるため、使えるなら半精度浮動小数にする
-import { HalfFloatType, LinearFilter, UnsignedByteType, WebGLRenderTarget, type TextureDataType, type WebGLRenderer } from 'three';
+import {
+  HalfFloatType,
+  LinearFilter,
+  LinearMipmapLinearFilter,
+  UnsignedByteType,
+  WebGLRenderTarget,
+  type TextureDataType,
+  type WebGLRenderer,
+} from 'three';
 
 let targetType: TextureDataType = HalfFloatType;
 
@@ -9,11 +17,13 @@ export function chooseTargetType(renderer: WebGLRenderer): void {
   targetType = ok ? HalfFloatType : UnsignedByteType;
 }
 
-export function createTarget(w: number, h: number): WebGLRenderTarget {
+/** mipmaps: 縮めて読むときにちらつかないよう、描くたびに縮小版も作る */
+export function createTarget(w: number, h: number, mipmaps = false): WebGLRenderTarget {
   return new WebGLRenderTarget(Math.max(1, Math.round(w)), Math.max(1, Math.round(h)), {
     type: targetType,
     depthBuffer: false,
-    minFilter: LinearFilter,
+    minFilter: mipmaps ? LinearMipmapLinearFilter : LinearFilter,
     magFilter: LinearFilter,
+    generateMipmaps: mipmaps,
   });
 }

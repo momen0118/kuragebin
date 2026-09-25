@@ -1,18 +1,23 @@
-// 描画のまとめ役。背景・瓶・水・海月を順に重ね、ブルームをかけて画面に出す。
+// 描画のまとめ役。
+// 1. 背景：部屋の写真に天板の影や光を重ねる
+// 2. 中身：瓶の中（奥のガラス・瓶底・マリンスノー・海月・泡・水面）を透明な画像に描く
+// 3. 発光：海月の光る部分だけを描いてブルームにする
+// 4. 画面へ：背景を出し、最後に手前のガラスが背景と中身をレンズとして曲げて重ねる
 import {
   Matrix4,
   PerspectiveCamera,
+  Ray,
   Scene,
   Vector3,
   WebGLRenderer,
-  WebGLRenderTarget,
   type Object3D,
   type Texture,
+  type WebGLRenderTarget,
 } from 'three';
-import { JELLY_LOOK, RENDER, RIM_WARM } from '../config';
+import { BELL, JAR, PHOTO, RENDER, RIM_WARM, WATER, type PhotoName } from '../config';
 import { createRng } from '../sim/rng';
 import { Bloom } from './bloom';
-import { solvePhotoCamera, type PhotoCamera } from './camera';
+import { coverTransform, solvePhotoCamera, type PhotoCamera } from './camera';
 import { createComposite } from './composite';
 import { FullscreenPass } from './fullscreen';
 import { createJar, type Jar } from './jar';
@@ -33,13 +38,16 @@ in vec2 vUv;
 void main() { gl_FragColor = vec4(texture(tSrc, vUv).rgb, 1.0); }
 `;
 
+/** タップの結果 */
+export type TapResult = 'poke' | 'jelly' | 'none';
 
 export class App {
   readonly renderer: WebGLRenderer;
   readonly camera: PerspectiveCamera;
   readonly shared: SharedUniforms = createSharedUniforms();
   private readonly photoCam: PhotoCamera = solvePhotoCamera();
-  private readonly scene = new Scene();
+  private readonly bgScene = new Scene();
+  private readonly contentScene = new Scene();
   private readonly glassScene = new Scene();
   private readonly room = new Room();
   private readonly jar: Jar;
@@ -49,17 +57,24 @@ export class App {
   private readonly composite;
   private readonly copy = new FullscreenPass(COPY, { tSrc: { value: null as Texture | null } });
   private roomRT: WebGLRenderTarget;
-  private sceneRT: WebGLRenderTarget;
+  /** 写真全体（画面の外も含む）。瓶の縁のレンズが画面の外を映すときに読む */
+  private readonly roomWideRT: WebGLRenderTarget;
+  private bgRT: WebGLRenderTarget;
+  private contentRT: WebGLRenderTarget;
   private glowRT: WebGLRenderTarget;
   private width = 1;
   private height = 1;
   private roomDirty = true;
-  private light: LightState = lightAt(12);
+  private light: LightState = lightAt(12, { sunrise: 6, sunset: 18 });
   private time = 0;
   private fade = 0;
+  /** 水面の揺れ（0〜1）。拍動やつつきで立ち、ゆっくり収まる */
+  private agitation = 0;
   private readonly tmpV = new Vector3();
+  private readonly tmpV2 = new Vector3();
   private readonly tmpM = new Matrix4();
-  /** 確認用：中間の画像をそのまま出す（'scene' | 'glow' | 'room'） */
+  private readonly ray = new Ray();
+  /** 確認用：中間の画像をそのまま出す（'bg' | 'contents' | 'glow' | 'room'） */
   debugView: string | null = null;
   /** 確認用：部品ごとに表示を切り替える */
   readonly parts: Record<string, Object3D>;
@@ -77,7 +92,9 @@ export class App {
     this.renderer.setClearColor(RENDER.clearColor, 1);
     chooseTargetType(this.renderer);
     this.roomRT = createTarget(1, 1);
-    this.sceneRT = createTarget(1, 1);
+    this.roomWideRT = createTarget(PHOTO.width / 2, PHOTO.height / 2, true);
+    this.bgRT = createTarget(1, 1);
+    this.contentRT = createTarget(1, 1);
     this.glowRT = createTarget(1, 1);
 
     const pc = this.photoCam;
@@ -94,7 +111,8 @@ export class App {
 
     const table = createTable(this.shared, pc);
     const snow = createSnow(this.shared, rng);
-    this.scene.add(table, this.jar.back, this.jar.floor, snow, this.jelly.group, this.bubble.points, this.jar.surface);
+    this.bgScene.add(table);
+    this.contentScene.add(this.jar.back, this.jar.floor, snow, this.jelly.group, this.bubble.points, this.jar.surface);
     this.glassScene.add(this.jar.front);
     this.parts = {
       table,
@@ -103,11 +121,6 @@ export class App {
       snow,
       jelly: this.jelly.group,
       tentacles: this.jelly.tentacles.mesh,
-      outer0: this.jelly.bell.meshes[0]!,
-      inner0: this.jelly.bell.meshes[1]!,
-      gonads: this.jelly.bell.meshes[2]!,
-      inner1: this.jelly.bell.meshes[3]!,
-      outer1: this.jelly.bell.meshes[4]!,
       arms: this.jelly.arms.mesh,
       bubble: this.bubble.points,
       surface: this.jar.surface,
@@ -132,14 +145,19 @@ export class App {
     this.height = h;
     this.camera.aspect = cssWidth / cssHeight;
     this.camera.updateProjectionMatrix();
-    for (const rt of [this.roomRT, this.sceneRT, this.glowRT]) rt.dispose();
+    for (const rt of [this.roomRT, this.bgRT, this.contentRT, this.glowRT]) rt.dispose();
     this.roomRT = createTarget(w, h);
-    this.sceneRT = createTarget(w, h);
+    this.bgRT = createTarget(w, h);
+    this.contentRT = createTarget(w, h);
     this.glowRT = createTarget(w / 2, h / 2);
     this.bloom.setSize(this.glowRT.width, this.glowRT.height);
     this.shared.uResolution.value.set(w, h);
     this.shared.uPixelRatio.value = ratio;
     this.shared.tRoom.value = this.roomRT.texture;
+    this.shared.uViewProj.value.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    const cover = coverTransform(cssWidth / cssHeight);
+    this.jar.frontUniforms.uCoverScale.value.set(...cover.scale);
+    this.jar.frontUniforms.uCoverOffset.value.set(...cover.offset);
     this.roomDirty = true;
   }
 
@@ -154,10 +172,23 @@ export class App {
     s.uKey.value.set(...light.key);
     s.uKeyDir.value.set(...light.keyDir);
     s.uAmbient.value.set(...light.ambient);
-    s.uCaustics.value = light.caustics;
+    s.uLensLight.value = light.lensLight;
     s.uShadow.value = light.shadow;
     s.uRimWarm.value = light.rimWarm;
     this.jelly.setGlow(light.glow);
+  }
+
+  /** 確認用：写真を1枚に固定する／別の写真を半透明で重ねる（null で時刻どおり） */
+  setPhotoDebug(only: PhotoName | null, overlay: PhotoName | null): void {
+    this.room.debugOnly = only;
+    this.room.debugOverlay = overlay;
+    this.roomDirty = true;
+  }
+
+  /** 確認用：背景の写真の代わりに縦縞を出す（屈折の写り方を見る） */
+  setPatternDebug(on: boolean): void {
+    this.room.debugPattern = on;
+    this.roomDirty = true;
   }
 
   /** 確認用：海月の傘の中心の画面上の位置（CSS px） */
@@ -166,7 +197,39 @@ export class App {
     return [((p.x + 1) / 2) * cssWidth, ((1 - p.y) / 2) * cssHeight];
   }
 
-  /** 描かずに動きだけを進める（確認用の早回し） */
+  /**
+   * 画面をタップした（ndc は -1〜1）。海月の上なら 'jelly'（札はフェーズ3）、
+   * 瓶の空いたところなら、ガラスをつついて近くの海月が反応する
+   */
+  tap(ndcX: number, ndcY: number): TapResult {
+    const cam = this.camera;
+    // 海月の上か（傘の見かけの大きさより少し広めに）
+    const c = this.tmpV.copy(this.jelly.swimmer.pos).project(cam);
+    const p = this.jelly.swimmer.pos;
+    const e = this.tmpV2.set(p.x + BELL.radius, p.y, p.z).project(cam);
+    const aspect = cam.aspect;
+    const r = Math.abs(e.x - c.x) * aspect * 1.4;
+    if (Math.hypot((ndcX - c.x) * aspect, ndcY - c.y) < r) return 'jelly';
+
+    // 瓶の外側の円筒に当たるか
+    this.ray.origin.setFromMatrixPosition(cam.matrixWorld);
+    this.ray.direction.set(ndcX, ndcY, 0.5).unproject(cam).sub(this.ray.origin).normalize();
+    const o = this.ray.origin;
+    const d = this.ray.direction;
+    const R = JAR.radius;
+    const a = d.x * d.x + d.z * d.z;
+    const b = 2 * (o.x * d.x + o.z * d.z);
+    const cc = o.x * o.x + o.z * o.z - R * R;
+    const disc = b * b - 4 * a * cc;
+    if (a < 1e-9 || disc < 0) return 'none';
+    const t = (-b - Math.sqrt(disc)) / (2 * a);
+    const hit = this.tmpV.copy(o).addScaledVector(d, t);
+    if (t <= 0 || hit.y < 0 || hit.y > JAR.height) return 'none';
+    this.agitation = Math.min(1, this.agitation + 0.3);
+    return this.jelly.poke(hit) ? 'poke' : 'none';
+  }
+
+  /** 描かずに動きだけを進める（確認用の早回しにも使う） */
   simulate(dt: number): void {
     const d = Math.min(Math.max(dt, 0), RENDER.maxFrameDt);
     this.time += d;
@@ -174,44 +237,57 @@ export class App {
     this.shared.uTime.value = this.time;
     this.jelly.update(d);
     this.bubble.update(d);
+    // 拍動が水面を揺らす（水面に近いほど強い）
+    const rate = Math.max(this.jelly.pulse.rate(), 0);
+    const near = Math.exp(-(JAR.waterLevel - this.jelly.swimmer.pos.y) / 0.3);
+    this.agitation = Math.min(1, this.agitation * Math.exp(-d / WATER.agitationDecay) + WATER.agitationGain * rate * near * d);
+    this.shared.uAgitation.value = this.agitation;
   }
 
   frame(dt: number): void {
     this.simulate(dt);
     const s = this.shared;
     this.jelly.glowPosition(s.uGlowPos.value);
-    s.uGlowColor.value.copy(this.jelly.look.uGlow.value).multiplyScalar(JELLY_LOOK.lightStrength);
+    s.uGlowColor.value.copy(this.jelly.look.uGlow.value).multiplyScalar(0.6);
 
     const r = this.renderer;
     // 部屋は光が変わったときだけ作り直す
     if (this.roomDirty) {
       this.room.render(r, this.roomRT, this.light, this.width / this.height);
+      this.room.render(r, this.roomWideRT, this.light, null);
       this.roomDirty = false;
     }
 
-    // 1. 部屋の上に、天板・瓶の奥・水の中を重ねる
+    // 1. 背景：部屋に天板の影や光を重ねる
     this.copy.uniforms.tSrc.value = this.roomRT.texture;
-    this.copy.render(r, this.sceneRT);
+    this.copy.render(r, this.bgRT);
     this.camera.layers.set(0);
-    r.setRenderTarget(this.sceneRT);
-    r.render(this.scene, this.camera);
+    r.setRenderTarget(this.bgRT);
+    r.render(this.bgScene, this.camera);
 
-    // 2. 光る部分だけを描いてブルームにする
+    // 2. 中身：透明な画像に描く（瓶底は背景の天板を映す）
+    this.jar.floorBg.value = this.bgRT.texture;
+    r.setRenderTarget(this.contentRT);
+    r.setClearColor(0x000000, 0);
+    r.clear(true, false, false);
+    r.render(this.contentScene, this.camera);
+
+    // 3. 光る部分だけを描いてブルームにする
     r.setRenderTarget(this.glowRT);
     r.setClearColor(0x000000, 1);
     r.clear(true, false, false);
     s.uGlowPass.value = 1;
     this.camera.layers.set(GLOW_LAYER);
-    r.render(this.scene, this.camera);
+    r.render(this.contentScene, this.camera);
     s.uGlowPass.value = 0;
     this.camera.layers.set(0);
     r.setClearColor(RENDER.clearColor, 1);
     this.bloom.render(r, this.glowRT);
 
-    // 3. 画面へ。合成してから手前のガラスを重ねる
+    // 4. 画面へ。背景を出してから、手前のガラスが瓶の部分を描く
     const cu = this.composite.uniforms;
-    cu.tScene.value = this.sceneRT.texture;
-    cu.tRoom.value = this.roomRT.texture;
+    cu.tBg.value = this.bgRT.texture;
+    cu.tContents.value = this.contentRT.texture;
     cu.tBloom.value = this.bloom.texture;
     cu.uBloomStrength.value = RENDER.bloomStrength;
     cu.uFade.value = this.fade;
@@ -219,14 +295,23 @@ export class App {
     cu.uViewProj.value.copy(this.tmpM);
     cu.uInvViewProj.value.copy(this.tmpM).invert();
     cu.uCamPos.value.copy(this.camera.getWorldPosition(this.tmpV));
-    if (this.debugView === 'glow') cu.tScene.value = this.glowRT.texture;
-    if (this.debugView === 'room') cu.tScene.value = this.roomRT.texture;
-    if (this.debugView) cu.uBloomStrength.value = 0;
+    if (this.debugView) {
+      const views: Record<string, Texture> = {
+        bg: this.bgRT.texture,
+        contents: this.contentRT.texture,
+        glow: this.glowRT.texture,
+        room: this.roomRT.texture,
+      };
+      cu.tBg.value = views[this.debugView] ?? this.bgRT.texture;
+      cu.uBloomStrength.value = 0;
+    }
     this.composite.render(r, null);
     if (this.debugView) return;
 
     const fu = this.jar.frontUniforms;
-    fu.tScene.value = this.sceneRT.texture;
+    fu.tBg.value = this.bgRT.texture;
+    fu.tRoomWide.value = this.roomWideRT.texture;
+    fu.tContents.value = this.contentRT.texture;
     fu.tBloom.value = this.bloom.texture;
     fu.uBloomStrength.value = RENDER.bloomStrength;
     fu.uFade.value = this.fade;

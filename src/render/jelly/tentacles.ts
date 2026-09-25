@@ -56,6 +56,7 @@ void main() {
 
 const FRAG = /* glsl */ `
 uniform float uGlowPass;
+uniform float uBrightness;
 uniform vec3 uKey, uAmbient;
 uniform vec3 uBody, uGlow;
 in float vSide;
@@ -66,7 +67,7 @@ in vec3 vWorldPos;
 void main() {
   float across = exp(-vSide * vSide * 2.5);
   float along = (1.0 - smoothstep(0.4, 1.0, vT)) * (0.5 + 0.5 * smoothstep(0.0, 0.1, vT));
-  float a = across * along * vThin * (0.45 + 0.55 * vSeed);
+  float a = across * along * vThin * (0.45 + 0.55 * vSeed) * uBrightness;
   vec3 glow = uGlow * a * (0.08 + 0.14 * (1.0 - vT));
   if (uGlowPass > 0.5) {
     gl_FragColor = vec4(glow, 0.0);
@@ -160,6 +161,7 @@ export class Tentacles {
           uResolution: shared.uResolution,
           uPixelRatio: shared.uPixelRatio,
           uWidth: { value: TENTACLES.widthPx },
+          uBrightness: { value: TENTACLES.brightness },
           uGlowPass: shared.uGlowPass,
           uKey: shared.uKey,
           uAmbient: shared.uAmbient,

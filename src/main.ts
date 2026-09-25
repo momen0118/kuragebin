@@ -1,8 +1,8 @@
 import './style.css';
-import { RENDER } from './config';
 import { DebugPanel } from './debug/panel';
 import { App } from './render/app';
-import { hourOf, lightAt } from './render/lighting';
+import { hourOf, lightAt, sunOf } from './render/lighting';
+import { onTap } from './ui/tap';
 
 const params = new URLSearchParams(location.search);
 // ?debug のほか、クエリを渡せない環境のために #debug でも開ける
@@ -18,14 +18,13 @@ function supportsWebGL2(): boolean {
   }
 }
 
-/** 写真より横長の画面では、写真の比率で中央に置き、左右は黒で埋める */
+/** 画面いっぱいに描く（写真より横長なら、写真の左右は黒に溶かす） */
 function layout(canvas: HTMLCanvasElement, app: App): void {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const w = Math.min(vw, Math.round(vh * RENDER.maxAspect));
-  canvas.style.width = `${w}px`;
+  canvas.style.width = `${vw}px`;
   canvas.style.height = `${vh}px`;
-  app.resize(w, vh, window.devicePixelRatio || 1);
+  app.resize(vw, vh, window.devicePixelRatio || 1);
 }
 
 async function main(): Promise<void> {
@@ -37,8 +36,9 @@ async function main(): Promise<void> {
 
   const app = new App(canvas);
   if (debug) {
-    // 確認用：中間の画像を出す（?view=scene など）、部品を隠す（?hide=snow,table など）
+    // 確認用：中間の画像を出す（?view=bg / contents / glow / room）、部品を隠す（?hide=snow,table など）
     app.debugView = params.get('view');
+    app.setPatternDebug(params.has('pattern'));
     for (const name of (params.get('hide') ?? '').split(',')) {
       const part = app.parts[name];
       if (part) part.visible = false;
@@ -49,24 +49,31 @@ async function main(): Promise<void> {
   await app.load(import.meta.env.BASE_URL);
 
   let hourOverride: number | null = null;
-  const currentHour = (): number => hourOverride ?? hourOf(new Date());
   let lightTimer = 0;
   const applyLight = (): void => {
-    const h = currentHour();
-    app.setLight(lightAt(h));
-    panel?.showHour(h);
+    const now = new Date();
+    const sun = sunOf(now);
+    const h = hourOverride ?? hourOf(now);
+    app.setLight(lightAt(h, sun));
+    panel?.showHour(h, sun.sunrise, sun.sunset);
   };
 
   const panel =
     debug && !capture
-    ? new DebugPanel({
-        onHour: (h) => {
-          hourOverride = h;
-          applyLight();
-        },
-      })
-    : null;
+      ? new DebugPanel({
+          onHour: (h) => {
+            hourOverride = h;
+            applyLight();
+          },
+          onPhoto: (only, overlay) => app.setPhotoDebug(only, overlay),
+        })
+      : null;
   applyLight();
+
+  // 瓶をつつく（海月の上のタップは、フェーズ3で札を出すために空けておく）
+  onTap(canvas, (x, y) => {
+    app.tap(x, y);
+  });
 
   canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
   canvas.addEventListener('webglcontextrestored', () => location.reload());
@@ -79,10 +86,13 @@ async function main(): Promise<void> {
         for (let t = 0; t < seconds; t += 1 / 60) app.simulate(1 / 60);
       },
       jelly: () => app.jellyScreenPosition(canvas.clientWidth, canvas.clientHeight),
+      tap: (x: number, y: number) => app.tap(x, y),
       setHour: (h: number) => {
         hourOverride = h;
         applyLight();
       },
+      setPhoto: (only: Parameters<App['setPhotoDebug']>[0], overlay: Parameters<App['setPhotoDebug']>[1]) =>
+        app.setPhotoDebug(only, overlay),
     };
     w.__kurageReady = true;
     return;

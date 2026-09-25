@@ -1,5 +1,5 @@
-// 口腕。傘の中心から垂れる4本のリボン。触手よりさらに遅く、重たく揺れる。
-// ふちはひだになって波打つ。
+// 口腕。傘の中心から垂れる4本の厚みのあるリボン。短めで傘の下に寄り添い、
+// はためかずに、傘の動きに重たく遅れてついていくだけ。ふちのひだは形として持つ（動かさない）。
 import {
   BufferGeometry,
   CustomBlending,
@@ -13,7 +13,7 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
-import { BELL, JAR, ORAL_ARMS, WATER } from '../../config';
+import { BELL, JAR, ORAL_ARMS } from '../../config';
 import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
 import type { BellLook } from './bell';
@@ -43,9 +43,7 @@ void main() {
 
 const FRAG = /* glsl */ `
 ${common}
-#define CAUSTIC_SCALE ${WATER.causticScale.toFixed(3)}
-#define CAUSTIC_SPEED ${WATER.causticSpeed.toFixed(3)}
-uniform float uGlowPass, uTime, uCaustics;
+uniform float uGlowPass;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
 uniform sampler2D tRoom;
@@ -59,25 +57,25 @@ void main() {
   vec3 V = normalize(cameraPosition - vWorldPos);
   float NdV = abs(dot(N, V));
   float fres = pow(1.0 - NdV, 2.0);
-  float edge = smoothstep(0.55, 1.0, abs(vU));
-  float tip = 1.0 - smoothstep(0.75, 1.0, vS);
+  float edge = smoothstep(0.5, 1.0, abs(vU));
+  float tip = 1.0 - smoothstep(0.8, 1.0, vS);
+  float root = smoothstep(0.0, 0.08, vS);
   float wrap = saturate(dot(N * sign(dot(N, V)), uKeyDir) * 0.5 + 0.5);
   float trans = pow(saturate(dot(-V, uKeyDir) * 0.5 + 0.5), 3.0);
-  float ca = caustics(vWorldPos.xz * CAUSTIC_SCALE * 1.3 + vWorldPos.y * 5.0, uTime * CAUSTIC_SPEED);
-  ca = ca / (1.0 + 0.5 * ca) * uCaustics;
-  vec3 light = uAmbient * 0.9 + uKey * (0.18 * wrap + 0.35 * trans + 0.4 * ca);
-  vec3 tint = mix(uBody, uGonad, 0.25 + 0.35 * edge);
-  float density = (0.03 + 0.14 * fres + 0.12 * edge) * tip;
+  vec3 light = uAmbient * 0.9 + uKey * (0.2 * wrap + 0.35 * trans);
+  // 厚みのある、乳白色の半透明
+  vec3 tint = mix(uBody, uGonad, 0.2 + 0.3 * edge);
+  float density = (0.018 + 0.1 * fres + 0.08 * edge) * tip * root;
   vec2 suv = gl_FragCoord.xy / uResolution;
-  vec3 bg = texture(tRoom, suv + N.xy * 0.01 * fres).rgb;
-  float refr = fres * 0.14 * tip;
+  vec3 bg = texture(tRoom, suv + N.xy * 0.008 * fres).rgb;
+  float refr = fres * 0.1 * tip;
   vec3 col = tint * light * density * 1.6 + bg * refr;
-  vec3 glow = mix(uGlow, uGonad, 0.4) * (0.05 + 0.12 * edge + 0.06 * fres) * tip;
+  vec3 glow = mix(uGlow, uGonad, 0.45) * (0.015 + 0.05 * edge + 0.025 * fres) * tip * root;
   if (uGlowPass > 0.5) {
     gl_FragColor = vec4(glow, 0.0);
     return;
   }
-  gl_FragColor = vec4(col + glow, density * 0.5 + refr);
+  gl_FragColor = vec4(col + glow, density * 0.6 + refr);
 }
 `;
 
@@ -93,7 +91,6 @@ export class OralArms {
   private readonly phase: Float32Array;
   private readonly geo: BufferGeometry;
   private initialized = false;
-  private time = 0;
   private readonly radials: Vector3[] = [];
 
   constructor(shared: SharedUniforms, look: BellLook, rng: Rng) {
@@ -156,8 +153,6 @@ export class OralArms {
         blendDst: OneMinusSrcAlphaFactor,
         uniforms: {
           uGlowPass: shared.uGlowPass,
-          uTime: shared.uTime,
-          uCaustics: shared.uCaustics,
           uKey: shared.uKey,
           uKeyDir: shared.uKeyDir,
           uAmbient: shared.uAmbient,
@@ -175,7 +170,6 @@ export class OralArms {
 
   /** roots(i) は根元の位置と垂れる向き、radial(i) は根元での外向き（リボンの幅の向き） */
   step(dt: number, roots: (i: number) => RootFrame, radial: (i: number) => Vector3, jet: Vector3, jetOrigin: Vector3): void {
-    this.time += dt;
     const n = this.count;
     const m = this.nodes;
     const x = this.x;
@@ -300,19 +294,20 @@ export class OralArms {
         T.set(x[b]! - x[a]!, x[b + 1]! - x[a + 1]!, x[b + 2]! - x[a + 2]!).normalize();
         // 幅の向きを鎖に沿って運び、少しずつねじる
         W.addScaledVector(T, -W.dot(T)).normalize();
-        if (j > 0) W.applyAxisAngle(T, (ORAL_ARMS.twist / (m - 1)) * (0.6 + 0.4 * Math.sin(this.phase[i]! + s * 3)));
+        if (j > 0) W.applyAxisAngle(T, (ORAL_ARMS.twist / (m - 1)) * (0.7 + 0.3 * Math.sin(this.phase[i]! + s * 2)));
         B.crossVectors(T, W).normalize();
-        const wid = width * (1 - 0.72 * s) * Math.min(1, 0.35 + s * 6);
+        // 付け根から少し下が一番幅広く、先へ細る
+        const wid = width * (1 - 0.6 * s * s) * Math.min(1, 0.45 + s * 4);
         for (let q = 0; q < w; q++) {
           const u = ACROSS[q]!;
-          const curl = 0.55 * u * u * wid;
-          const frill =
-            frillAmp * u ** 4 * (0.35 + 0.65 * s) * Math.sin(ORAL_ARMS.frillFreq * s + this.time * 1.1 + this.phase[i]! + u * 1.3);
+          // 断面は内へ丸まった樋の形。厚みがあるように見せる
+          const curl = ORAL_ARMS.curl * u * u * wid;
+          const frill = frillAmp * u ** 4 * (0.4 + 0.6 * s) * Math.sin(ORAL_ARMS.frillFreq * s + this.phase[i]! + u * 1.3);
           const v = ((i * m + j) * w + q) * 3;
           P[v] = x[k]! + W.x * u * wid + B.x * (curl + frill);
           P[v + 1] = x[k + 1]! + W.y * u * wid + B.y * (curl + frill);
           P[v + 2] = x[k + 2]! + W.z * u * wid + B.z * (curl + frill);
-          tmp.copy(B).addScaledVector(W, -1.1 * u).normalize();
+          tmp.copy(B).addScaledVector(W, -2 * ORAL_ARMS.curl * u).normalize();
           Nn[v] = tmp.x;
           Nn[v + 1] = tmp.y;
           Nn[v + 2] = tmp.z;

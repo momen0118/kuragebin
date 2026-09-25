@@ -29,30 +29,6 @@ float valueNoise(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// 揺れる光の網。水面の波の曲がり具合（ヘッセ行列）から、光が集まって明るくなる線を求める
-float caustics(vec2 p, float t) {
-  const vec4 W[7] = vec4[7](
-    vec4(1.0, 0.35, 0.9, 0.0), vec4(-0.55, 0.95, 0.8, 1.3), vec4(0.3, -1.1, 0.7, 2.1),
-    vec4(1.6, 0.9, 0.35, 0.7), vec4(-1.2, -1.4, 0.3, 4.0), vec4(2.1, -0.6, 0.22, 2.7),
-    vec4(-0.4, 2.3, 0.2, 5.1));
-  float hxx = 0.0;
-  float hyy = 0.0;
-  float hxy = 0.0;
-  for (int i = 0; i < 7; i++) {
-    vec2 k = W[i].xy;
-    float kk = dot(k, k);
-    float s = sin(dot(k, p) + t * (0.8 + 0.4 * sqrt(kk)) + W[i].w);
-    float a = W[i].z / kk * s;
-    hxx -= a * k.x * k.x;
-    hyy -= a * k.y * k.y;
-    hxy -= a * k.x * k.y;
-  }
-  const float D = 1.6;
-  float det = (1.0 + D * hxx) * (1.0 + D * hyy) - D * D * hxy * hxy;
-  float v = 1.0 / (abs(det) + 0.1) / 1.7;
-  return pow(max(v - 0.8, 0.0), 1.6) * 0.45;
-}
-
 // sRGB への変換
 vec3 linearToSrgb(vec3 c) {
   c = max(c, 0.0);

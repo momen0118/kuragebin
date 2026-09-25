@@ -49,15 +49,11 @@ export function solvePhotoCamera(): PhotoCamera {
 }
 
 /**
- * 画面（キャンバス）の比率に合わせて写真を cover で貼るときの、画面UV→写真UVの変換。
- * 写真より縦長の画面では左右が切れる。返り値は写真UV = uv * scale + offset
+ * 画面UV→写真UVの変換（写真UV = uv * scale + offset）。写真はいつも高さいっぱいに置く。
+ * 写真より縦長の画面では左右が切れ、横長の画面では左右に写真の外（黒）が出る
  */
 export function coverTransform(aspect: number): { scale: [number, number]; offset: [number, number] } {
   const photoAspect = PHOTO.width / PHOTO.height;
-  if (aspect <= photoAspect) {
-    const sx = aspect / photoAspect;
-    return { scale: [sx, 1], offset: [(1 - sx) / 2, 0] };
-  }
-  const sy = photoAspect / aspect;
-  return { scale: [1, sy], offset: [0, (1 - sy) / 2] };
+  const sx = aspect / photoAspect;
+  return { scale: [sx, 1], offset: [(1 - sx) / 2, 0] };
 }
