@@ -2,6 +2,7 @@
 // three.js に依存しない。p = 0 が緩んだ状態、1 が縮みきった状態。
 import { POKE, PULSE } from '../../config';
 import type { Rng } from '../../sim/rng';
+import { ADULT_PULSE, type PulseParams } from './form';
 
 interface Cycle {
   start: number;
@@ -47,6 +48,8 @@ export class Pulse {
   private readonly tempoPhase: number;
   /** 次の周期からの調子（泳ぎから指定する） */
   private style = { amp: 1, rest: 0, tempo: 1 };
+  /** 拍動の速さや深さ（成体とエフィラで違う。次の周期から効く） */
+  private params: PulseParams = ADULT_PULSE;
 
   constructor(private readonly rng: Rng, private readonly tempo = 1) {
     this.tempoPhase = rng.range(0, Math.PI * 2);
@@ -54,19 +57,32 @@ export class Pulse {
     this.cycles.push(this.makeCycle(rng.range(0.3, 1.2), 0));
   }
 
+  /** 拍動の調子を変える（エフィラが育つにつれて成体の拍動へ） */
+  setParams(params: PulseParams): void {
+    this.params = params;
+  }
+
   private makeCycle(start: number, p0: number): Cycle {
-    const j = PULSE.jitter;
+    const P = this.params;
+    const j = P.jitter;
     // 数十秒かけてゆっくり揺れるテンポと、周期ごとの揺らぎ
     const drift = 1 + 0.07 * Math.sin(start * 0.045 + this.tempoPhase) + 0.04 * Math.sin(start * 0.13 + this.tempoPhase * 2.3);
     const k = (drift * this.style.tempo) / this.tempo;
     // ふだんは浅いお椀〜お椀、ときどき強く縮んで釣鐘のように深くなる
-    const strong = this.rng.next() < PULSE.strongChance;
-    const amp = strong ? this.rng.range(PULSE.strongAmpMin, PULSE.strongAmpMax) : this.rng.range(PULSE.ampMin, PULSE.ampMax);
+    const strong = this.rng.next() < P.strongChance;
+    const amp = strong ? this.rng.range(P.strongAmpMin, P.strongAmpMax) : this.rng.range(P.ampMin, P.ampMax);
+    let rest = this.rng.range(P.restMin, P.restMax) * k + this.style.rest * this.rng.range(0.6, 1.4);
+    // ぎこちない拍動（エフィラ）：ときどき間が空き、ときどきすぐにもう一度縮む
+    if (P.pauseChance > 0 || P.doubleChance > 0) {
+      const r = this.rng.next();
+      if (r < P.pauseChance) rest += this.rng.range(P.pauseMin, P.pauseMax);
+      else if (r < P.pauseChance + P.doubleChance) rest *= 0.15;
+    }
     return {
       start,
-      tc: PULSE.contract * k * (1 + j * 0.5 * this.rng.gauss()),
-      tr: PULSE.relax * k * (1 + j * this.rng.gauss()),
-      rest: this.rng.range(PULSE.restMin, PULSE.restMax) * k + this.style.rest * this.rng.range(0.6, 1.4),
+      tc: P.contract * k * (1 + j * 0.5 * this.rng.gauss()),
+      tr: P.relax * k * (1 + j * this.rng.gauss()),
+      rest,
       amp: amp * this.style.amp,
       p0,
     };
@@ -80,7 +96,7 @@ export class Pulse {
       start: this.time,
       tc: POKE.contract,
       tr: POKE.relax,
-      rest: this.rng.range(PULSE.restMin, PULSE.restMax),
+      rest: this.rng.range(this.params.restMin, this.params.restMax),
       amp,
       p0,
     });

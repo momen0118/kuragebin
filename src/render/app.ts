@@ -16,12 +16,14 @@ import {
 } from 'three';
 import { BELL, JAR, LAMP, PHOTO, RENDER, RIM_WARM, WATER, type PhotoName } from '../config';
 import { createRng } from '../sim/rng';
+import type { JarState } from '../sim/state';
 import { Bloom } from './bloom';
 import { coverTransform, solvePhotoCamera, type PhotoCamera } from './camera';
 import { createComposite } from './composite';
 import { FullscreenPass } from './fullscreen';
+import { Creatures } from './creatures';
 import { createJar, type Jar } from './jar';
-import { Jellyfish } from './jelly/jellyfish';
+import type { Jellyfish } from './jelly/jellyfish';
 import { lightAt, type LightState } from './lighting';
 import { Bubble, createSnow } from './particles';
 import { Room } from './room';
@@ -31,6 +33,8 @@ import { createSharedUniforms, type SharedUniforms } from './uniforms';
 
 /** 発光パスで描くもの */
 const GLOW_LAYER = 1;
+/** 水面を揺らす強さの基準（成体の傘の半径） */
+const RENDER_ADULT_RADIUS = BELL.radius;
 
 const COPY = /* glsl */ `
 uniform sampler2D tSrc;
@@ -51,7 +55,8 @@ export class App {
   private readonly glassScene = new Scene();
   private readonly room: Room;
   private readonly jar: Jar;
-  private readonly jelly: Jellyfish;
+  /** 表示中の瓶の個体 */
+  readonly creatures: Creatures;
   private readonly bubble: Bubble;
   private readonly bloom = new Bloom(RENDER.bloomLevels);
   private readonly composite;
@@ -82,6 +87,8 @@ export class App {
   debugView: string | null = null;
   /** 確認用：部品ごとに表示を切り替える */
   readonly parts: Record<string, Object3D>;
+  /** デバイスピクセル比の上限（確認用の撮影で上げられる） */
+  maxDpr: number = RENDER.maxDpr;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new WebGLRenderer({
@@ -110,23 +117,20 @@ export class App {
 
     const rng = createRng(RENDER.seed);
     this.jar = createJar(this.shared, RIM_WARM.color);
-    this.jelly = new Jellyfish(this.shared, rng);
-    this.jelly.group.traverse((o) => o.layers.enable(GLOW_LAYER));
+    this.creatures = new Creatures(this.shared, GLOW_LAYER);
     this.bubble = new Bubble(this.shared, rng);
 
     const table = createTable(this.shared, pc);
     const snow = createSnow(this.shared, rng);
     this.bgScene.add(table);
-    this.contentScene.add(this.jar.back, this.jar.floor, snow, this.jelly.group, this.bubble.points, this.jar.surface);
+    this.contentScene.add(this.jar.back, this.jar.floor, snow, this.creatures.group, this.bubble.points, this.jar.surface);
     this.glassScene.add(this.jar.front);
     this.parts = {
       table,
       back: this.jar.back,
       floor: this.jar.floor,
       snow,
-      jelly: this.jelly.group,
-      tentacles: this.jelly.tentacles.mesh,
-      arms: this.jelly.arms.mesh,
+      jelly: this.creatures.group,
       bubble: this.bubble.points,
       surface: this.jar.surface,
       front: this.jar.front,
@@ -141,7 +145,7 @@ export class App {
 
   /** CSS の大きさとデバイスピクセル比から描画サイズを決める */
   resize(cssWidth: number, cssHeight: number, dpr: number): void {
-    const ratio = Math.min(dpr, RENDER.maxDpr);
+    const ratio = Math.min(dpr, this.maxDpr);
     this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(cssWidth, cssHeight, false);
     const w = Math.round(cssWidth * ratio);
@@ -224,25 +228,40 @@ export class App {
     this.roomDirty = true;
   }
 
-  /** 確認用：海月の傘の中心の画面上の位置（CSS px） */
-  jellyScreenPosition(cssWidth: number, cssHeight: number): [number, number] {
-    const p = this.tmpV.copy(this.jelly.swimmer.pos).project(this.camera);
+  /** 表示中の瓶の個体に合わせる */
+  setJar(jar: JarState): void {
+    this.creatures.sync(jar);
+  }
+
+  /** 確認用：最初の泳ぐ個体の傘の中心の画面上の位置（CSS px）。いなければ null */
+  jellyScreenPosition(cssWidth: number, cssHeight: number): [number, number] | null {
+    const j = this.creatures.swimmers[0];
+    if (!j) return null;
+    const p = this.tmpV.copy(j.swimmer.pos).project(this.camera);
     return [((p.x + 1) / 2) * cssWidth, ((1 - p.y) / 2) * cssHeight];
   }
 
+  /** ndc（-1〜1）の位置にいる泳ぐ個体（傘の見かけの大きさより少し広めに）。いなければ null */
+  private swimmerAt(ndcX: number, ndcY: number): Jellyfish | null {
+    const cam = this.camera;
+    const aspect = cam.aspect;
+    for (const j of this.creatures.swimmers) {
+      const p = j.swimmer.pos;
+      const c = this.tmpV.copy(p).project(cam);
+      const e = this.tmpV2.set(p.x + j.radius, p.y, p.z).project(cam);
+      const r = Math.abs(e.x - c.x) * aspect * 1.4;
+      if (Math.hypot((ndcX - c.x) * aspect, ndcY - c.y) < r) return j;
+    }
+    return null;
+  }
+
   /**
-   * 画面をタップした（ndc は -1〜1）。海月の上なら 'jelly'（札はフェーズ3）、
+   * 画面をタップした（ndc は -1〜1）。海月の上なら 'jelly'（札は 3-2）、
    * 瓶の空いたところなら、ガラスをつついて近くの海月が反応する
    */
   tap(ndcX: number, ndcY: number): TapResult {
     const cam = this.camera;
-    // 海月の上か（傘の見かけの大きさより少し広めに）
-    const c = this.tmpV.copy(this.jelly.swimmer.pos).project(cam);
-    const p = this.jelly.swimmer.pos;
-    const e = this.tmpV2.set(p.x + BELL.radius, p.y, p.z).project(cam);
-    const aspect = cam.aspect;
-    const r = Math.abs(e.x - c.x) * aspect * 1.4;
-    if (Math.hypot((ndcX - c.x) * aspect, ndcY - c.y) < r) return 'jelly';
+    if (this.swimmerAt(ndcX, ndcY)) return 'jelly';
 
     // 瓶の外側の円筒に当たるか
     this.ray.origin.setFromMatrixPosition(cam.matrixWorld);
@@ -259,7 +278,7 @@ export class App {
     const hit = this.tmpV.copy(o).addScaledVector(d, t);
     if (t <= 0 || hit.y < 0 || hit.y > JAR.height) return 'none';
     this.agitation = Math.min(1, this.agitation + 0.3);
-    return this.jelly.poke(hit) ? 'poke' : 'none';
+    return this.creatures.poke(hit) ? 'poke' : 'none';
   }
 
   /** 描かずに動きだけを進める（確認用の早回しにも使う） */
@@ -276,20 +295,30 @@ export class App {
     }
     this.fade = Math.min(1, this.fade + d / RENDER.fadeInSeconds);
     this.shared.uTime.value = this.time;
-    this.jelly.update(d);
+    this.creatures.update(d, this.camera);
     this.bubble.update(d);
-    // 拍動が水面を揺らす（水面に近いほど強い）
-    const rate = Math.max(this.jelly.pulse.rate(), 0);
-    const near = Math.exp(-(JAR.waterLevel - this.jelly.swimmer.pos.y) / 0.3);
-    this.agitation = Math.min(1, this.agitation * Math.exp(-d / WATER.agitationDecay) + WATER.agitationGain * rate * near * d);
+    // 拍動が水面を揺らす（水面に近いほど強い。小さな個体ほど弱い）
+    let stir = 0;
+    for (const j of this.creatures.swimmers) {
+      const rate = Math.max(j.pulse.rate(), 0);
+      const near = Math.exp(-(JAR.waterLevel - j.swimmer.pos.y) / 0.3);
+      stir += rate * near * (j.radius / RENDER_ADULT_RADIUS);
+    }
+    this.agitation = Math.min(1, this.agitation * Math.exp(-d / WATER.agitationDecay) + WATER.agitationGain * stir * d);
     this.shared.uAgitation.value = this.agitation;
   }
 
   frame(dt: number): void {
     this.simulate(dt);
     const s = this.shared;
-    this.jelly.glowPosition(s.uGlowPos.value);
-    s.uGlowColor.value.copy(this.jelly.look.uGlow.value).multiplyScalar(0.6);
+    // 光る種がいるときは、その光が周りを照らす（ミズクラゲは光らないので 0）
+    const glowJelly = this.creatures.swimmers.find((j) => j.glowing);
+    if (glowJelly) {
+      glowJelly.glowPosition(s.uGlowPos.value);
+      s.uGlowColor.value.copy(glowJelly.look.uGlow.value).multiplyScalar(0.6);
+    } else {
+      s.uGlowColor.value.set(0, 0, 0);
+    }
 
     const r = this.renderer;
     // 部屋は光が変わったときだけ作り直す
@@ -314,7 +343,7 @@ export class App {
     r.render(this.contentScene, this.camera);
 
     // 3. 光る部分だけを描いてブルームにする（ミズクラゲは光らないので、光る種がいるときだけ）
-    const glowing = this.jelly.glowing;
+    const glowing = this.creatures.glowing;
     if (glowing) {
       r.setRenderTarget(this.glowRT);
       r.setClearColor(0x000000, 1);

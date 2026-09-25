@@ -40,3 +40,35 @@ describe('書き出し・読み込み', () => {
     expect(() => importState(JSON.stringify({ app: 'other', state: {} }))).toThrow(SchemaError);
   });
 });
+
+describe('版1からのマイグレーション', () => {
+  test('フェーズ2の保存データ（成体1匹）を、今の形で読める', () => {
+    const v1 = {
+      schema: 1,
+      rng: 123456,
+      time: 5 * 86400,
+      pending: 12.5,
+      lastTick: T0,
+      createdAt: T0 - 5 * 86400 * 1000,
+      nextId: 2,
+      jars: [
+        { creatures: [{ id: 1, species: 'aurelia', stage: 'adult', seed: 42, age: 5 * 86400, stageAge: 5 * 86400, arrivedAt: 0, name: null }] },
+        { creatures: [] },
+        { creatures: [] },
+      ],
+      journal: [],
+      specimens: [],
+      settings: { lamp: false, sound: false, motion: true, quality: 'high' },
+    };
+    const s = migrate(v1);
+    expect(s.schema).toBe(SCHEMA_VERSION);
+    const c = s.jars[0]!.creatures[0]!;
+    expect(c).toMatchObject({ id: 1, stage: 'adult', seed: 42, progress: 0, parent: null, spot: null, discs: 0 });
+    expect(c.stageLength).toBeGreaterThan(0);
+    expect(s.jars.every((j) => j.resting === false)).toBe(true);
+    expect(s.settings.lamp).toBe(false);
+    // そのまま進められる（約1日でポリプが付く）
+    const n = advance(s, 1.5 * 86400);
+    expect(n.jars[0]!.creatures.some((x) => x.stage === 'polyp')).toBe(true);
+  });
+});

@@ -1,9 +1,9 @@
 // デバッグパネル。URL に ?debug（または #debug）を付けたときだけ出す。
 // 時刻の上書き（光の確認用）、背景写真の切り替えと重ね表示（位置合わせの確認用）、FPS、
-// 時間の早送りと一気に進める操作、状態の表示・リセット・書き出し・読み込み。
+// 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、状態の表示・リセット・書き出し・読み込み。
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
-import type { GameState, Stage } from '../sim/state';
+import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
 
 export interface DebugPanelOptions {
   /** 時刻の上書き。null なら端末の時計に従う */
@@ -22,6 +22,18 @@ export interface DebugPanelOptions {
   onExport(): string;
   /** JSON を読み込む。読めなければ投げる */
   onImport(text: string): void;
+  /** 個体：表示中の瓶に出す、段階・進み・皿の数を変える、消す */
+  onSpawn(stage: Stage): void;
+  onStage(id: number, stage: Stage): void;
+  onProgress(id: number, progress: number): void;
+  onDiscs(id: number, discs: number): void;
+  onRemove(id: number): void;
+  /** 泳ぐ個体を成体 n 匹にする（混み具合の確認） */
+  onFill(n: number): void;
+  /** 泳ぐ個体の上限を差し替える（保存しない） */
+  onCap(n: number): void;
+  /** ポリプ・ストロビラ・エフィラを実物大で描く */
+  onRealSize(on: boolean): void;
 }
 
 const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
@@ -31,7 +43,7 @@ const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
   ['sakura', '桜'],
 ];
 
-const STAGES: Record<Stage, string> = {
+const STAGE_NAMES: Record<Stage, string> = {
   polyp: 'ポリプ',
   strobila: 'ストロビラ',
   ephyra: 'エフィラ',
@@ -84,6 +96,16 @@ export class DebugPanel {
   private readonly driftEl: HTMLDivElement;
   private readonly stateEl: HTMLDivElement;
   private readonly noteEl: HTMLDivElement;
+  private readonly listEl: HTMLDivElement;
+  private readonly stageSel: HTMLSelectElement;
+  private readonly discsSel: HTMLSelectElement;
+  private readonly progressEl: HTMLInputElement;
+  private readonly capSel: HTMLSelectElement;
+  /** 選んでいる個体と、進みのつまみを動かしている最中か */
+  private selected: number | null = null;
+  private pickNewest = false;
+  private dragging = false;
+  private listKey = '';
   private frames = 0;
   private acc = 0;
 
@@ -91,7 +113,8 @@ export class DebugPanel {
     const root = document.createElement('div');
     root.className = 'debug-panel';
     root.innerHTML = `
-      <div class="row"><span class="fps">-- fps</span><span class="time">--:--</span></div>
+      <div class="row head" title="たたむ・ひらく"><span class="fps">-- fps</span><span class="time">--:--</span></div>
+      <div class="body">
       <input class="slider" type="range" min="0" max="24" step="${1 / 60}" value="12" aria-label="時刻">
       <label class="row"><input class="auto" type="checkbox" checked> 端末の時計に従う</label>
       <div class="row sun"></div>
@@ -112,6 +135,23 @@ export class DebugPanel {
         <div class="row"><span class="drift sub"></span><button type="button" class="clock-reset">時計を戻す</button></div>
       </details>
       <details open>
+        <summary>個体（表示中の瓶）</summary>
+        <div class="row buttons spawn">${STAGES.map((st) => `<button type="button" data-spawn="${st}">${STAGE_NAMES[st]}</button>`).join('')}</div>
+        <div class="creature-list sub"></div>
+        <div class="row selected">
+          <select class="stage" aria-label="段階">${STAGES.map((st) => `<option value="${st}">${STAGE_NAMES[st]}</option>`).join('')}</select>
+          <select class="discs" aria-label="皿の数">${[1, 2, 3].map((n) => `<option value="${n}">皿${n}</option>`).join('')}</select>
+          <button type="button" class="remove">消す</button>
+        </div>
+        <input class="progress" type="range" min="0" max="1" step="0.001" value="0" aria-label="進み">
+        <div class="row buttons">
+          <button type="button" data-fill="4">成体4匹</button>
+          <button type="button" data-fill="6">成体6匹</button>
+          <label>上限 <select class="cap">${[3, 4, 5, 6, 8].map((n) => `<option value="${n}">${n}</option>`).join('')}</select></label>
+        </div>
+        <label class="row"><input class="real" type="checkbox"> 実物大（ポリプ・エフィラ）</label>
+      </details>
+      <details>
         <summary>状態</summary>
         <div class="state sub"></div>
         <div class="row buttons">
@@ -122,6 +162,7 @@ export class DebugPanel {
         <div class="note sub"></div>
         <input class="file" type="file" accept="application/json,.json" hidden>
       </details>
+      </div>
     `;
     document.body.appendChild(root);
     this.fpsEl = root.querySelector('.fps')!;
@@ -135,6 +176,49 @@ export class DebugPanel {
     this.driftEl = root.querySelector('.drift')!;
     this.stateEl = root.querySelector('.state')!;
     this.noteEl = root.querySelector('.note')!;
+    this.listEl = root.querySelector('.creature-list')!;
+    // いちばん上の行（fps と時刻）でパネルをたたむ。瓶が隠れないように
+    root.querySelector('.head')!.addEventListener('click', () => root.classList.toggle('collapsed'));
+    this.stageSel = root.querySelector('.stage')!;
+    this.discsSel = root.querySelector('.discs')!;
+    this.progressEl = root.querySelector('.progress')!;
+    this.capSel = root.querySelector('.cap')!;
+
+    for (const b of root.querySelectorAll<HTMLButtonElement>('[data-spawn]')) {
+      b.addEventListener('click', () => {
+        // 出した個体を選ぶ（一覧のいちばん下）
+        this.selected = null;
+        this.pickNewest = true;
+        this.opts.onSpawn(b.dataset.spawn as Stage);
+      });
+    }
+    this.listEl.addEventListener('click', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-id]');
+      if (row) {
+        this.selected = Number(row.dataset.id);
+        this.listKey = '';
+      }
+    });
+    this.stageSel.addEventListener('change', () => {
+      if (this.selected !== null) this.opts.onStage(this.selected, this.stageSel.value as Stage);
+    });
+    this.discsSel.addEventListener('change', () => {
+      if (this.selected !== null) this.opts.onDiscs(this.selected, Number(this.discsSel.value));
+    });
+    root.querySelector('.remove')!.addEventListener('click', () => {
+      if (this.selected !== null) this.opts.onRemove(this.selected);
+    });
+    this.progressEl.addEventListener('pointerdown', () => (this.dragging = true));
+    this.progressEl.addEventListener('pointerup', () => (this.dragging = false));
+    this.progressEl.addEventListener('input', () => {
+      if (this.selected !== null) this.opts.onProgress(this.selected, Number(this.progressEl.value));
+    });
+    for (const b of root.querySelectorAll<HTMLButtonElement>('[data-fill]')) {
+      b.addEventListener('click', () => this.opts.onFill(Number(b.dataset.fill)));
+    }
+    this.capSel.addEventListener('change', () => this.opts.onCap(Number(this.capSel.value)));
+    const real = root.querySelector<HTMLInputElement>('.real')!;
+    real.addEventListener('change', () => this.opts.onRealSize(real.checked));
 
     this.slider.addEventListener('input', () => {
       this.auto.checked = false;
@@ -200,13 +284,47 @@ export class DebugPanel {
 
     const lines: string[] = [`ゲーム内の経過 ${span(state.time)}`];
     state.jars.forEach((jar, i) => {
-      const who = jar.creatures.map((c) => `${STAGES[c.stage]} ${span(c.age)}`).join('、');
+      const who = jar.creatures.map((c) => `${STAGE_NAMES[c.stage]} ${span(c.age)}`).join('、');
       lines.push(`瓶${i + 1}　${who || '水だけ'}`);
     });
     lines.push(info.persistent ? `保存 ${info.savedAt ? clockTime(info.savedAt) : 'まだ'}` : '保存しない（この環境では保存できない）');
     if (info.rewound) lines.push('時計の巻き戻し：経過0で続けた');
     else if (info.lastCatchUp > 0) lines.push(`まとめて進めた分 ${span(info.lastCatchUp)}`);
     this.stateEl.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
+  }
+
+  /** 表示中の瓶の個体の一覧と、選んでいる個体の段階・進み。cap は泳ぐ個体の上限 */
+  showCreatures(jar: JarState, cap: number): void {
+    this.capSel.value = String(cap);
+    if (this.selected !== null && !jar.creatures.some((c) => c.id === this.selected)) this.selected = null;
+    if ((this.selected === null || this.pickNewest) && jar.creatures.length) {
+      this.selected = jar.creatures[jar.creatures.length - 1]!.id;
+      this.pickNewest = false;
+    }
+    const key = jar.creatures.map((c) => `${c.id}:${c.stage}:${c.discs}`).join(',') + `|${this.selected}|${jar.resting}`;
+    if (key !== this.listKey) {
+      this.listKey = key;
+      this.listEl.innerHTML =
+        jar.creatures
+          .map((c) => {
+            const sel = c.id === this.selected ? ' class="picked"' : '';
+            const discs = c.stage === 'strobila' ? ` 皿${c.discs}` : '';
+            return `<div data-id="${c.id}"${sel}>#${c.id} ${STAGE_NAMES[c.stage]}${discs} <span class="pct"></span></div>`;
+          })
+          .join('') + (jar.resting ? '<div>（いっぱいでポリプが休んでいる）</div>' : '');
+    }
+    const rows = this.listEl.querySelectorAll<HTMLElement>('[data-id]');
+    jar.creatures.forEach((c, i) => {
+      const pct = rows[i]?.querySelector('.pct');
+      if (pct) pct.textContent = `${Math.round(c.progress * 100)}%`;
+    });
+    const c = jar.creatures.find((x) => x.id === this.selected);
+    if (c) {
+      this.stageSel.value = c.stage;
+      this.discsSel.disabled = c.stage !== 'strobila';
+      if (c.stage === 'strobila') this.discsSel.value = String(c.discs);
+      if (!this.dragging) this.progressEl.value = String(c.progress);
+    }
   }
 
   tick(dt: number): void {

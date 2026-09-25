@@ -97,7 +97,10 @@ export class OralArms {
   readonly angles: Float32Array;
   private readonly x: Float32Array;
   private readonly px: Float32Array;
-  private readonly seg: number;
+  private seg: number;
+  /** 傘の半径（瓶の高さ単位）と、口腕の長さの割合（エフィラは短い） */
+  private radius: number = BELL.radius;
+  private lengthFrac = 1;
   private readonly phase: Float32Array;
   private readonly geo: BufferGeometry;
   private initialized = false;
@@ -179,6 +182,18 @@ export class OralArms {
     this.mesh.renderOrder = 31;
   }
 
+  /** 根元から伸ばしなおす（個体を別の場所へ置きなおしたとき） */
+  reset(): void {
+    this.initialized = false;
+  }
+
+  /** 大きさと長さの割合（エフィラが育つにつれて）。radius は傘の半径 */
+  setForm(radius: number, lengthFrac: number): void {
+    this.radius = radius;
+    this.lengthFrac = lengthFrac;
+    this.seg = (ORAL_ARMS.length * radius * lengthFrac) / (this.nodes - 1);
+  }
+
   /** roots(i) は根元の位置と垂れる向き、radial(i) は根元での外向き（リボンの幅の向き） */
   step(dt: number, roots: (i: number) => RootFrame, radial: (i: number) => Vector3, jet: Vector3, jetOrigin: Vector3): void {
     const n = this.count;
@@ -188,8 +203,8 @@ export class OralArms {
     const L = this.seg;
     const dt2 = dt * dt;
     const keep = 1 - ORAL_ARMS.drag;
-    const g = -ORAL_ARMS.gravity;
-    const bellR = BELL.radius;
+    const bellR = this.radius;
+    const g = (-ORAL_ARMS.gravity * bellR) / BELL.radius;
 
     for (let i = 0; i < n; i++) {
       const root = roots(i);
@@ -267,7 +282,7 @@ export class OralArms {
       }
       for (let j = 1; j < m; j++) {
         const k = base + j * 3;
-        const r = Math.hypot(x[k]!, x[k + 2]!);
+        const r = Math.sqrt(x[k]! * x[k]! + x[k + 2]! * x[k + 2]!);
         const lim = INNER_R - 0.012;
         if (r > lim) {
           x[k] = (x[k]! / r) * lim;
@@ -291,8 +306,10 @@ export class OralArms {
     const W = new Vector3();
     const B = new Vector3();
     const tmp = new Vector3();
-    const width = ORAL_ARMS.width * BELL.radius;
-    const frillAmp = ORAL_ARMS.frillAmp * BELL.radius;
+    // 短いうち（エフィラの口）は細く、ひだも小さい
+    const thin = 0.6 + 0.4 * this.lengthFrac;
+    const width = ORAL_ARMS.width * this.radius * thin;
+    const frillAmp = ORAL_ARMS.frillAmp * this.radius * this.lengthFrac;
 
     for (let i = 0; i < n; i++) {
       const base = i * m * 3;

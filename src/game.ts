@@ -1,7 +1,7 @@
 // ゲームの状態を持ち、時間を進め、保存する。
 // 起動時と画面に戻ったときに、閉じていた分を固定刻みで一気に進める（sim/advance.ts）。
 // 保存は設定を変えたとき、開いている間は一定の間隔で、画面を離れる直前に。
-import { SIM } from './config';
+import { LIFE, SIM, type LifeRules } from './config';
 import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
 import { createInitialState, type GameState, type Settings } from './sim/state';
@@ -27,6 +27,8 @@ export class Game {
   private savedAt = 0;
   private lastCatchUp = 0;
   private rewound = false;
+  /** 生活環の期間と上限（確認用に差し替えられる） */
+  private rules: LifeRules = LIFE;
 
   private constructor(
     private readonly clock: Clock,
@@ -98,6 +100,25 @@ export class Game {
     void this.save();
   }
 
+  get lifeRules(): LifeRules {
+    return this.rules;
+  }
+
+  /** 確認用：生活環の期間や上限を差し替える（保存しない。開き直すと config の値に戻る） */
+  setRules(patch: Partial<LifeRules>): void {
+    this.rules = { ...this.rules, ...patch };
+    this.emit();
+  }
+
+  /** 確認用：状態を書き換える（デバッグパネルから） */
+  edit(fn: (s: GameState, rules: LifeRules) => void): void {
+    const next = structuredClone(this.current);
+    fn(next, this.rules);
+    this.current = next;
+    this.emit();
+    void this.save();
+  }
+
   /** 状態を最初からにする（確認用） */
   reset(): void {
     this.current = createInitialState(this.clock.now());
@@ -140,7 +161,7 @@ export class Game {
 
   /** 時計に合わせて進める。record なら、進めた分と巻き戻しの有無を覚えておく（確認用の表示） */
   private catchUpNow(record: boolean): void {
-    const r = catchUp(this.current, this.clock.now());
+    const r = catchUp(this.current, this.clock.now(), this.rules);
     this.current = r.state;
     if (record) {
       this.lastCatchUp = r.elapsed;
