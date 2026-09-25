@@ -22,13 +22,35 @@ function supportsWebGL2(): boolean {
   }
 }
 
-/** 画面いっぱいに描く（写真より横長なら、写真の左右は黒に溶かす） */
+/**
+ * 描く大きさ（CSS px）。iOS のホーム画面から開いたときは、画面の下まで描けるよう画面の大きさも見る
+ * （上端の時計の帯の裏まで描く設定では、高さが帯の分だけ短く報告されることがある）
+ */
+function viewportSize(): [number, number] {
+  const w = window.innerWidth;
+  let h = Math.max(window.innerHeight, document.documentElement.clientHeight);
+  if ((navigator as Navigator & { standalone?: boolean }).standalone === true) {
+    const long = Math.max(screen.width, screen.height);
+    const short = Math.min(screen.width, screen.height);
+    const [sw, sh] = h >= w ? [short, long] : [long, short];
+    // 画面の幅いっぱいに開いているときだけ（iPad の分割表示などは除く）
+    if (Math.abs(w - sw) < 2 && sh > h) h = sh;
+  }
+  return [w, h];
+}
+
+let laidOut = '';
+
+/** 画面いっぱいに描く（写真より横長なら、写真の左右は黒に溶かす）。大きさが変わっていなければ何もしない */
 function layout(canvas: HTMLCanvasElement, app: App): void {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const [vw, vh] = viewportSize();
+  const dpr = window.devicePixelRatio || 1;
+  const key = `${vw}x${vh}@${dpr}`;
+  if (key === laidOut) return;
+  laidOut = key;
   canvas.style.width = `${vw}px`;
   canvas.style.height = `${vh}px`;
-  app.resize(vw, vh, window.devicePixelRatio || 1);
+  app.resize(vw, vh, dpr);
 }
 
 async function main(): Promise<void> {
@@ -149,11 +171,13 @@ async function main(): Promise<void> {
     const dt = (now - last) / 1000;
     last = now;
     lightTimer += dt;
-    // 1秒ごとに（早送り中は毎フレーム）：時計に合わせてゲームの時間を進め（間隔が空いたら保存）、光を合わせる
+    // 1秒ごとに（早送り中は毎フレーム）：時計に合わせてゲームの時間を進め（間隔が空いたら保存）、光を合わせる。
+    // 画面の大きさが知らせなしに変わっていることがあるので、ついでに確かめる
     if (lightTimer > (clock.speed > 1 ? 0 : 1)) {
       lightTimer = 0;
       game.tick();
       applyLight();
+      layout(canvas, app);
     }
     app.frame(dt);
     panel?.tick(dt);
