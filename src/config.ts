@@ -115,7 +115,7 @@ export const TABLE = {
   arcFocus: 0.45,
   /** 弧の太さ（ぼかし）と、天板の木目をどれだけ明るくするか */
   arcWidth: 0.035,
-  arcGain: 1.6,
+  arcGain: 4.0,
   /** 瓶の縁（影の始まり）から弧までを淡くつなぐ光（弧に対する割合） */
   arcFill: 0.35,
 } as const;
@@ -136,14 +136,31 @@ export const CAUSTIC = {
 
 /** 水 */
 export const WATER = {
-  /** マリンスノーの粒の数 */
-  snowCount: 260,
-  /** 粒の大きさ（画面px、手前と奥） */
-  snowSizeNear: 3.6,
-  snowSizeFar: 1.6,
-  /** 沈む速さ（瓶の高さ/秒、手前と奥） */
-  snowFallNear: 0.016,
-  snowFallFar: 0.006,
+  /**
+   * マリンスノー。ほとんどはかろうじて見える細かい粒で、少し大きい粒がまれに混じる。
+   * 粒は自分では光らない。昼は部屋と窓の光を、夜は海月の光を受けたぶんだけ見える
+   */
+  snowCount: 700,
+  /** 粒の直径（瓶の高さ単位）の最小と最大、大きさの偏り（大きいほど小さい粒ばかりになる） */
+  snowSizeMin: 0.0011,
+  snowSizeMax: 0.0048,
+  snowSizeSkew: 7,
+  /** 粒ごとの明るさのばらつき（最小の割合） */
+  snowBrightnessMin: 0.35,
+  /** 被写界深度：瓶の軸にピントが合い、手前と奥の粒はぼける（レンズの口径、瓶の高さ単位） */
+  snowAperture: 0.022,
+  /** 奥の粒ほど淡く（いちばん奥での明るさの割合） */
+  snowFarFade: 0.4,
+  /** 昼：部屋の光と、窓の側（左）の粒だけに当たる窓の光 */
+  snowAmbient: 0.4,
+  snowWindow: 0.35,
+  /** 夜：海月の光を受けた粒の明るさ。光の届く範囲は瓶のガラスより狭く、離れると闇に消える */
+  snowGlow: 2.5,
+  /** 粒が後ろを隠す割合（光を足すだけでなく、少し遮る） */
+  snowOcclusion: 0.35,
+  /** 沈む速さ（瓶の高さ/秒）。小さい粒ほど遅い */
+  snowFallMin: 0.004,
+  snowFallMax: 0.014,
   /** 泡。一度に一つだけ、ごくたまに上がる。薄く小さく */
   bubbleIntervalMin: 45,
   bubbleIntervalMax: 120,
