@@ -1,6 +1,6 @@
 // 時刻から光の状態を決める。three.js に依存しない純粋な関数。
 // 光の移り変わりは、その日の日の出・日の入りを基準に置く。
-import { LIGHT_LOOKS, LIGHT_SCHEDULE, RIM_WARM, SUN, type LightKey, type Vec3 } from '../config';
+import { DIRECT_SUN, LIGHT_LOOKS, LIGHT_SCHEDULE, RIM_WARM, SUN, type LightKey, type Vec3 } from '../config';
 import { sunTimes, type SunTimes } from '../sim/sun';
 
 export interface LightState {
@@ -16,7 +16,7 @@ export interface LightState {
   ambient: Vec3;
   /** 海月の発光の倍率 */
   glow: number;
-  /** 瓶がレンズになって集める光 */
+  /** 瓶がレンズになって集める光と、瓶の影の濃さ。窓から日が直接差す間だけ */
   lensLight: number;
   shadow: number;
   /** 瓶の縁に乗る夕方の温度（0〜1） */
@@ -55,6 +55,19 @@ export function buildKeys(sun: SunTimes): LightKey[] {
   return keys;
 }
 
+/**
+ * 窓から日が直接差しているか（0〜1）。日の出のあと少しずつ差しはじめ、日の入りの少し前から消えていく。
+ * 日の出・日の入りが0時をまたいでもよい
+ */
+export function directSun(hourIn: number, sun: SunTimes): number {
+  const dayLength = wrapHour(sun.sunset - sun.sunrise);
+  const sinceRise = wrapHour(hourIn - sun.sunrise);
+  if (sinceRise >= dayLength) return 0;
+  const rise = Math.min(sinceRise / (DIRECT_SUN.riseRampMinutes / 60), 1);
+  const set = Math.min((dayLength - sinceRise) / (DIRECT_SUN.setRampMinutes / 60), 1);
+  return smooth(rise) * smooth(set);
+}
+
 export function lightAt(hourIn: number, sun: SunTimes): LightState {
   const hour = wrapHour(hourIn);
   const keys = buildKeys(sun);
@@ -73,6 +86,7 @@ export function lightAt(hourIn: number, sun: SunTimes): LightState {
   const rimHour = wrapHour(sun.sunset - RIM_WARM.minutesBeforeSunset / 60);
   let rimD = Math.abs(hour - rimHour);
   rimD = Math.min(rimD, 24 - rimD) / RIM_WARM.widthHours;
+  const direct = directSun(hour, sun);
   return {
     day: day / sum,
     dusk: dusk / sum,
@@ -82,8 +96,8 @@ export function lightAt(hourIn: number, sun: SunTimes): LightState {
     keyDir: normalize(mix3(a.keyDir, b.keyDir, t)),
     ambient: mix3(a.ambient, b.ambient, t),
     glow: mix(a.glow, b.glow, t),
-    lensLight: mix(a.lensLight, b.lensLight, t),
-    shadow: mix(a.shadow, b.shadow, t),
+    lensLight: mix(a.lensLight, b.lensLight, t) * direct,
+    shadow: mix(a.shadow, b.shadow, t) * direct,
     rimWarm: Math.exp(-rimD * rimD),
   };
 }

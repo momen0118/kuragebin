@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildKeys, lightAt, sunOf, wrapHour } from './lighting';
+import { buildKeys, directSun, lightAt, sunOf, wrapHour } from './lighting';
 import { sunTimes } from '../sim/sun';
 
 // 春分ごろの目安
@@ -32,6 +32,35 @@ describe('lightAt', () => {
     const l = lightAt(23, SUN);
     expect(Math.max(...l.key)).toBeLessThan(0.05);
     expect(l.lensLight).toBe(0);
+  });
+
+  test('瓶の影と光の弧は、窓から日が直接差す間だけ', () => {
+    // 日の出前（明け方）と日の入り後は出さない
+    for (const m of [-75, -35, -20, -1]) {
+      expect(lightAt(SUN.sunrise + m / 60, SUN).lensLight).toBe(0);
+      expect(lightAt(SUN.sunrise + m / 60, SUN).shadow).toBe(0);
+    }
+    for (const m of [0, 5, 30, 90]) expect(lightAt(SUN.sunset + m / 60, SUN).lensLight).toBe(0);
+    expect(lightAt(23, SUN).lensLight).toBe(0);
+    // 昼はしっかり、夕方（日の入り前）は写真の窓光に合わせて少し弱く
+    expect(lightAt(12, SUN).lensLight).toBeCloseTo(1);
+    const dusk = lightAt(SUN.sunset - 45 / 60, SUN).lensLight;
+    expect(dusk).toBeGreaterThan(0.5);
+    expect(dusk).toBeLessThan(0.8);
+    // 日の出直後はゆっくり差しはじめる
+    expect(lightAt(SUN.sunrise + 10 / 60, SUN).lensLight).toBeLessThan(0.3);
+  });
+
+  test('直射の出入りはなめらかで、0時をまたいでもつながる', () => {
+    for (const sun of [SUN, { sunrise: 20.5, sunset: 8.75 }]) {
+      for (let m = 0; m < 24 * 60; m++) {
+        const a = directSun(m / 60, sun);
+        const b = directSun((m + 1) / 60, sun);
+        expect(Math.abs(a - b)).toBeLessThan(0.1);
+      }
+      expect(directSun(sun.sunrise - 0.5, sun)).toBe(0);
+      expect(directSun(sun.sunrise + 3, sun)).toBe(1);
+    }
   });
 
   test('夕方、日の入りの少し前に縁へ温度が乗る', () => {

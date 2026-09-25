@@ -1,6 +1,7 @@
 // 瓶のシェーダ。水の入った円筒は横方向のレンズとして振る舞う。
 // 背景は瓶を丸ごと通り抜けた視線（4つの面で曲がる）で、中身は手前の面だけで曲がった視線で映す。
-import { JAR, WATER } from '../config';
+import { CAUSTIC, JAR, JELLY_LOOK, WATER } from '../config';
+import { CAUSTIC_SWAY } from './caustic';
 import common from './shaders/common.glsl?raw';
 import output from './shaders/output.glsl?raw';
 
@@ -19,6 +20,19 @@ export const JAR_DEFINES = /* glsl */ `
 #define CHROMA ${JAR.chromatic.toFixed(4)}
 #define SPARKLE_CELL ${JAR.sparkleCell.toFixed(5)}
 #define SPARKLE_RATE ${JAR.sparkleRate.toFixed(4)}
+#define RING_SWAY ${CAUSTIC.ringSway.toFixed(4)}
+`;
+
+/**
+ * 海月の光が届く度合い（海月のすぐそばで 1）。離れると急に弱まり、瓶の反対側ではほぼ闇に戻る。
+ * JELLY_LOOK.lightFalloff の距離で 1/4
+ */
+export const GLOW_FALL = /* glsl */ `
+float glowFall(vec3 p, vec3 glowPos) {
+  vec3 d = p - glowPos;
+  float k = 1.0 + dot(d, d) / ${(JELLY_LOOK.lightFalloff ** 2).toFixed(6)};
+  return 1.0 / (k * k);
+}
 `;
 
 /** 水面の高さ。海月の拍動で揺れたときだけ波立つ（ag は 0〜1） */
@@ -70,8 +84,9 @@ float specks(vec2 q, float t, float ag) {
 /** 水平面での円筒レンズ。b は視線と軸の距離、R は外半径、nIn は内側の屈折率 */
 const LENS = /* glsl */ `
 // front: 内側へ入るまでの曲がり / total: 通り抜けたあとの曲がり / sweep: 入射点から軸に一番近づく所までの角度
-// 戻り値は内側に入れたか（ガラスの縁で全反射すると入れない）
-bool cylinderLens(float b, float R, float nIn, bool solid, out float front, out float total, out float sweep) {
+// 戻り値は、ガラスの内側の面で全反射して中へ入れない度合い（0〜1）。
+// 空気の部分の縁だけで起きる。境目で像が急に跳ばないよう、曲がりを頭打ちにしてぼかす
+float cylinderLens(float b, float R, float nIn, bool solid, out float front, out float total, out float sweep) {
   float Ri = R - JAR_T;
   float i1 = asin(min(b / R, 0.9999));
   float pg = b / IOR_G;
@@ -81,21 +96,16 @@ bool cylinderLens(float b, float R, float nIn, bool solid, out float front, out 
     front = i1 - t1;
     total = 2.0 * front;
     sweep = acos(min(pg / R, 1.0));
-    return true;
+    return 0.0;
   }
   float i2 = asin(min(pg / Ri, 0.9999));
   float sinT2 = b / (nIn * Ri);
-  if (sinT2 >= 1.0) {
-    front = i1 - t1;
-    total = 2.0 * front + 0.6;
-    sweep = acos(min(pg / R, 1.0));
-    return false;
-  }
-  float t2 = asin(sinT2);
+  float s2 = min(sinT2, 0.95);
+  float t2 = asin(s2);
   front = (i1 - t1) + (i2 - t2);
   total = 2.0 * front;
-  sweep = acos(min(pg / R, 1.0)) - acos(min(pg / Ri, 1.0)) + acos(sinT2);
-  return true;
+  sweep = acos(min(pg / R, 1.0)) - acos(min(pg / Ri, 1.0)) + acos(s2);
+  return smoothstep(0.9, 1.0, sinT2);
 }
 
 vec2 rot2(vec2 v, float a) {
@@ -125,6 +135,8 @@ ${WATER_HEIGHT}
 ${ENV}
 ${LENS}
 ${SPECKS}
+${CAUSTIC_SWAY}
+${GLOW_FALL}
 uniform sampler2D tBg;
 uniform sampler2D tRoomWide;
 uniform sampler2D tContents;
@@ -197,7 +209,7 @@ void main() {
   float front;
   float total;
   float sweep;
-  bool enters = cylinderLens(b, R, nIn, base, front, total, sweep);
+  float tir = cylinderLens(b, R, nIn, base, front, total, sweep);
 
   // 背景：瓶を通り抜けた視線が、瓶の奥の仮の背景に当たる所。
   // 真ん中の視線は近くを映して拡大に、縁の視線ほど遠くまで届いて像が反転して詰まる
@@ -220,7 +232,7 @@ void main() {
 
   // 中身：手前の面だけで曲がった視線が、瓶の軸を通る面に当たる所
   vec4 cont = vec4(0.0);
-  if (!base && enters) {
+  if (!base && tir < 1.0) {
     vec2 dIn = rot2(dh, sgn * front);
     vec2 fwd = normalize(-cameraPosition.xz);
     float sQ = -dot(E, fwd) / max(dot(dIn, fwd), 1e-3);
@@ -236,11 +248,9 @@ void main() {
     col += uAmbient * uWaterHaze;
   } else if (base) {
     col = bg * uGlassTint * 0.8;
-  } else if (enters) {
-    col = cont.rgb + bg * (1.0 - cont.a);
   } else {
-    // ガラスの壁の中で全反射する細い帯
-    col = bg * uGlassTint * 0.55;
+    // 空気の部分。縁ではガラスの壁の中で全反射して、中は見えず少し暗い帯になる
+    col = mix(cont.rgb + bg * (1.0 - cont.a), bg * uGlassTint * 0.7, tir);
   }
 
   // 厚いガラス（底の縁と口の縁）はわずかに緑がかる
@@ -271,21 +281,24 @@ void main() {
   col *= 1.0 - 0.16 * exp(-pow((y - wl + 0.006) / 0.004, 2.0));
   col += (uAmbient * 0.5 + uKey * 0.1 + uGlowColor * 0.06) * men;
 
-  // 厚い底ガラス：窓と反対の側に光が溜まり、ところどころ粒になってきらっと光る
+  // 厚い底ガラス：窓と反対の側に光が溜まり、ところどころ粒になってきらっと光る。
+  // 溜まった光は天板の弧と同じように、弱くゆっくり揺らめく
+  float glow = glowFall(P, uGlowPos);
   if (base) {
     vec2 away = -normalize(uKeyDir.xz + vec2(1e-5));
     float pool = 0.2 + 0.8 * smoothstep(-0.2, 0.9, dot(E / R, away));
-    vec3 light = uKey * uLensLight + uGlowColor * 0.6 + uAmbient * 0.4;
-    float band = exp(-pow((y - JAR_BOTTOM * 0.45) / 0.018, 2.0));
-    col += light * pool * band * 0.05;
+    vec3 light = uKey * uLensLight + uGlowColor * glow + uAmbient * 0.4;
+    vec2 sw = causticSway(E.x / R * 1.5, uTime, uAgitation);
+    float swayK = RING_SWAY;
+    float band = exp(-pow((y - JAR_BOTTOM * 0.45 - sw.x * swayK) / 0.018, 2.0));
+    col += light * pool * band * 0.05 * mix(1.0, sw.y, swayK);
     float sp = specks(vec2(thE * R, y) / SPARKLE_CELL, uTime, uAgitation);
     col += light * pool * sp * uSparkle;
   }
 
-  // 夜：海月の光がガラスの内側に回り込み、輪郭（縁のあたり）がかすかに浮く
-  vec3 gd = P - uGlowPos;
-  float gfall = 1.0 / (1.0 + dot(gd, gd) * 12.0);
-  col += uGlowColor * F * (0.3 * gfall + 0.06);
+  // 夜：海月の光がガラスに回り込む。海月に近いところだけほのかに明るく（縁ほど）、離れるほど闇に戻る
+  float rimGlow = pow(1.0 - NdV, 2.5);
+  col += uGlowColor * glow * (rimGlow * 0.45 + 0.03);
 
   col += texture(tBloom, uv).rgb * uBloomStrength;
   gl_FragColor = vec4(outputTransform(col, gl_FragCoord.xy), 1.0);
@@ -297,6 +310,7 @@ export const BACK_FRAG = /* glsl */ `
 ${common}
 ${JAR_DEFINES}
 ${ENV}
+${GLOW_FALL}
 uniform vec3 uKey, uKeyDir, uAmbient, uGlowPos, uGlowColor;
 uniform float uRimWarm;
 uniform vec3 uRimWarmColor;
@@ -316,12 +330,13 @@ void main() {
   float ch = saturate(dot(Nh, Hh));
   col += uKey * pow(ch, 20.0) * uHighlightSoft * 0.15;
   col += uRimWarm * uRimWarmColor * pow(1.0 - NdV, 8.0) * 0.08;
-  // 海月の光が奥のガラスにうっすら回り込む
-  vec3 gd = vWorldPos - uGlowPos;
-  col += uGlowColor * F * (0.3 / (1.0 + dot(gd, gd) * 12.0) + 0.05);
+  // 海月の光が奥のガラスにうっすら回り込む（海月に近いところだけ）
+  col += uGlowColor * glowFall(vWorldPos, uGlowPos) * (pow(1.0 - NdV, 2.5) * 0.35 + 0.03);
   float a = 0.02 + 0.12 * F;
   // 底の面は瓶底のシェーダに任せ、ここでは側面だけ
   float wall = 1.0 - smoothstep(0.4, 0.85, abs(N.y));
+  // 奥の壁の輪郭（視線がかすめる所）は出さない。手前の輪郭と二重に見えないように
+  wall *= smoothstep(0.12, 0.45, NdV);
   gl_FragColor = vec4(col, a) * wall;
 }
 `;
@@ -342,6 +357,8 @@ export const FLOOR_FRAG = /* glsl */ `
 ${common}
 ${JAR_DEFINES}
 ${SPECKS}
+${CAUSTIC_SWAY}
+${GLOW_FALL}
 uniform sampler2D tBg;
 uniform mat4 uViewProj;
 uniform float uTime, uAgitation, uLensLight, uSparkle;
@@ -359,15 +376,17 @@ void main() {
   vec2 away = -normalize(uKeyDir.xz + vec2(1e-5));
   vec2 dir = vWorldPos.xz / max(length(vWorldPos.xz), 1e-4);
   float pool = 0.2 + 0.8 * smoothstep(-0.2, 0.9, dot(dir, away));
-  vec3 light = uKey * uLensLight + uGlowColor * 0.5 + uAmbient * 0.4;
-  float ring = exp(-pow((r - 0.92) / 0.05, 2.0));
+  float glow = glowFall(vWorldPos, uGlowPos);
+  vec3 light = uKey * uLensLight + uGlowColor * glow + uAmbient * 0.4;
+  // 光の輪は天板の弧と同じ揺れを弱めに受ける
+  vec2 sw = causticSway(dir.x * 1.5 + dir.y * 0.5, uTime, uAgitation);
+  float ring = exp(-pow((r - 0.92 - sw.x * RING_SWAY * 3.0) / 0.05, 2.0)) * mix(1.0, sw.y, RING_SWAY);
   // 斜めに見下ろすので、奥行き方向を縮めて粒が丸く見えるように
   float sk = specks(vec2(vWorldPos.x, vWorldPos.z * 0.32) / SPARKLE_CELL, uTime + 17.0, uAgitation);
   sk *= smoothstep(0.55, 0.85, r);
   vec3 col = under * 0.9 + light * pool * (ring * 0.07 + sk * uSparkle * 0.6);
-  // 夜は海月の光が底に落ちる
-  vec3 gd = vWorldPos - uGlowPos;
-  col += uGlowColor * 0.04 / (dot(gd, gd) * 30.0 + 1.0);
+  // 夜は海月の光が底に落ちる（海月に近いところだけ）
+  col += uGlowColor * glow * 0.12;
   float a = 0.9 * (1.0 - smoothstep(0.985, 1.0, r));
   gl_FragColor = vec4(col * a, a);
 }
@@ -392,14 +411,16 @@ void main() {
 /** 水面。少し見下ろす構図なので、縁が細く光る程度。夜は裏側に海月の光がうっすら映る */
 export const SURFACE_FRAG = /* glsl */ `
 ${common}
+${JAR_DEFINES}
+${GLOW_FALL}
 uniform vec3 uKey, uAmbient, uGlowPos, uGlowColor;
 in vec3 vWorldPos;
 in vec2 vUv;
 void main() {
   float rim = smoothstep(0.9, 1.0, vUv.x);
-  vec3 gd = uGlowPos - vWorldPos;
-  float g = 1.0 / (dot(gd.xz, gd.xz) * 40.0 + 1.0);
-  vec3 col = (uAmbient * 0.5 + uKey * 0.1) * rim * 0.6 + uGlowColor * g * 0.05;
+  // 水面の裏に海月の光がうっすら映る（海月が水面に近いほど明るい）
+  float g = glowFall(vWorldPos, uGlowPos);
+  vec3 col = (uAmbient * 0.5 + uKey * 0.1) * rim * 0.6 + uGlowColor * g * 0.08;
   gl_FragColor = vec4(col, 0.03 + 0.05 * rim);
 }
 `;

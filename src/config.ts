@@ -104,15 +104,34 @@ export const JAR = {
   sparkleStrength: 0.7,
 } as const;
 
-/** 天板に落ちる瓶の影と、瓶がレンズになって集める光 */
+/** 天板に落ちる瓶の影と、瓶がレンズになって集める光（光の弧） */
 export const TABLE = {
   /**
    * 影と光の弧を落とす光の向き（光の来る方）。窓は左の画面外。
    * 天板の見える所（瓶の手前・右）に弧が落ちるよう、少し奥から差す向きにしている
    */
   lightDir: [-0.42, 0.55, -0.72] as Vec3,
-  /** 水の円筒の焦点までの距離（瓶の軸から） */
-  focusDistance: 0.6,
+  /** 光の弧の、瓶の軸からの距離。縁を通る光ほど手前で集まるので弧になる */
+  arcFocus: 0.45,
+  /** 弧の太さ（ぼかし）と、天板の木目をどれだけ明るくするか */
+  arcWidth: 0.035,
+  arcGain: 1.6,
+  /** 瓶の縁（影の始まり）から弧までを淡くつなぐ光（弧に対する割合） */
+  arcFill: 0.35,
+} as const;
+
+/**
+ * 瓶が集めた光（天板の弧、瓶底の光の輪）の揺らめき。水はいつもわずかに動いているので、
+ * 数秒の周期でゆっくり揺れる。海月の拍動で水面が揺れると少し強まり、また落ち着く
+ */
+export const CAUSTIC = {
+  /** 位置の揺れ（瓶の高さ単位）と、明るさのゆらぎ（割合） */
+  sway: 0.016,
+  flicker: 0.14,
+  /** 水面の揺れ（0〜1）が最大のとき、揺れが何倍になるか */
+  agitationBoost: 2.0,
+  /** 瓶底の光の輪にかける揺れの割合 */
+  ringSway: 0.4,
 } as const;
 
 /** 水 */
@@ -319,6 +338,8 @@ export const JELLY_LOOK = {
   /** 周りを照らす光の中心（傘のローカル）と、その強さ */
   lightCenterY: 0.15,
   lightStrength: 0.6,
+  /** 光が瓶のガラスや底に回り込むとき、明るさが 1/4 になる距離（瓶の高さ単位） */
+  lightFalloff: 0.16,
 } as const;
 
 /** 光の状態の見本。keyDir は光の来る向き（窓は左の画面外） */
@@ -345,12 +366,12 @@ export const LIGHT_LOOKS = {
   day: {
     day: 1, dusk: 0, night: 0, dawnTint: 0,
     keyColor: [1.0, 0.97, 0.92], keyDir: [-0.85, 0.5, 0.3],
-    ambient: [0.26, 0.26, 0.26], glow: 0.08, lensLight: 1.0, shadow: 0.2,
+    ambient: [0.26, 0.26, 0.26], glow: 0.08, lensLight: 1.0, shadow: 0.3,
   },
   dusk: {
     day: 0, dusk: 1, night: 0, dawnTint: 0,
     keyColor: [1.0, 0.5, 0.18], keyDir: [-0.9, 0.3, 0.3],
-    ambient: [0.12, 0.075, 0.05], glow: 0.45, lensLight: 0.75, shadow: 0.28,
+    ambient: [0.12, 0.075, 0.05], glow: 0.45, lensLight: 0.75, shadow: 0.34,
   },
   night: {
     day: 0, dusk: 0, night: 1, dawnTint: 0,
@@ -360,7 +381,7 @@ export const LIGHT_LOOKS = {
   dawn: {
     day: 0.5, dusk: 0, night: 0.5, dawnTint: 1,
     keyColor: [0.55, 0.68, 1.0], keyDir: [-0.9, 0.25, 0.3],
-    ambient: [0.07, 0.085, 0.12], glow: 0.7, lensLight: 0.25, shadow: 0.05,
+    ambient: [0.07, 0.085, 0.12], glow: 0.7, lensLight: 0, shadow: 0,
   },
 } satisfies Record<string, LightLook>;
 
@@ -383,6 +404,15 @@ export const LIGHT_SCHEDULE: ReadonlyArray<{ from: 'sunrise' | 'sunset'; minutes
   { from: 'sunset', minutes: 5, look: 'dusk' },
   { from: 'sunset', minutes: 55, look: 'night' },
 ];
+
+/**
+ * 窓から日が直接差す時間。瓶の影と光の弧はこの間だけ出す（日の出前・日の入り後・夜は出さない）。
+ * 日の出から riseRampMinutes かけて差しはじめ、日の入りの setRampMinutes 前から消えていく
+ */
+export const DIRECT_SUN = {
+  riseRampMinutes: 30,
+  setRampMinutes: 25,
+} as const;
 
 /** 夕方、瓶の縁に一瞬だけ温度が乗る時刻（日の入りから何分前か）と、その幅（時） */
 export const RIM_WARM = {
