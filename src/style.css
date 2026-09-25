@@ -95,12 +95,22 @@ body {
   font-size: 11px;
 }
 
-/* 夜のデスクライトのオン・オフ。夜の間だけ画面下に出す */
-.lamp-toggle {
+/*
+ * 画面下の隅のアイコン。中央は瓶の点3つに空けておく。
+ * 右下は瓶に何かをする操作（ライト、あとで餌を一番隅に足す）、左下は日誌（あとで足す）
+ */
+.jar-actions {
   position: fixed;
-  left: 50%;
-  bottom: calc(env(safe-area-inset-bottom) + 14px);
-  transform: translateX(-50%);
+  right: calc(env(safe-area-inset-right) + 10px);
+  bottom: calc(env(safe-area-inset-bottom) + 12px);
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+/* 夜のデスクライトのオン・オフ。夜の間だけ出す */
+.lamp-toggle {
   width: 44px;
   height: 44px;
   display: grid;
@@ -131,7 +141,7 @@ body {
 }
 
 .lamp-toggle.on {
-  color: rgb(255, 232, 200);
+  color: rgb(214, 230, 255);
 }
 
 .lamp-toggle.on svg {

@@ -1,4 +1,5 @@
-// 夜のデスクライトのオン・オフ。夜の間だけ画面下に小さなアイコンを出す（昼・夕方は出さない）。
+// 夜のデスクライトのオン・オフ。夜の間だけ右下の隅に小さなアイコンを出す（昼・夕方は出さない）。
+// 右下は瓶に何かをする操作の場所（あとで餌をいちばん隅に並べる）。中央は瓶の点3つに空けておく。
 
 const ICON = `
 <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor"
@@ -8,6 +9,17 @@ const ICON = `
   <path d="M14.8 5h3.4l1.8 4h-7z" />
   <path class="beam" d="M14 11.2l-0.9 1.9M16.5 11.4v2.1M19 11.2l0.9 1.9" />
 </svg>`;
+
+/** 右下の、瓶に何かをする操作のアイコンを並べる場所 */
+function jarActions(): HTMLElement {
+  let box = document.querySelector<HTMLElement>('.jar-actions');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'jar-actions';
+    document.body.appendChild(box);
+  }
+  return box;
+}
 
 export class LampToggle {
   private readonly el: HTMLButtonElement;
@@ -26,7 +38,7 @@ export class LampToggle {
     // 画面をつつく操作として拾われないように
     el.addEventListener('pointerdown', (e) => e.stopPropagation());
     el.addEventListener('pointerup', (e) => e.stopPropagation());
-    document.body.appendChild(el);
+    jarActions().appendChild(el);
     this.el = el;
     this.render();
   }
