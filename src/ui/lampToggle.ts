@@ -43,6 +43,12 @@ export class LampToggle {
     this.render();
   }
 
+  /** オン・オフを外から合わせる（読み込んだ設定など） */
+  set(on: boolean): void {
+    this.on = on;
+    this.render();
+  }
+
   /** 夜（ライトが点く時間）だけ出す */
   setVisible(visible: boolean): void {
     this.el.classList.toggle('shown', visible);
