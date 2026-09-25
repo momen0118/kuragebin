@@ -54,6 +54,17 @@ export const ROOM = {
   dawnTint: [0.78, 0.88, 1.14] as Vec3,
   /** 写真より横長の画面で、写真の左右の端を暗くぼかして黒に溶かす幅（写真の幅に対する割合） */
   edgeFade: 0.18,
+  /**
+   * 手前の天板。写真は天板の手前の縁（昼の写真の y で 1354〜1370）で切れ、その下は暗い帯になっている。
+   * 縁を見せないよう、foregroundStart より下は天板のいちばん下の帯（foregroundBand の高さ）を下へ引き伸ばし、
+   * 下ほど横に強くぼかして暗くし、黒に溶かす。カメラに近い手前はピントが合っていない見え方にする。
+   * 位置と長さは昼の写真の y（写真px）。foregroundStart + foregroundBand は縁より上に収める
+   */
+  foregroundStart: 1310,
+  foregroundBand: 28,
+  /** 黒に溶けきるまでの長さと、そこでの横のぼけの幅（写真px） */
+  foregroundFade: 95,
+  foregroundDefocus: 60,
 } as const;
 
 /** 瓶の形 */

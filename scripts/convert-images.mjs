@@ -29,12 +29,16 @@ for (const name of BACKGROUNDS) {
   console.log(`${dst}  ${info.width}x${info.height}  ${(info.size / 1024).toFixed(0)} KB`);
 }
 
-// アイコン：元画像（正方形、黒地に余白あり）を縮小する。
+// アイコン：元画像（正方形、黒地に余白あり）から作る。
+// 普通のアイコンは瓶が大きく見えるよう、瓶を中心に少し寄せて切り抜く（ICON_ZOOM 倍）。
 // maskable は元画像の余白をそのまま使う。絵が安全域（中心から半径 40%）からはみ出すときだけ、黒地を足して縮める
 const ICON_SRC = 'art/icon-source.png';
+const ICON_ZOOM = 1.25;
 const SAFE_RADIUS = 0.4;
 /** これより暗い画素は地とみなす（0〜255） */
 const GROUND = 8;
+/** 瓶の範囲を測るときの明るさのしきい値（ふちのかすかな光は含めない） */
+const SUBJECT = 16;
 
 await mkdir('public/icons', { recursive: true });
 
@@ -52,9 +56,34 @@ async function contentRadius(src) {
   return r / info.width;
 }
 
+/** 絵（瓶）の外接矩形の中心（画素） */
+async function subjectCenter(src) {
+  const { data, info } = await sharp(src).removeAlpha().greyscale().raw().toBuffer({ resolveWithObject: true });
+  let x0 = info.width;
+  let y0 = info.height;
+  let x1 = 0;
+  let y1 = 0;
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      if (data[y * info.width + x] > SUBJECT) {
+        x0 = Math.min(x0, x);
+        y0 = Math.min(y0, y);
+        x1 = Math.max(x1, x);
+        y1 = Math.max(y1, y);
+      }
+    }
+  }
+  return [(x0 + x1) / 2, (y0 + y1) / 2];
+}
+
 const iconMeta = await sharp(ICON_SRC).metadata();
 const reach = await contentRadius(ICON_SRC);
 const shrink = Math.min(1, SAFE_RADIUS / reach);
+// 普通のアイコンの切り抜き：瓶の中心に合わせ、元画像からはみ出さない範囲で
+const [scx, scy] = await subjectCenter(ICON_SRC);
+const crop = Math.round(iconMeta.width / ICON_ZOOM);
+const clampTo = (v) => Math.min(Math.max(Math.round(v - crop / 2), 0), iconMeta.width - crop);
+const cropBox = { left: clampTo(scx), top: clampTo(scy), width: crop, height: crop };
 
 const ICONS = [
   { file: 'icon-192.png', size: 192, maskable: false },
@@ -67,6 +96,7 @@ const ICONS = [
 for (const { file, size, maskable } of ICONS) {
   const dst = `public/icons/${file}`;
   let img = sharp(ICON_SRC).removeAlpha();
+  if (!maskable) img = sharp(await img.extract(cropBox).toBuffer());
   if (maskable && shrink < 1) {
     // 縮めた絵を、元画像の地の色で囲む
     const inner = Math.round(iconMeta.width * shrink);
@@ -79,5 +109,6 @@ for (const { file, size, maskable } of ICONS) {
     img = sharp(await img.toBuffer());
   }
   const info = await img.resize(size, size, { kernel: 'lanczos3' }).png({ compressionLevel: 9, adaptiveFiltering: true }).toFile(dst);
-  console.log(`${dst}  ${info.width}x${info.height}  ${(info.size / 1024).toFixed(0)} KB${maskable ? `  (絵の半径 ${(reach * 100).toFixed(1)}%、縮小 ${shrink.toFixed(2)})` : ''}`);
+  const note = maskable ? `絵の半径 ${(reach * 100).toFixed(1)}%、縮小 ${shrink.toFixed(2)}` : `切り抜き ${JSON.stringify(cropBox)}`;
+  console.log(`${dst}  ${info.width}x${info.height}  ${(info.size / 1024).toFixed(0)} KB  (${note})`);
 }

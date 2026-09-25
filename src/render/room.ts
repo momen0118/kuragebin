@@ -1,6 +1,7 @@
 // 部屋（背景写真）。時刻に合わせて隣り合う2枚を重ね、上ほど強くぼかす。
 // 写真ごとのずれは PHOTO_ALIGN で昼の写真に合わせる。
 // 写真より横長の画面では写真を高さいっぱいに置き、左右の端を暗くぼかして黒に溶かす。
+// 写真の下端（天板の手前の縁と、その下の暗い帯）は見せず、天板が手前へ続いてぼけながら闇に溶けるようにする。
 // ぼかした版は読み込み時に一度だけ作る。合成結果は光が変わったときだけ作り直す。
 import {
   LinearFilter,
@@ -53,6 +54,10 @@ const MAX_CURVE = 8;
 const COMPOSITE_FRAG = /* glsl */ `
 ${common}
 ${LAMP_GLSL}
+#define FG_START ${ROOM.foregroundStart.toFixed(1)}
+#define FG_BAND ${ROOM.foregroundBand.toFixed(1)}
+#define FG_FADE ${ROOM.foregroundFade.toFixed(1)}
+#define FG_DEFOCUS ${ROOM.foregroundDefocus.toFixed(1)}
 uniform sampler2D tFull[4];
 uniform sampler2D tMid[4];
 uniform sampler2D tStrong[4];
@@ -115,18 +120,8 @@ vec3 photo(int i, vec2 uvRef, float b) {
   return b < 0.5 ? mix(a, m, b * 2.0) : mix(m, s, b * 2.0 - 1.0);
 }
 
-void main() {
-  vec2 uv = vUv * uCoverScale + uCoverOffset;
-  float py = (1.0 - uv.y) * ${PHOTO.height.toFixed(1)};
-  // 横長の画面：写真の左右の端ほどぼかし、暗くして黒に溶かす
-  float edge = 1.0;
-  float extra = 0.0;
-  if (uEdgeFade > 0.0) {
-    float e = min(uv.x, 1.0 - uv.x);
-    edge = smoothstep(0.0, uEdgeFade, e);
-    extra = 1.0 - edge;
-  }
-  float b = min(1.0, blurAmount(py) + extra);
+// 写真の uv の点の部屋の色：時刻の写真の重ね合わせ、明け方の青み、夜のデスクライトの光だまり
+vec3 roomAt(vec2 uv, float b) {
   vec3 c = vec3(0.0);
   if (uWeights.x > 0.0005) c += uWeights.x * photo(0, uv, b);
   if (uWeights.y > 0.0005) c += uWeights.y * photo(1, uv, b);
@@ -143,6 +138,49 @@ void main() {
   }
   // 確認用：別の写真を半透明で重ねる
   if (uOverlay >= 0) c = mix(c, photo(uOverlay, uv, b), 0.5);
+  return c;
+}
+
+// 手前の天板。写真の下端（天板の手前の縁と、その下の暗い帯）の代わりに、縁より少し上から下は
+// 天板のいちばん下の帯を下へ引き伸ばす（手前ほど大きく写る）。下ほど横に強くぼかし、暗くして黒に溶かす。
+// t は引き伸ばしの始まりからの距離（写真px）
+vec3 foreground(float x, float t, float b0) {
+  // 引き伸ばし：始まりでは写真そのまま、下へ行くほど帯の下端（縁の手前）へ寄って大きく写る
+  float ys = FG_START + FG_BAND * (1.0 - exp(-t / FG_BAND));
+  float k = saturate(t / FG_FADE);
+  float b = mix(b0, 1.0, smoothstep(0.0, 0.6, k));
+  // ピントの外れ：手前ほど横に大きくぼける
+  float sigma = FG_DEFOCUS * k / ${PHOTO.width.toFixed(1)};
+  vec2 uv = vec2(x, 1.0 - ys / ${PHOTO.height.toFixed(1)});
+  vec3 sum = vec3(0.0);
+  float wsum = 0.0;
+  for (int i = -4; i <= 4; i++) {
+    float o = float(i) * 0.5;
+    float w = exp(-o * o * 0.5);
+    sum += roomAt(uv + vec2(o * sigma, 0.0), b) * w;
+    wsum += w;
+  }
+  // 下ほど暗く、黒に溶かす
+  return sum / wsum * (1.0 - smoothstep(0.0, 1.0, k));
+}
+
+void main() {
+  vec2 uv = vUv * uCoverScale + uCoverOffset;
+  float py = (1.0 - uv.y) * ${PHOTO.height.toFixed(1)};
+  // 横長の画面：写真の左右の端ほどぼかし、暗くして黒に溶かす
+  float edge = 1.0;
+  float extra = 0.0;
+  if (uEdgeFade > 0.0) {
+    float e = min(uv.x, 1.0 - uv.x);
+    edge = smoothstep(0.0, uEdgeFade, e);
+    extra = 1.0 - edge;
+  }
+  vec3 c;
+  if (py > FG_START) {
+    c = foreground(uv.x, py - FG_START, min(1.0, blurAmount(FG_START) + extra));
+  } else {
+    c = roomAt(uv, min(1.0, blurAmount(py) + extra));
+  }
   c *= edge * edge;
   // 確認用：屈折の写り方を見るための縦縞
   if (uPattern == 1) {
