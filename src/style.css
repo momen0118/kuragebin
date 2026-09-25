@@ -94,3 +94,60 @@ body {
   opacity: 0.7;
   font-size: 11px;
 }
+
+/* 夜のデスクライトのオン・オフ。夜の間だけ画面下に出す */
+.lamp-toggle {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 14px);
+  transform: translateX(-50%);
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgb(255, 255, 255);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 1.2s ease,
+    color 0.4s ease;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 線の重なりが濃くならないよう、透明度は絵全体にかける */
+.lamp-toggle svg {
+  opacity: 0.26;
+  transition: opacity 0.4s ease;
+}
+
+.lamp-toggle.shown {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.lamp-toggle.on {
+  color: rgb(255, 232, 200);
+}
+
+.lamp-toggle.on svg {
+  opacity: 0.6;
+}
+
+.lamp-toggle .beam {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.lamp-toggle.on .beam {
+  opacity: 1;
+}
+
+.lamp-toggle:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
+}

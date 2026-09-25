@@ -14,9 +14,10 @@ import {
   ShaderMaterial,
   type Vector3,
 } from 'three';
-import { BELL, JAR, TENTACLES } from '../../config';
+import { BELL, JAR, JELLY_LOOK, TENTACLES } from '../../config';
 import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
+import { LAMP_GLSL, lampUniforms } from '../lamp';
 import type { BellLook } from './bell';
 import { frag } from '../shaders/glsl';
 
@@ -56,6 +57,7 @@ void main() {
 `;
 
 const FRAG = /* glsl */ `
+${LAMP_GLSL}
 uniform float uGlowPass;
 uniform float uBrightness;
 uniform vec3 uKey, uAmbient;
@@ -69,13 +71,15 @@ void main() {
   float across = exp(-vSide * vSide * 2.5);
   float along = (1.0 - smoothstep(0.4, 1.0, vT)) * (0.5 + 0.5 * smoothstep(0.0, 0.1, vT));
   float a = across * along * vThin * (0.45 + 0.55 * vSeed) * uBrightness;
-  vec3 glow = uGlow * a * (0.08 + 0.14 * (1.0 - vT));
+  float scatter = a * (0.08 + 0.14 * (1.0 - vT));
+  vec3 glow = uGlow * scatter;
   if (uGlowPass > 0.5) {
     gl_FragColor = vec4(glow, 0.0);
     return;
   }
-  vec3 light = uAmbient * 0.9 + uKey * 0.3;
-  vec3 col = uBody * light * a * 0.6 + glow;
+  vec3 light = uAmbient * 0.9 + uKey * 0.3 + uLampColor * lampSpot(vWorldPos) * 0.3;
+  // 夜はデスクライトの光が細い糸で散って、ほのかに見える
+  vec3 col = uBody * light * a * 0.6 + glow + uBody * uLampColor * lampSpot(vWorldPos) * scatter * ${JELLY_LOOK.lampScatter.toFixed(3)};
   gl_FragColor = vec4(col, a * 0.15);
 }
 `;
@@ -159,6 +163,7 @@ export class Tentacles {
         blendSrc: OneFactor,
         blendDst: OneMinusSrcAlphaFactor,
         uniforms: {
+          ...lampUniforms(shared),
           uResolution: shared.uResolution,
           uPixelRatio: shared.uPixelRatio,
           uWidth: { value: TENTACLES.widthPx },

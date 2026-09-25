@@ -15,6 +15,7 @@ import { JAR, WATER } from '../config';
 import type { Rng } from '../sim/rng';
 import type { SharedUniforms } from './uniforms';
 import { GLOW_FALL } from './jarShaders';
+import { LAMP_GLSL, lampUniforms } from './lamp';
 import common from './shaders/common.glsl?raw';
 import { frag } from './shaders/glsl';
 
@@ -35,6 +36,7 @@ const DEFINES = /* glsl */ `
 #define SNOW_AMBIENT ${WATER.snowAmbient.toFixed(3)}
 #define SNOW_WINDOW ${WATER.snowWindow.toFixed(3)}
 #define SNOW_GLOW ${WATER.snowGlow.toFixed(3)}
+#define SNOW_LAMP ${WATER.snowLamp.toFixed(3)}
 #define SNOW_OCCLUSION ${WATER.snowOcclusion.toFixed(3)}
 `;
 
@@ -42,6 +44,7 @@ const SNOW_VERT = /* glsl */ `
 ${common}
 ${DEFINES}
 ${GLOW_FALL}
+${LAMP_GLSL}
 in vec4 aSeed;
 in vec4 aSeed2;
 uniform float uTime;
@@ -84,10 +87,15 @@ void main() {
   vAlpha = fade * cover * bright * mix(FAR_FADE, 1.0, front);
 
   // 粒は自分では光らない。昼は部屋の光と、窓の側（左）にだけ当たる窓の光。
-  // 夜は海月の光が届く粒だけが見え、海月から離れると闇に消える
+  // 夜はデスクライトの円錐の中の粒だけが見え、外は闇。光が奥から手前へ抜けるほど明るく見える（前方散乱）
   float side = saturate(0.5 - 0.5 * p.x / INNER_R);
+  vec3 toCam = normalize(cameraPosition - p);
+  float forward = saturate(dot(-lampDir(p), toCam));
+  float lamp = lampSpot(p) * (0.55 + 0.9 * forward * forward);
+  // 光る種がいるときは、その光が届く粒も見える
   float lit = glowFall(p, uGlowPos);
   vColor = uAmbient * SNOW_AMBIENT + uKey * SNOW_WINDOW * side * side
+         + uLampColor * lamp * SNOW_LAMP
          + uGlowColor * lit * sqrt(lit) * SNOW_GLOW;
 }
 `;
@@ -108,7 +116,9 @@ const BUBBLE_VERT = /* glsl */ `
 uniform float uRadius;
 uniform vec2 uResolution;
 out float vDepth;
+out vec3 vWorld;
 void main() {
+  vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
   float proj = projectionMatrix[1][1] * uResolution.y * 0.5;
@@ -119,15 +129,17 @@ void main() {
 
 const BUBBLE_FRAG = /* glsl */ `
 ${common}
+${LAMP_GLSL}
 uniform vec3 uKey, uAmbient, uGlowColor;
 uniform float uAlpha;
+in vec3 vWorld;
 void main() {
   vec2 q = gl_PointCoord * 2.0 - 1.0;
   float d = length(q);
   if (d > 1.0) discard;
   float ring = smoothstep(0.6, 0.92, d) * (1.0 - smoothstep(0.92, 1.0, d));
   float hl = exp(-dot(q - vec2(-0.32, -0.36), q - vec2(-0.32, -0.36)) * 28.0);
-  vec3 lightC = uAmbient * 1.2 + uKey * 0.5 + uGlowColor * 0.25;
+  vec3 lightC = uAmbient * 1.2 + uKey * 0.5 + uGlowColor * 0.25 + uLampColor * lampSpot(vWorld) * 0.6;
   vec3 col = lightC * (ring * 0.9 + hl * 1.6);
   float a = (ring * 0.35 + hl * 0.2) * uAlpha;
   gl_FragColor = vec4(col * uAlpha, a);
@@ -163,6 +175,7 @@ export function createSnow(shared: SharedUniforms, rng: Rng): Points {
         vertexShader: SNOW_VERT,
         fragmentShader: frag(SNOW_FRAG),
         uniforms: {
+          ...lampUniforms(shared),
           uTime: shared.uTime,
           uResolution: shared.uResolution,
           uKey: shared.uKey,
@@ -201,6 +214,7 @@ export class Bubble {
           fragmentShader: frag(BUBBLE_FRAG),
           uniforms: {
             uRadius: { value: WATER.bubbleRadius },
+            ...lampUniforms(shared),
             uResolution: shared.uResolution,
             uKey: shared.uKey,
             uAmbient: shared.uAmbient,

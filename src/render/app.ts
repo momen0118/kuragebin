@@ -14,7 +14,7 @@ import {
   type Texture,
   type WebGLRenderTarget,
 } from 'three';
-import { BELL, JAR, PHOTO, RENDER, RIM_WARM, WATER, type PhotoName } from '../config';
+import { BELL, JAR, LAMP, PHOTO, RENDER, RIM_WARM, WATER, type PhotoName } from '../config';
 import { createRng } from '../sim/rng';
 import { Bloom } from './bloom';
 import { coverTransform, solvePhotoCamera, type PhotoCamera } from './camera';
@@ -49,7 +49,7 @@ export class App {
   private readonly bgScene = new Scene();
   private readonly contentScene = new Scene();
   private readonly glassScene = new Scene();
-  private readonly room = new Room();
+  private readonly room: Room;
   private readonly jar: Jar;
   private readonly jelly: Jellyfish;
   private readonly bubble: Bubble;
@@ -70,6 +70,10 @@ export class App {
   private fade = 0;
   /** 水面の揺れ（0〜1）。拍動やつつきで立ち、ゆっくり収まる */
   private agitation = 0;
+  /** 夜のデスクライト：使うかどうか（利用者の切り替え、初期はオン）と、今の点き具合（0〜1） */
+  private lampOn = true;
+  private lampLevel = 0;
+  private lampReady = false;
   private readonly tmpV = new Vector3();
   private readonly tmpV2 = new Vector3();
   private readonly tmpM = new Matrix4();
@@ -98,6 +102,7 @@ export class App {
     this.glowRT = createTarget(1, 1);
 
     const pc = this.photoCam;
+    this.room = new Room(this.shared, pc);
     this.camera = new PerspectiveCamera(pc.vFovDeg, 1, 0.05, 20);
     this.camera.position.set(...pc.position);
     this.camera.rotation.set(-pc.pitch, 0, 0);
@@ -171,11 +176,39 @@ export class App {
     const s = this.shared;
     s.uKey.value.set(...light.key);
     s.uKeyDir.value.set(...light.keyDir);
-    s.uAmbient.value.set(...light.ambient);
     s.uLensLight.value = light.lensLight;
     s.uShadow.value = light.shadow;
     s.uRimWarm.value = light.rimWarm;
-    this.jelly.setGlow(light.glow);
+    // 起動したときは、デスクライトをいきなりその時刻の状態にする
+    if (!this.lampReady) {
+      this.lampReady = true;
+      this.lampLevel = this.lampTarget();
+    }
+    this.applyLamp();
+  }
+
+  /** 夜のデスクライトを使うか（オフにすると瓶はほぼ闇になる） */
+  setLampOn(on: boolean): void {
+    this.lampOn = on;
+  }
+
+  get lampIsOn(): boolean {
+    return this.lampOn;
+  }
+
+  private lampTarget(): number {
+    return this.lampOn ? this.light.lamp : 0;
+  }
+
+  /** デスクライトの点き具合を uniform に反映する（光だまりの照り返しで、まわりもほんのり明るい） */
+  private applyLamp(): void {
+    const s = this.shared;
+    const k = this.lampLevel * LAMP.intensity;
+    s.uLampColor.value.set(LAMP.color[0] * k, LAMP.color[1] * k, LAMP.color[2] * k);
+    s.uLampLevel.value = this.lampLevel;
+    const a = this.light.ambient;
+    const bounce = LAMP.bounce * this.lampLevel;
+    s.uAmbient.value.set(a[0] + LAMP.color[0] * bounce, a[1] + LAMP.color[1] * bounce, a[2] + LAMP.color[2] * bounce);
   }
 
   /** 確認用：写真を1枚に固定する／別の写真を半透明で重ねる（null で時刻どおり） */
@@ -233,6 +266,14 @@ export class App {
   simulate(dt: number): void {
     const d = Math.min(Math.max(dt, 0), RENDER.maxFrameDt);
     this.time += d;
+    // デスクライトは点く・消えるときに少しだけかけて変わる
+    const target = this.lampTarget();
+    if (this.lampLevel !== target) {
+      const step = d / LAMP.fadeSeconds;
+      this.lampLevel = target > this.lampLevel ? Math.min(target, this.lampLevel + step) : Math.max(target, this.lampLevel - step);
+      this.applyLamp();
+      this.roomDirty = true;
+    }
     this.fade = Math.min(1, this.fade + d / RENDER.fadeInSeconds);
     this.shared.uTime.value = this.time;
     this.jelly.update(d);
@@ -272,24 +313,28 @@ export class App {
     r.clear(true, false, false);
     r.render(this.contentScene, this.camera);
 
-    // 3. 光る部分だけを描いてブルームにする
-    r.setRenderTarget(this.glowRT);
-    r.setClearColor(0x000000, 1);
-    r.clear(true, false, false);
-    s.uGlowPass.value = 1;
-    this.camera.layers.set(GLOW_LAYER);
-    r.render(this.contentScene, this.camera);
-    s.uGlowPass.value = 0;
-    this.camera.layers.set(0);
-    r.setClearColor(RENDER.clearColor, 1);
-    this.bloom.render(r, this.glowRT);
+    // 3. 光る部分だけを描いてブルームにする（ミズクラゲは光らないので、光る種がいるときだけ）
+    const glowing = this.jelly.glowing;
+    if (glowing) {
+      r.setRenderTarget(this.glowRT);
+      r.setClearColor(0x000000, 1);
+      r.clear(true, false, false);
+      s.uGlowPass.value = 1;
+      this.camera.layers.set(GLOW_LAYER);
+      r.render(this.contentScene, this.camera);
+      s.uGlowPass.value = 0;
+      this.camera.layers.set(0);
+      r.setClearColor(RENDER.clearColor, 1);
+      this.bloom.render(r, this.glowRT);
+    }
+    const bloomStrength = glowing ? RENDER.bloomStrength : 0;
 
     // 4. 画面へ。背景を出してから、手前のガラスが瓶の部分を描く
     const cu = this.composite.uniforms;
     cu.tBg.value = this.bgRT.texture;
     cu.tContents.value = this.contentRT.texture;
     cu.tBloom.value = this.bloom.texture;
-    cu.uBloomStrength.value = RENDER.bloomStrength;
+    cu.uBloomStrength.value = bloomStrength;
     cu.uFade.value = this.fade;
     this.tmpM.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     cu.uViewProj.value.copy(this.tmpM);
@@ -313,7 +358,7 @@ export class App {
     fu.tRoomWide.value = this.roomWideRT.texture;
     fu.tContents.value = this.contentRT.texture;
     fu.tBloom.value = this.bloom.texture;
-    fu.uBloomStrength.value = RENDER.bloomStrength;
+    fu.uBloomStrength.value = bloomStrength;
     fu.uFade.value = this.fade;
     r.setRenderTarget(null);
     r.render(this.glassScene, this.camera);

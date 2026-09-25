@@ -2,6 +2,7 @@ import './style.css';
 import { DebugPanel } from './debug/panel';
 import { App } from './render/app';
 import { hourOf, lightAt, sunOf } from './render/lighting';
+import { LampToggle } from './ui/lampToggle';
 import { onTap } from './ui/tap';
 
 const params = new URLSearchParams(location.search);
@@ -48,13 +49,18 @@ async function main(): Promise<void> {
   window.addEventListener('resize', () => layout(canvas, app));
   await app.load(import.meta.env.BASE_URL);
 
+  // 夜のデスクライトのオン・オフ（初期はオン）。アイコンは夜の間だけ出す
+  const lampToggle = new LampToggle((on) => app.setLampOn(on), app.lampIsOn);
+
   let hourOverride: number | null = null;
   let lightTimer = 0;
   const applyLight = (): void => {
     const now = new Date();
     const sun = sunOf(now);
     const h = hourOverride ?? hourOf(now);
-    app.setLight(lightAt(h, sun));
+    const light = lightAt(h, sun);
+    app.setLight(light);
+    lampToggle.setVisible(light.lamp > 0.5);
     panel?.showHour(h, sun.sunrise, sun.sunset);
   };
 
@@ -93,6 +99,7 @@ async function main(): Promise<void> {
       },
       setPhoto: (only: Parameters<App['setPhotoDebug']>[0], overlay: Parameters<App['setPhotoDebug']>[1]) =>
         app.setPhotoDebug(only, overlay),
+      setLamp: (on: boolean) => app.setLampOn(on),
     };
     w.__kurageReady = true;
     return;

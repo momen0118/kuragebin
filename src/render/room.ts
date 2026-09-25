@@ -14,10 +14,11 @@ import {
   type WebGLRenderer,
   type WebGLRenderTarget,
 } from 'three';
-import { PHOTO, PHOTO_ALIGN, ROOM, type PhotoName } from '../config';
+import { LAMP, PHOTO, PHOTO_ALIGN, ROOM, type PhotoName } from '../config';
 import { FullscreenPass } from './fullscreen';
 import type { LightState } from './lighting';
-import { coverTransform } from './camera';
+import { coverTransform, type PhotoCamera } from './camera';
+import { LAMP_GLSL, lampUniforms, type LampUniforms } from './lamp';
 import { createTarget } from './targets';
 import common from './shaders/common.glsl?raw';
 
@@ -51,6 +52,7 @@ const MAX_CURVE = 8;
 
 const COMPOSITE_FRAG = /* glsl */ `
 ${common}
+${LAMP_GLSL}
 uniform sampler2D tFull[4];
 uniform sampler2D tMid[4];
 uniform sampler2D tStrong[4];
@@ -66,7 +68,24 @@ uniform int uCurveCount;
 uniform float uEdgeFade;
 uniform int uOverlay;
 uniform int uPattern;
+/** 写真のカメラ（天板の上の点を求めるため） */
+uniform vec3 uCamPos;
+uniform float uPitch;
+uniform float uTableBackZ, uTableLeftX;
 in vec2 vUv;
+
+// 写真の uv を通る視線が天板（y = 0）に当たる点。天板の外なら w = 0
+vec4 tablePoint(vec2 uv) {
+  float a = (uv.x - 0.5) * ${PHOTO.width.toFixed(1)} / ${PHOTO.focalPx.toFixed(1)};
+  float b = (uv.y - 0.5) * ${PHOTO.height.toFixed(1)} / ${PHOTO.focalPx.toFixed(1)};
+  float cp = cos(uPitch);
+  float sp = sin(uPitch);
+  vec3 d = vec3(a, b * cp - sp, -b * sp - cp);
+  if (d.y > -1e-4) return vec4(0.0);
+  vec3 P = uCamPos + d * (-uCamPos.y / d.y);
+  float on = smoothstep(uTableBackZ, uTableBackZ + 0.01, P.z) * smoothstep(uTableLeftX, uTableLeftX + 0.01, P.x);
+  return vec4(P, on);
+}
 
 float blurAmount(float py) {
   if (py <= uCurve[0].x) return uCurve[0].y;
@@ -114,6 +133,14 @@ void main() {
   if (uWeights.z > 0.0005) c += uWeights.z * photo(2, uv, b);
   if (uWeights.w > 0.0005) c += uWeights.w * photo(3, uv, b);
   c *= mix(vec3(1.0), uDawnTint, uDawn);
+  // 夜のデスクライト：天板に楕円の光だまり。昼の写真の天板（木目）を、ライトの色で照らす
+  if (uLampLevel > 0.001) {
+    vec4 tp = tablePoint(uv);
+    if (tp.w > 0.0) {
+      float lit = lampSpot(tp.xyz) * saturate(lampDir(tp.xyz).y);
+      c += photo(0, uv, b) * uLampColor * lit * tp.w * ${LAMP.poolGain.toFixed(3)};
+    }
+  }
   // 確認用：別の写真を半透明で重ねる
   if (uOverlay >= 0) c = mix(c, photo(uOverlay, uv, b), 0.5);
   c *= edge * edge;
@@ -165,28 +192,37 @@ export class Room {
     uStep: { value: new Vector2() },
     uSigma: { value: 1 },
   });
-  private composite = new FullscreenPass(COMPOSITE_FRAG, {
-    tFull: { value: [] as Texture[] },
-    tMid: { value: [] as Texture[] },
-    tStrong: { value: [] as Texture[] },
-    uAlign: { value: PHOTO_NAMES.map(alignUniform) },
-    uWeights: { value: new Vector4(1, 0, 0, 0) },
-    uDawn: { value: 0 },
-    uDawnTint: { value: new Vector3(...ROOM.dawnTint) },
-    uCoverScale: { value: new Vector2(1, 1) },
-    uCoverOffset: { value: new Vector2(0, 0) },
-    // シェーダ側の配列の長さにそろえる
-    uCurve: {
-      value: Array.from({ length: MAX_CURVE }, (_, i) => {
-        const [y, a] = ROOM.blurCurve[Math.min(i, ROOM.blurCurve.length - 1)]!;
-        return new Vector2(y, a);
-      }),
-    },
-    uCurveCount: { value: ROOM.blurCurve.length },
-    uEdgeFade: { value: 0 },
-    uOverlay: { value: -1 },
-    uPattern: { value: 0 },
-  });
+  private readonly composite;
+
+  constructor(lamp: LampUniforms, cam: PhotoCamera) {
+    this.composite = new FullscreenPass(COMPOSITE_FRAG, {
+      ...lampUniforms(lamp),
+      uCamPos: { value: new Vector3(...cam.position) },
+      uPitch: { value: cam.pitch },
+      uTableBackZ: { value: cam.tableBackZ },
+      uTableLeftX: { value: cam.tableLeftX },
+      tFull: { value: [] as Texture[] },
+      tMid: { value: [] as Texture[] },
+      tStrong: { value: [] as Texture[] },
+      uAlign: { value: PHOTO_NAMES.map(alignUniform) },
+      uWeights: { value: new Vector4(1, 0, 0, 0) },
+      uDawn: { value: 0 },
+      uDawnTint: { value: new Vector3(...ROOM.dawnTint) },
+      uCoverScale: { value: new Vector2(1, 1) },
+      uCoverOffset: { value: new Vector2(0, 0) },
+      // シェーダ側の配列の長さにそろえる
+      uCurve: {
+        value: Array.from({ length: MAX_CURVE }, (_, i) => {
+          const [y, a] = ROOM.blurCurve[Math.min(i, ROOM.blurCurve.length - 1)]!;
+          return new Vector2(y, a);
+        }),
+      },
+      uCurveCount: { value: ROOM.blurCurve.length },
+      uEdgeFade: { value: 0 },
+      uOverlay: { value: -1 },
+      uPattern: { value: 0 },
+    });
+  }
 
   async load(renderer: WebGLRenderer, baseUrl: string): Promise<void> {
     const textures = await Promise.all(PHOTO_NAMES.map((n) => loadTexture(`${baseUrl}bg/bg-${n}.webp`)));

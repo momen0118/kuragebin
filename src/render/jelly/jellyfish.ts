@@ -24,9 +24,10 @@ export class Jellyfish {
   private readonly matrix = new Matrix4();
   private readonly scale = new Vector3(BELL.radius, BELL.radius, BELL.radius);
   private acc = 0;
-  private glowLevel = 1;
-  /** つつかれたときの光の強まり（0〜1、だんだん消える） */
+  /** つつかれた直後の光（0〜1、だんだん消える）。光る種だけが使う */
   private flash = 0;
+  /** 今の発光の強さ（0 なら光っていない） */
+  private glowNow = 0;
   private cooldown = 0;
   private readonly root: RootFrame = { pos: new Vector3(), dir: new Vector3() };
   private readonly radial = new Vector3();
@@ -53,12 +54,12 @@ export class Jellyfish {
     this.sync();
   }
 
-  /** 時刻による発光の強さを反映する */
-  setGlow(strength: number): void {
-    this.glowLevel = strength;
+  /** 光っているか（ミズクラゲは光らない。光る種を加えたときに発光の描画をする） */
+  get glowing(): boolean {
+    return this.glowNow > 1e-4;
   }
 
-  /** 光が周りを照らす位置（ワールド） */
+  /** 光る種の光が周りを照らす位置（ワールド） */
   glowPosition(out: Vector3): Vector3 {
     return out.set(0, JELLY_LOOK.lightCenterY, 0).applyMatrix4(this.matrix);
   }
@@ -162,7 +163,9 @@ export class Jellyfish {
     (this.bell.profile.image.data as Float32Array).set(this.shape.points);
     this.bell.profile.needsUpdate = true;
     this.bell.contract.value = this.pulse.value(BELL.propagation);
-    const k = this.glowLevel * JELLY_LOOK.glowStrength * (1 + POKE.flash * this.flash);
+    // 発光：いつもの光と、つついた直後だけの光（ミズクラゲはどちらも 0）
+    const k = JELLY_LOOK.glowStrength + JELLY_LOOK.pokeGlow * this.flash;
+    this.glowNow = k;
     this.look.uGlow.value.set(...JELLY_LOOK.glow).multiplyScalar(k);
     this.look.uGonad.value.set(...JELLY_LOOK.gonad).multiplyScalar(k);
     this.tentacles.updateGeometry();

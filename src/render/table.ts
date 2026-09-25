@@ -10,10 +10,11 @@ import {
   SrcAlphaFactor,
   Vector3,
 } from 'three';
-import { JAR, TABLE } from '../config';
+import { JAR, LAMP, TABLE } from '../config';
 import type { PhotoCamera } from './camera';
 import { CAUSTIC_SWAY } from './caustic';
 import { GLOW_FALL } from './jarShaders';
+import { LAMP_GLSL, lampUniforms } from './lamp';
 import type { SharedUniforms } from './uniforms';
 import common from './shaders/common.glsl?raw';
 import { frag } from './shaders/glsl';
@@ -31,6 +32,7 @@ const FRAG = /* glsl */ `
 ${common}
 ${CAUSTIC_SWAY}
 ${GLOW_FALL}
+${LAMP_GLSL}
 #define JAR_R ${JAR.radius.toFixed(5)}
 #define JAR_H ${JAR.height.toFixed(5)}
 #define WATER_Y ${JAR.waterLevel.toFixed(5)}
@@ -97,6 +99,15 @@ void main() {
   vec3 tint = uKey / max(max(uKey.r, uKey.g), max(uKey.b, 1e-3));
   vec3 add = photo * tint * sh.y * uLensLight * ARC_GAIN;
 
+  // 夜のデスクライト：光だまりの中に瓶の影が右へ落ち、瓶が集めた光の弧が出る
+  if (uLampLevel > 0.001) {
+    float spot = saturate(lampSpot(P));
+    vec2 shL = jarShade(P, lampDir(P));
+    mul *= 1.0 - shL.x * ${LAMP.shadow.toFixed(3)} * uLampLevel * spot;
+    vec3 lampTint = uLampColor / max(max(uLampColor.r, uLampColor.g), max(uLampColor.b, 1e-3));
+    add += photo * lampTint * shL.y * uLampLevel * spot * ${LAMP.lensLight.toFixed(3)} * ARC_GAIN;
+  }
+
   // 海月の光の照り返し。瓶の底越しに、海月が近いときだけほのかに
   vec3 wood = vec3(0.62, 0.42, 0.3);
   vec3 gd = uGlowPos - P;
@@ -125,6 +136,7 @@ export function createTable(shared: SharedUniforms, cam: PhotoCamera): Mesh {
     blendSrc: OneFactor,
     blendDst: SrcAlphaFactor,
     uniforms: {
+      ...lampUniforms(shared),
       tRoom: shared.tRoom,
       uResolution: shared.uResolution,
       uKey: shared.uKey,

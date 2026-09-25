@@ -1,7 +1,8 @@
 // 瓶のシェーダ。水の入った円筒は横方向のレンズとして振る舞う。
 // 背景は瓶を丸ごと通り抜けた視線（4つの面で曲がる）で、中身は手前の面だけで曲がった視線で映す。
-import { CAUSTIC, JAR, JELLY_LOOK, WATER } from '../config';
+import { CAUSTIC, JAR, JELLY_LOOK, LAMP, WATER } from '../config';
 import { CAUSTIC_SWAY } from './caustic';
+import { LAMP_GLSL } from './lamp';
 import common from './shaders/common.glsl?raw';
 import output from './shaders/output.glsl?raw';
 
@@ -81,6 +82,20 @@ float specks(vec2 q, float t, float ag) {
 }
 `;
 
+/**
+ * 瓶底のガラスに溜まる光。窓の光（日が直接差す間）とデスクライトが、それぞれ光と反対の側に溜まる。
+ * dir は瓶の軸から見た水平の向き（正規化済み）
+ */
+const POOL_LIGHT = /* glsl */ `
+vec3 poolLight(vec3 p, vec2 dir, vec3 key, vec3 keyDir, float lensLight) {
+  vec2 awaySun = -normalize(keyDir.xz + vec2(1e-5));
+  float sun = 0.2 + 0.8 * smoothstep(-0.2, 0.9, dot(dir, awaySun));
+  vec2 awayLamp = -normalize(lampDir(p).xz + vec2(1e-5));
+  float lamp = 0.2 + 0.8 * smoothstep(-0.2, 0.9, dot(dir, awayLamp));
+  return key * lensLight * sun + uLampColor * lampSpot(p) * ${LAMP.lensLight.toFixed(3)} * lamp;
+}
+`;
+
 /** 水平面での円筒レンズ。b は視線と軸の距離、R は外半径、nIn は内側の屈折率 */
 const LENS = /* glsl */ `
 // front: 内側へ入るまでの曲がり / total: 通り抜けたあとの曲がり / sweep: 入射点から軸に一番近づく所までの角度
@@ -137,6 +152,8 @@ ${LENS}
 ${SPECKS}
 ${CAUSTIC_SWAY}
 ${GLOW_FALL}
+${LAMP_GLSL}
+${POOL_LIGHT}
 uniform sampler2D tBg;
 uniform sampler2D tRoomWide;
 uniform sampler2D tContents;
@@ -276,6 +293,16 @@ void main() {
   // 夕方、縁に一瞬だけ乗る温度
   col += uRimWarm * uRimWarmColor * (lip * 0.3 + sharp * 0.6 + soft * 0.3);
 
+  // 夜のデスクライト：左上から、口と窓側のガラスへ差す。小さなヘッドが丸い光として映り、
+  // 光の当たる側のガラスの縁と口の縁が光を受ける。円錐の外は暗いまま
+  float lampAt = lampSpot(P);
+  vec3 Ll = lampDir(P);
+  vec3 lampC = uLampColor * lampAt;
+  col += lampC * pow(saturate(dot(N, normalize(Ll + V))), 900.0) * 1.4;
+  float rimGlow = pow(1.0 - NdV, 2.5);
+  col += lampC * (pow(1.0 - NdV, 5.0) * 0.35 + 0.002) * (0.35 + 0.65 * saturate(dot(N, Ll)));
+  col += lampC * lip * 0.2;
+
   // 水面がガラスに接するところ（メニスカス）：細く光り、すぐ下はわずかに暗い
   float men = exp(-pow((y - wl - 0.003) / 0.0022, 2.0));
   col *= 1.0 - 0.16 * exp(-pow((y - wl + 0.006) / 0.004, 2.0));
@@ -285,19 +312,16 @@ void main() {
   // 溜まった光は天板の弧と同じように、弱くゆっくり揺らめく
   float glow = glowFall(P, uGlowPos);
   if (base) {
-    vec2 away = -normalize(uKeyDir.xz + vec2(1e-5));
-    float pool = 0.2 + 0.8 * smoothstep(-0.2, 0.9, dot(E / R, away));
-    vec3 light = uKey * uLensLight + uGlowColor * glow + uAmbient * 0.4;
+    vec3 light = poolLight(P, E / R, uKey, uKeyDir, uLensLight) + uGlowColor * glow + uAmbient * 0.4;
     vec2 sw = causticSway(E.x / R * 1.5, uTime, uAgitation);
     float swayK = RING_SWAY;
     float band = exp(-pow((y - JAR_BOTTOM * 0.45 - sw.x * swayK) / 0.018, 2.0));
-    col += light * pool * band * 0.05 * mix(1.0, sw.y, swayK);
+    col += light * band * 0.05 * mix(1.0, sw.y, swayK);
     float sp = specks(vec2(thE * R, y) / SPARKLE_CELL, uTime, uAgitation);
-    col += light * pool * sp * uSparkle;
+    col += light * sp * uSparkle;
   }
 
-  // 夜：海月の光がガラスに回り込む。海月に近いところだけほのかに明るく（縁ほど）、離れるほど闇に戻る
-  float rimGlow = pow(1.0 - NdV, 2.5);
+  // 光る種がいるとき：その光がガラスに回り込む。近いところだけほのかに明るく（縁ほど）、離れるほど闇に戻る
   col += uGlowColor * glow * (rimGlow * 0.45 + 0.03);
 
   col += texture(tBloom, uv).rgb * uBloomStrength;
@@ -311,6 +335,7 @@ ${common}
 ${JAR_DEFINES}
 ${ENV}
 ${GLOW_FALL}
+${LAMP_GLSL}
 uniform vec3 uKey, uKeyDir, uAmbient, uGlowPos, uGlowColor;
 uniform float uRimWarm;
 uniform vec3 uRimWarmColor;
@@ -330,7 +355,10 @@ void main() {
   float ch = saturate(dot(Nh, Hh));
   col += uKey * pow(ch, 20.0) * uHighlightSoft * 0.15;
   col += uRimWarm * uRimWarmColor * pow(1.0 - NdV, 8.0) * 0.08;
-  // 海月の光が奥のガラスにうっすら回り込む（海月に近いところだけ）
+  // デスクライトの光が奥のガラスの内側にうっすら回り込む（円錐の中だけ）
+  vec3 Ll = lampDir(vWorldPos);
+  col += uLampColor * lampSpot(vWorldPos) * (pow(1.0 - NdV, 5.0) * 0.25 + 0.0015) * (0.35 + 0.65 * saturate(dot(N, Ll)));
+  // 光る種がいるときは、その光が近いところにだけ回り込む
   col += uGlowColor * glowFall(vWorldPos, uGlowPos) * (pow(1.0 - NdV, 2.5) * 0.35 + 0.03);
   float a = 0.02 + 0.12 * F;
   // 底の面は瓶底のシェーダに任せ、ここでは側面だけ
@@ -359,6 +387,8 @@ ${JAR_DEFINES}
 ${SPECKS}
 ${CAUSTIC_SWAY}
 ${GLOW_FALL}
+${LAMP_GLSL}
+${POOL_LIGHT}
 uniform sampler2D tBg;
 uniform mat4 uViewProj;
 uniform float uTime, uAgitation, uLensLight, uSparkle;
@@ -372,12 +402,11 @@ void main() {
   vec4 c = uViewProj * vec4(vWorldPos.x * k, 0.0, vWorldPos.z * k, 1.0);
   vec2 sp = clamp(c.xy / c.w * 0.5 + 0.5, vec2(0.001), vec2(0.999));
   vec3 under = texture(tBg, sp).rgb * uGlassTint * 0.8;
-  // 縁に溜まる光の輪と粒。窓と反対の側ほど強い
-  vec2 away = -normalize(uKeyDir.xz + vec2(1e-5));
+  // 縁に溜まる光の輪と粒。窓やデスクライトと反対の側ほど強い
   vec2 dir = vWorldPos.xz / max(length(vWorldPos.xz), 1e-4);
-  float pool = 0.2 + 0.8 * smoothstep(-0.2, 0.9, dot(dir, away));
   float glow = glowFall(vWorldPos, uGlowPos);
-  vec3 light = uKey * uLensLight + uGlowColor * glow + uAmbient * 0.4;
+  vec3 light = poolLight(vWorldPos, dir, uKey, uKeyDir, uLensLight) + uGlowColor * glow + uAmbient * 0.4;
+  float pool = 1.0;
   // 光の輪は天板の弧と同じ揺れを弱めに受ける
   vec2 sw = causticSway(dir.x * 1.5 + dir.y * 0.5, uTime, uAgitation);
   float ring = exp(-pow((r - 0.92 - sw.x * RING_SWAY * 3.0) / 0.05, 2.0)) * mix(1.0, sw.y, RING_SWAY);
@@ -385,8 +414,8 @@ void main() {
   float sk = specks(vec2(vWorldPos.x, vWorldPos.z * 0.32) / SPARKLE_CELL, uTime + 17.0, uAgitation);
   sk *= smoothstep(0.55, 0.85, r);
   vec3 col = under * 0.9 + light * pool * (ring * 0.07 + sk * uSparkle * 0.6);
-  // 夜は海月の光が底に落ちる（海月に近いところだけ）
-  col += uGlowColor * glow * 0.12;
+  // デスクライトの光が水越しに底へ落ちる。光る種がいるときは、その光も近いところだけ
+  col += uLampColor * lampSpot(vWorldPos) * 0.03 + uGlowColor * glow * 0.12;
   float a = 0.9 * (1.0 - smoothstep(0.985, 1.0, r));
   gl_FragColor = vec4(col * a, a);
 }
@@ -413,14 +442,17 @@ export const SURFACE_FRAG = /* glsl */ `
 ${common}
 ${JAR_DEFINES}
 ${GLOW_FALL}
+${LAMP_GLSL}
 uniform vec3 uKey, uAmbient, uGlowPos, uGlowColor;
 in vec3 vWorldPos;
 in vec2 vUv;
 void main() {
   float rim = smoothstep(0.9, 1.0, vUv.x);
-  // 水面の裏に海月の光がうっすら映る（海月が水面に近いほど明るい）
+  // 光る種がいるときは、水面の裏にその光がうっすら映る
   float g = glowFall(vWorldPos, uGlowPos);
-  vec3 col = (uAmbient * 0.5 + uKey * 0.1) * rim * 0.6 + uGlowColor * g * 0.08;
+  // デスクライトが差すと、水面の縁が細く光り、光の当たる所がほんのり明るい
+  vec3 lampC = uLampColor * lampSpot(vWorldPos);
+  vec3 col = (uAmbient * 0.5 + uKey * 0.1 + lampC * 0.25) * rim * 0.6 + uGlowColor * g * 0.08 + lampC * 0.012;
   gl_FragColor = vec4(col, 0.03 + 0.05 * rim);
 }
 `;

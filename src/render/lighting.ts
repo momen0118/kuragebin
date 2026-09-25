@@ -1,6 +1,6 @@
 // 時刻から光の状態を決める。three.js に依存しない純粋な関数。
 // 光の移り変わりは、その日の日の出・日の入りを基準に置く。
-import { DIRECT_SUN, LIGHT_LOOKS, LIGHT_SCHEDULE, RIM_WARM, SUN, type LightKey, type Vec3 } from '../config';
+import { DIRECT_SUN, LAMP, LIGHT_LOOKS, LIGHT_SCHEDULE, RIM_WARM, SUN, type LightKey, type Vec3 } from '../config';
 import { sunTimes, type SunTimes } from '../sim/sun';
 
 export interface LightState {
@@ -14,13 +14,13 @@ export interface LightState {
   key: Vec3;
   keyDir: Vec3;
   ambient: Vec3;
-  /** 海月の発光の倍率 */
-  glow: number;
   /** 瓶がレンズになって集める光と、瓶の影の濃さ。窓から日が直接差す間だけ */
   lensLight: number;
   shadow: number;
   /** 瓶の縁に乗る夕方の温度（0〜1） */
   rimWarm: number;
+  /** 夜のデスクライトが点いている時間か（0 か 1。点くときのなめらかさは描画側でつける） */
+  lamp: number;
 }
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
@@ -68,6 +68,14 @@ export function directSun(hourIn: number, sun: SunTimes): number {
   return smooth(rise) * smooth(set);
 }
 
+/** デスクライトが点いている時間か。日の入りのしばらく後に点き、日の出の前に消える（0時をまたいでもよい） */
+export function lampScheduled(hourIn: number, sun: SunTimes): number {
+  const on = sun.sunset + LAMP.onMinutesAfterSunset / 60;
+  const off = sun.sunrise - LAMP.offMinutesBeforeSunrise / 60;
+  const span = wrapHour(off - on);
+  return wrapHour(hourIn - on) < span ? 1 : 0;
+}
+
 export function lightAt(hourIn: number, sun: SunTimes): LightState {
   const hour = wrapHour(hourIn);
   const keys = buildKeys(sun);
@@ -95,10 +103,10 @@ export function lightAt(hourIn: number, sun: SunTimes): LightState {
     key: mix3(a.keyColor, b.keyColor, t),
     keyDir: normalize(mix3(a.keyDir, b.keyDir, t)),
     ambient: mix3(a.ambient, b.ambient, t),
-    glow: mix(a.glow, b.glow, t),
     lensLight: mix(a.lensLight, b.lensLight, t) * direct,
     shadow: mix(a.shadow, b.shadow, t) * direct,
     rimWarm: Math.exp(-rimD * rimD),
+    lamp: lampScheduled(hour, sun),
   };
 }
 

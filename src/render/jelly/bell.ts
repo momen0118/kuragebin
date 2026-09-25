@@ -22,6 +22,7 @@ import {
 import { BELL, JELLY_LOOK } from '../../config';
 import { LOBES, PROFILE_SEGMENTS } from './profile';
 import type { SharedUniforms } from '../uniforms';
+import { LAMP_GLSL, lampUniforms } from '../lamp';
 import common from '../shaders/common.glsl?raw';
 import { frag } from '../shaders/glsl';
 
@@ -40,6 +41,7 @@ const DEFINES = /* glsl */ `
 #define RIPPLE_N ${BELL.marginRippleCount.toFixed(1)}
 #define RIPPLE_W ${((Math.PI * 2) / BELL.marginRipplePeriod).toFixed(5)}
 #define GONAD_S ${GONAD_S.toFixed(3)}
+#define LAMP_SCATTER ${JELLY_LOOK.lampScatter.toFixed(3)}
 `;
 
 const VERT = /* glsl */ `
@@ -130,6 +132,7 @@ void main() {
 const FRAG = /* glsl */ `
 ${common}
 ${DEFINES}
+${LAMP_GLSL}
 uniform float uGlowPass, uLayer, uContract;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
@@ -196,6 +199,11 @@ void main() {
   float wrap = saturate(dot(Nf, uKeyDir) * 0.5 + 0.5);
   float trans = pow(saturate(dot(-V, uKeyDir) * 0.5 + 0.5), 3.0);
   vec3 light = uAmbient * 0.9 + uKey * (0.18 * wrap + 0.35 * trans);
+  // 夜のデスクライト。円錐の中にいるときだけ、左上からの光が透けて届く
+  vec3 Ll = lampDir(vWorldPos);
+  float wrapL = saturate(dot(Nf, Ll) * 0.5 + 0.5);
+  float transL = pow(saturate(dot(-V, Ll) * 0.5 + 0.5), 3.0);
+  light += uLampColor * lampSpot(vWorldPos) * (0.18 * wrapL + 0.35 * transL);
 
   // 縁では背景の光がずれて見える（屈折のかわり）
   vec2 aspect = vec2(uResolution.y / uResolution.x, 1.0);
@@ -221,17 +229,23 @@ void main() {
   col += bg * refr;
   float alpha = density * 0.5 + refr;
 
-  // 発光：縁と生殖腺。縮むとわずかに強まる
-  float pulseGlow = 0.85 + 0.3 * uContract;
-  vec3 glow;
+  // 光を散らしやすい所：輪郭、縁の帯、放射管、生殖腺。
+  // 夜はデスクライトの光がここで散って、闇の中に海月の形が浮かぶ（円錐の外では暗い）
+  float scatter;
+  vec3 scatterTint = uBody;
   if (gonad) {
-    glow = uGonad * gon * 0.32;
+    scatter = gon * 0.32;
+    scatterTint = uGonadTint;
   } else if (inner) {
-    glow = uGlow * (0.03 * rim + 0.06 * canal + 0.1 * margin);
+    scatter = 0.03 * rim + 0.06 * canal + 0.1 * margin;
   } else {
-    glow = uGlow * (0.06 * rim + 0.2 * margin * (0.4 + 0.6 * rim));
+    scatter = 0.06 * rim + 0.2 * margin * (0.4 + 0.6 * rim);
   }
-  glow *= pulseGlow;
+  col += uLampColor * lampSpot(vWorldPos) * scatterTint * scatter * LAMP_SCATTER;
+
+  // 発光（光る種だけ。ミズクラゲは光らないので uGlow は 0）。縮むとわずかに強まる
+  float pulseGlow = 0.85 + 0.3 * uContract;
+  vec3 glow = (gonad ? uGonad : uGlow) * scatter * pulseGlow;
 
   if (uGlowPass > 0.5) {
     gl_FragColor = vec4(glow, 0.0);
@@ -306,6 +320,7 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
       blendSrc: OneFactor,
       blendDst: OneMinusSrcAlphaFactor,
       uniforms: {
+        ...lampUniforms(shared),
         tProfile,
         uTime: shared.uTime,
         uContract: contract,

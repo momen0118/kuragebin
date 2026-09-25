@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { buildKeys, directSun, lightAt, sunOf, wrapHour } from './lighting';
+import { buildKeys, directSun, lampScheduled, lightAt, sunOf, wrapHour } from './lighting';
+import { LAMP } from '../config';
 import { sunTimes } from '../sim/sun';
 
 // 春分ごろの目安
@@ -63,6 +64,24 @@ describe('lightAt', () => {
     }
   });
 
+  test('デスクライトは日の入りのあとに点き、日の出の前に消える（昼・夕方は消えている）', () => {
+    const on = SUN.sunset + LAMP.onMinutesAfterSunset / 60;
+    const off = SUN.sunrise - LAMP.offMinutesBeforeSunrise / 60;
+    expect(lampScheduled(12, SUN)).toBe(0);
+    expect(lampScheduled(SUN.sunset - 0.5, SUN)).toBe(0);
+    expect(lampScheduled(SUN.sunset + 0.1, SUN)).toBe(0);
+    expect(lampScheduled(on + 0.05, SUN)).toBe(1);
+    expect(lampScheduled(23, SUN)).toBe(1);
+    expect(lampScheduled(2, SUN)).toBe(1);
+    expect(lampScheduled(off - 0.05, SUN)).toBe(1);
+    expect(lampScheduled(off + 0.05, SUN)).toBe(0);
+    expect(lightAt(22, SUN).lamp).toBe(1);
+    // 日の出・日の入りが0時をまたぐタイムゾーンでも
+    const utc = { sunrise: 20.5, sunset: 8.75 };
+    expect(lampScheduled(14, utc)).toBe(1);
+    expect(lampScheduled(2, utc)).toBe(0);
+  });
+
   test('夕方、日の入りの少し前に縁へ温度が乗る', () => {
     expect(lightAt(SUN.sunset - 25 / 60, SUN).rimWarm).toBeCloseTo(1);
     expect(lightAt(12, SUN).rimWarm).toBeLessThan(0.01);
@@ -74,7 +93,6 @@ describe('lightAt', () => {
       const b = lightAt((m + 1) / 60, SUN);
       expect(Math.abs(a.day - b.day)).toBeLessThan(0.05);
       expect(Math.abs(a.night - b.night)).toBeLessThan(0.05);
-      expect(Math.abs(a.glow - b.glow)).toBeLessThan(0.05);
     }
   });
 

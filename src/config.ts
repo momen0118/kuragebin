@@ -154,7 +154,9 @@ export const WATER = {
   /** 昼：部屋の光と、窓の側（左）の粒だけに当たる窓の光 */
   snowAmbient: 0.4,
   snowWindow: 0.35,
-  /** 夜：海月の光を受けた粒の明るさ。光の届く範囲は瓶のガラスより狭く、離れると闇に消える */
+  /** 夜：デスクライトの円錐の中の粒の明るさ（外は闇） */
+  snowLamp: 0.5,
+  /** 光る種がいるとき、その光を受けた粒の明るさ（光る種から離れると闇に消える） */
   snowGlow: 2.5,
   /** 粒が後ろを隠す割合（光を足すだけでなく、少し遮る） */
   snowOcclusion: 0.35,
@@ -325,8 +327,7 @@ export const POKE = {
   /** 離れる勢いと、向きを変える強さ */
   push: 0.05,
   turn: 1.2,
-  /** 光が強まる量と、その余韻（秒） */
-  flash: 1.4,
+  /** 光る種がつつかれて光ったときの余韻（秒） */
   flashDecay: 1.6,
   /** 続けてつついても反応しない間（秒） */
   cooldown: 0.8,
@@ -385,15 +386,21 @@ export const ORAL_ARMS = {
 /** 海月の色と発光 */
 export const JELLY_LOOK = {
   body: [0.8, 0.88, 1.0] as Vec3,
-  /** 縁の発光色 */
-  glow: [0.55, 0.78, 1.0] as Vec3,
   /** 生殖腺（四つ葉） */
   gonad: [1.0, 0.72, 0.88] as Vec3,
-  glowStrength: 1.0,
-  /** 周りを照らす光の中心（傘のローカル）と、その強さ */
+  /**
+   * 発光。ミズクラゲは光らないので 0。仕組みは残してあり、後で加える発光する種
+   * （つついたときだけ縁の粒が光るオワンクラゲなど）は、色と強さを種ごとに持たせる。
+   * glowStrength はいつもの光、pokeGlow はつついた瞬間だけの光
+   */
+  glow: [0.55, 0.78, 1.0] as Vec3,
+  glowStrength: 0,
+  pokeGlow: 0,
+  /** 夜のデスクライトの光が、輪郭・縁の帯・放射管・生殖腺で散って見える強さ */
+  lampScatter: 0.7,
+  /** 光る種の光が周りを照らす中心（傘のローカル） */
   lightCenterY: 0.15,
-  lightStrength: 0.6,
-  /** 光が瓶のガラスや底に回り込むとき、明るさが 1/4 になる距離（瓶の高さ単位） */
+  /** 光る種の光が瓶のガラスや底に回り込むとき、明るさが 1/4 になる距離（瓶の高さ単位） */
   lightFalloff: 0.16,
 } as const;
 
@@ -406,7 +413,6 @@ export interface LightLook {
   keyColor: Vec3;
   keyDir: Vec3;
   ambient: Vec3;
-  glow: number;
   /** 瓶がレンズになって集める光（瓶底の光の粒、天板の明るい弧） */
   lensLight: number;
   shadow: number;
@@ -421,22 +427,22 @@ export const LIGHT_LOOKS = {
   day: {
     day: 1, dusk: 0, night: 0, dawnTint: 0,
     keyColor: [1.0, 0.97, 0.92], keyDir: [-0.85, 0.5, 0.3],
-    ambient: [0.26, 0.26, 0.26], glow: 0.08, lensLight: 1.0, shadow: 0.3,
+    ambient: [0.26, 0.26, 0.26], lensLight: 1.0, shadow: 0.3,
   },
   dusk: {
     day: 0, dusk: 1, night: 0, dawnTint: 0,
     keyColor: [1.0, 0.5, 0.18], keyDir: [-0.9, 0.3, 0.3],
-    ambient: [0.12, 0.075, 0.05], glow: 0.45, lensLight: 0.75, shadow: 0.34,
+    ambient: [0.12, 0.075, 0.05], lensLight: 0.75, shadow: 0.34,
   },
   night: {
     day: 0, dusk: 0, night: 1, dawnTint: 0,
     keyColor: [0.02, 0.025, 0.04], keyDir: [-0.85, 0.5, 0.3],
-    ambient: [0.012, 0.014, 0.022], glow: 1.3, lensLight: 0.0, shadow: 0.0,
+    ambient: [0.012, 0.014, 0.022], lensLight: 0.0, shadow: 0.0,
   },
   dawn: {
     day: 0.5, dusk: 0, night: 0.5, dawnTint: 1,
     keyColor: [0.55, 0.68, 1.0], keyDir: [-0.9, 0.25, 0.3],
-    ambient: [0.07, 0.085, 0.12], glow: 0.7, lensLight: 0, shadow: 0,
+    ambient: [0.07, 0.085, 0.12], lensLight: 0, shadow: 0,
   },
 } satisfies Record<string, LightLook>;
 
@@ -467,6 +473,36 @@ export const LIGHT_SCHEDULE: ReadonlyArray<{ from: 'sunrise' | 'sunset'; minutes
 export const DIRECT_SUN = {
   riseRampMinutes: 30,
   setRampMinutes: 25,
+} as const;
+
+/**
+ * 夜のデスクライト。画面外、瓶の左上（窓と同じ側）にあるクランプ式のアーム型で、ライト本体は映さない。
+ * ヘッドが小さく光は狭い円錐。左上から斜めに、瓶の開いた口と窓側のガラスから水中へ入り、
+ * 天板には瓶を中心にやや右へずれた楕円の光だまりができる。昼・夕方は消えていて、日の入り後に点く
+ */
+export const LAMP = {
+  /** ライトの位置と、光の円錐の軸が通る点（瓶の底の中心が原点、瓶の高さ = 1） */
+  position: [-0.62, 1.85, -0.42] as Vec3,
+  aim: [-0.03, 0.4, 0.0] as Vec3,
+  /** 円錐の半分の角度と、縁のぼけ（度）。縁はある程度はっきり切れる */
+  coneDeg: 14,
+  edgeDeg: 1.6,
+  /** 光の色（わずかに暖かい白）と強さ。距離による弱まり（瓶の真ん中で 1） */
+  color: [1.0, 0.9, 0.76] as Vec3,
+  intensity: 1.0,
+  falloffPower: 1.2,
+  /** 天板の光だまりの明るさ（昼の写真の天板を、この明るさでライトの色に照らす） */
+  poolGain: 0.75,
+  /** 天板に落ちる瓶の影の濃さと、瓶がレンズになって集める光の弧の強さ */
+  shadow: 0.75,
+  lensLight: 0.8,
+  /** 光だまりの照り返しで、ライトの外もほんのり明るくなる量 */
+  bounce: 0.008,
+  /** 点く時刻（日の入りから何分後）と、消える時刻（日の出の何分前） */
+  onMinutesAfterSunset: 30,
+  offMinutesBeforeSunrise: 60,
+  /** 点く・消えるときにかける時間（秒） */
+  fadeSeconds: 0.5,
 } as const;
 
 /** 夕方、瓶の縁に一瞬だけ温度が乗る時刻（日の入りから何分前か）と、その幅（時） */

@@ -13,9 +13,10 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
-import { BELL, JAR, ORAL_ARMS } from '../../config';
+import { BELL, JAR, JELLY_LOOK, ORAL_ARMS } from '../../config';
 import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
+import { LAMP_GLSL, lampUniforms } from '../lamp';
 import type { BellLook } from './bell';
 import type { RootFrame } from './tentacles';
 import common from '../shaders/common.glsl?raw';
@@ -43,6 +44,7 @@ void main() {
 
 const FRAG = /* glsl */ `
 ${common}
+${LAMP_GLSL}
 uniform float uGlowPass;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
@@ -63,6 +65,11 @@ void main() {
   float wrap = saturate(dot(N * sign(dot(N, V)), uKeyDir) * 0.5 + 0.5);
   float trans = pow(saturate(dot(-V, uKeyDir) * 0.5 + 0.5), 3.0);
   vec3 light = uAmbient * 0.9 + uKey * (0.2 * wrap + 0.35 * trans);
+  // 夜のデスクライト（円錐の中だけ）
+  vec3 Ll = lampDir(vWorldPos);
+  float wrapL = saturate(dot(N * sign(dot(N, V)), Ll) * 0.5 + 0.5);
+  float transL = pow(saturate(dot(-V, Ll) * 0.5 + 0.5), 3.0);
+  light += uLampColor * lampSpot(vWorldPos) * (0.2 * wrapL + 0.35 * transL);
   // 厚みのある、乳白色の半透明
   vec3 tint = mix(uBody, uGonad, 0.2 + 0.3 * edge);
   float density = (0.018 + 0.1 * fres + 0.08 * edge) * tip * root;
@@ -70,11 +77,14 @@ void main() {
   vec3 bg = texture(tRoom, suv + N.xy * 0.008 * fres).rgb;
   float refr = fres * 0.1 * tip;
   vec3 col = tint * light * density * 1.6 + bg * refr;
-  vec3 glow = mix(uGlow, uGonad, 0.45) * (0.015 + 0.05 * edge + 0.025 * fres) * tip * root;
+  float scatter = (0.015 + 0.05 * edge + 0.025 * fres) * tip * root;
+  vec3 glow = mix(uGlow, uGonad, 0.45) * scatter;
   if (uGlowPass > 0.5) {
     gl_FragColor = vec4(glow, 0.0);
     return;
   }
+  // 夜はデスクライトの光がひだの縁で散る
+  col += tint * uLampColor * lampSpot(vWorldPos) * scatter * ${JELLY_LOOK.lampScatter.toFixed(3)};
   gl_FragColor = vec4(col + glow, density * 0.6 + refr);
 }
 `;
@@ -152,6 +162,7 @@ export class OralArms {
         blendSrc: OneFactor,
         blendDst: OneMinusSrcAlphaFactor,
         uniforms: {
+          ...lampUniforms(shared),
           uGlowPass: shared.uGlowPass,
           uKey: shared.uKey,
           uKeyDir: shared.uKeyDir,

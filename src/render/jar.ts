@@ -28,6 +28,7 @@ import {
   SURFACE_VERT,
 } from './jarShaders';
 import { frag } from './shaders/glsl';
+import { lampUniforms } from './lamp';
 import type { SharedUniforms } from './uniforms';
 
 type P2 = [number, number];
@@ -188,6 +189,7 @@ export function createJar(shared: SharedUniforms, rimWarmColor: readonly [number
         fragmentShader: frag(BACK_FRAG),
         side: BackSide,
         uniforms: {
+          ...lampUniforms(shared),
           uKey: shared.uKey,
           uKeyDir: shared.uKeyDir,
           uAmbient: shared.uAmbient,
@@ -213,6 +215,7 @@ export function createJar(shared: SharedUniforms, rimWarmColor: readonly [number
         fragmentShader: frag(FLOOR_FRAG),
         side: DoubleSide,
         uniforms: {
+          ...lampUniforms(shared),
           tBg: floorBg,
           uViewProj: shared.uViewProj,
           uTime: shared.uTime,
@@ -240,6 +243,7 @@ export function createJar(shared: SharedUniforms, rimWarmColor: readonly [number
         fragmentShader: frag(SURFACE_FRAG),
         side: DoubleSide,
         uniforms: {
+          ...lampUniforms(shared),
           uTime: shared.uTime,
           uAgitation: shared.uAgitation,
           uKey: shared.uKey,
@@ -273,6 +277,7 @@ export function createJar(shared: SharedUniforms, rimWarmColor: readonly [number
       depthWrite: false,
       uniforms: {
         ...frontUniforms,
+        ...lampUniforms(shared),
         uResolution: shared.uResolution,
         uViewProj: shared.uViewProj,
         uTime: shared.uTime,
