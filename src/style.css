@@ -1,0 +1,81 @@
+:root {
+  --bg: #0b0b0c;
+  --fg: #cfcfcf;
+  --panel: rgba(12, 12, 13, 0.72);
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
+}
+
+#view {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: block;
+}
+
+#fallback {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+#fallback[hidden] {
+  display: none;
+}
+
+.debug-panel {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 8px);
+  left: calc(env(safe-area-inset-left) + 8px);
+  width: 180px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 12px;
+  line-height: 1.6;
+  touch-action: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.debug-panel .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.debug-panel label.row {
+  justify-content: flex-start;
+}
+
+.debug-panel .slider {
+  width: 100%;
+  margin: 4px 0;
+}
+
+.debug-panel .time {
+  font-variant-numeric: tabular-nums;
+}
