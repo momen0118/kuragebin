@@ -324,6 +324,13 @@ export const SWIM = {
   driftThrust: 0.6,
   /** 瓶の中のごくゆるい水の流れ（瓶の高さ/秒）。漂う感じを出す */
   current: 0.004,
+  /**
+   * ほかの泳ぐ個体をよける。傘の半径の和の othersMargin 倍より近づくと、離れる向きへ向きを変え（avoidOthers）、
+   * 少し押し離す（othersPush、瓶の高さ/秒²）
+   */
+  othersMargin: 1.8,
+  avoidOthers: 2.0,
+  othersPush: 0.04,
 } as const;
 
 /** つついたときの反応 */
@@ -413,6 +420,143 @@ export const JELLY_LOOK = {
   lightCenterY: 0.15,
   /** 光る種の光が瓶のガラスや底に回り込むとき、明るさが 1/4 になる距離（瓶の高さ単位） */
   lightFalloff: 0.16,
+} as const;
+
+/**
+ * エフィラ（稚クラゲ）。透けた小さな星形で、8本の腕の先は二股。拍動は速くてぎこちない。
+ * 育ち具合（0 で放されたばかり、1 で成体）に合わせて、腕の間が埋まって丸い傘になり、
+ * 縁触手と口腕が伸び、最後に四つ葉が浮かぶ。拍動もゆったりになる。育ち具合 1 では成体の値そのもの。
+ * [始まり, 終わり] は、その変化が進む育ち具合の範囲
+ */
+export const EPHYRA = {
+  /** 放されたときの傘の半径（腕の先まで、瓶の高さ単位）。実物のおよそ2.5倍。成体（BELL.radius）まで指数的に育つ */
+  radius: 0.02,
+  /**
+   * 腕の形。腕の間の切れ込みの深さ（半径に対する割合）と、腕の半幅（半径に対する割合）を根元と先で。
+   * 腕は先へ少し細り、切れ込みの底は丸い
+   */
+  armDepth: 0.6,
+  armBase: 0.16,
+  armTip: 0.09,
+  /** 腕の先の二股の切れ込みの深さ（半径に対する割合）と、その幅（縁弁の幅に対する割合） */
+  lappet: 0.1,
+  lappetWidth: 0.05,
+  /** 腕の間が埋まっていく */
+  fill: [0.08, 0.72] as const,
+  /** 縁触手が生えそろう（腕の間から先に生える） */
+  tentacles: [0.3, 0.85] as const,
+  /** 口腕が伸びる。放されたときは成体の armStart の長さ */
+  oralArms: [0.0, 0.9] as const,
+  oralArmStart: 0.3,
+  /** 四つ葉が浮かぶ */
+  gonads: [0.65, 1.0] as const,
+  /** 放射管の枝分かれと環状管ができる */
+  canals: [0.25, 0.9] as const,
+  /** 拍動と泳ぎが落ち着いていく */
+  calm: [0.05, 0.8] as const,
+  /** ぎこちない拍動（落ち着く前）。縮み・緩み・休みは秒 */
+  pulse: {
+    contract: 0.13,
+    relax: 0.36,
+    restMin: 0.04,
+    restMax: 0.24,
+    jitter: 0.3,
+    ampMin: 0.75,
+    ampMax: 1.15,
+    strongChance: 0,
+    /** ときどき間が空く（確率と長さ）、ときどきすぐにもう一度縮む（確率） */
+    pauseChance: 0.14,
+    pause: [0.6, 1.8] as const,
+    doubleChance: 0.16,
+  },
+  /** 縮むと腕が大きく折れる（傘の曲がりの強さと、縁への寄り方） */
+  contractBend: 1.75,
+  bendPower: 2.2,
+  /** 腕ごとの縮みのずれ（秒の上限）と、腕のしなりの強さ・ばらつき */
+  armLag: 0.05,
+  flexGain: 0.13,
+  flexSpread: 0.6,
+  /** 泳ぎ：推進の強さ（成体に対する割合）、転がりやすさ、起き上がる強さ（成体に対する割合）、軸まわりの回転（倍） */
+  thrust: 0.6,
+  tumble: 0.9,
+  righting: 0.6,
+  roll: 3,
+  /** 実物大の比（確認用の「実物大」で、ポリプ・ストロビラ・エフィラの大きさに掛ける） */
+  realScale: 0.4,
+} as const;
+
+/**
+ * ポリプ。瓶底から立つ小さなラッパ形で、口のまわりの細い触手16本が冠のように開いてゆっくり揺れる。
+ * 長さの単位は瓶の高さ。形の割合は体の高さ = 1
+ */
+export const POLYP = {
+  /** 体の高さ（触手を除く）。実物のおよそ2.5倍 */
+  height: 0.024,
+  /** 足・茎・口の縁の半径、口盤のくぼみ、口（口丘）の半径と高さ（体の高さ = 1） */
+  footRadius: 0.2,
+  stalkRadius: 0.11,
+  calyxRadius: 0.36,
+  /** 茎が杯へ広がりはじめる高さ */
+  flareStart: 0.35,
+  oralDip: 0.07,
+  mouthRadius: 0.14,
+  mouthHeight: 0.1,
+  /** 触手：本数、長さ（体の高さ = 1）、根元の開き（水平から上への角度、度）、先への反り（度） */
+  tentacleCount: 16,
+  tentacleLength: 1.15,
+  tentacleRise: 22,
+  tentacleCurl: 30,
+  /** 触手の揺れ：角度（度）、周期（秒）、近くの触手と一緒に揺れる割合 */
+  swayDeg: 9,
+  swayPeriod: [4, 9] as const,
+  swayShared: 0.6,
+  /** 休んでいるとき（瓶がいっぱい）：触手の長さの割合と、揺れの遅さ（倍） */
+  restLength: 0.5,
+  restCurl: 40,
+  restSlow: 0.4,
+  /** 付いたばかりのポリプが育ちきるまで（秒、ゲーム内）と、そのときの大きさの割合 */
+  growSeconds: 12 * 3600,
+  budScale: 0.25,
+  /** エフィラを放したあと、触手が生え直すまで（秒、ゲーム内） */
+  regrowSeconds: 8 * 3600,
+  /** つつかれたとき：縮む時間、体の縮み、触手の縮み、ゆっくり伸び戻る時間（秒） */
+  pokeContract: 0.25,
+  pokeBody: 0.3,
+  pokeTentacle: 0.75,
+  pokeRelax: 8,
+  pokeRange: 0.35,
+  /** 色（乳白色）と、触手の太さ（画面px）・明るさ */
+  body: [0.92, 0.9, 0.86] as Vec3,
+  tentacleWidthPx: 0.6,
+  tentacleBrightness: 0.55,
+  /** 輪郭の傾き（度）の最大。まっすぐには立たない */
+  tiltDeg: 8,
+} as const;
+
+/**
+ * ストロビラ。ポリプが縦に伸び、横の筋がだんだん深いくびれになって皿を積んだ形になる。
+ * 皿の数は放すエフィラの数。触手は縮んで消え、終わりごろ上の皿がぴくぴく動いて、1枚ずつ離れて泳ぎ出す。
+ * [始まり, 終わり] は、その変化が進む段階の進み（0〜1）の範囲
+ */
+export const STROBILA = {
+  /** 伸びる（皿1枚あたりの高さ、ポリプの体の高さ = 1）。皿の縁は段の下から discRim の所 */
+  stretch: [0.0, 0.45] as const,
+  discHeight: 0.26,
+  discRim: 0.4,
+  /** くびれが深くなる（くびれの深さの最大、半径に対する割合） */
+  constrict: [0.12, 0.75] as const,
+  constrictDepth: 0.72,
+  /** 皿の半径（放されたエフィラの半径に対する割合）と、皿の縁に腕の形が出てくる範囲・強さ */
+  discRadius: 0.8,
+  lobes: [0.45, 0.9] as const,
+  lobeCut: 0.45,
+  /** 触手が縮んで消える */
+  resorb: [0.1, 0.65] as const,
+  /** 終わりごろ皿がぴくぴくする（始まりと、強さ） */
+  twitch: [0.82, 1.0] as const,
+  twitchDrop: 0.35,
+  /** エフィラが1枚ずつ離れる間隔（秒、実時間） */
+  releaseInterval: 1.4,
 } as const;
 
 /** 光の状態の見本。keyDir は光の来る向き（窓は左の画面外） */
@@ -542,6 +686,62 @@ export const SIM = {
   /** 最初の瓶の数と、世界のシード（最初の状態を作るときに使う） */
   jarCount: 3,
   seed: 20260925,
+} as const;
+
+const DAY = 86400;
+
+/**
+ * 生活環。成体 →（約1日）瓶底にポリプ →（2〜3日）ストロビラ →（半日〜1日）エフィラ1〜3匹 →（5〜7日）成体。
+ * ストロビラはエフィラを放すとポリプに戻り、また繰り返す。
+ * 期間は秒（ゲーム内）で、[最短, 最長] の間から段階に入るたびに選ぶ
+ */
+export interface LifeRules {
+  adultPolyp: readonly [number, number];
+  polyp: readonly [number, number];
+  strobila: readonly [number, number];
+  ephyra: readonly [number, number];
+  ephyraCount: readonly [number, number];
+  maxSwimmers: number;
+  maxPolyps: number;
+  spotRadius: number;
+  spotMaxX: number;
+  spotSpacing: number;
+  spotDepthWeight: number;
+  spotTries: number;
+}
+
+export const LIFE: LifeRules = {
+  /** 成体が瓶底にポリプを1つ付けるまで（成体1匹ごと） */
+  adultPolyp: [0.8 * DAY, 1.2 * DAY],
+  /** ポリプがくびれ始めるまで */
+  polyp: [2 * DAY, 3 * DAY],
+  /** ストロビラがエフィラを放すまで */
+  strobila: [0.5 * DAY, 1 * DAY],
+  /** エフィラが成体になるまで */
+  ephyra: [5 * DAY, 7 * DAY],
+  /** 1つのストロビラが放すエフィラの数 */
+  ephyraCount: [1, 3],
+  /**
+   * 1瓶あたりの上限。泳ぐ個体（成体＋エフィラ。ストロビラが放す予定の数も数える）と、瓶底のポリプ（ストロビラを含む）。
+   * 泳ぐ個体が上限に達すると、ポリプは休眠して進まない。空きができると再開する
+   */
+  maxSwimmers: 6,
+  maxPolyps: 3,
+  /**
+   * ポリプが付く場所。瓶底の内側の半径を 1 として、軸からの距離の上限と、左右の上限（瓶の縁の近くは
+   * 像が詰まって見えにくいので避ける）。ポリプどうしの間隔が spotSpacing に足りなければ spotTries 回まで選び直し、
+   * 足りる所がなければいちばん離れた所にする。奥行きの差は画面では詰まって見えるので、spotDepthWeight を掛けて数える
+   */
+  spotRadius: 0.72,
+  spotMaxX: 0.55,
+  spotSpacing: 0.3,
+  spotDepthWeight: 0.4,
+  spotTries: 12,
+};
+
+/** 観察日誌（出来事の記録）。古いものから消す */
+export const JOURNAL = {
+  maxEntries: 600,
 } as const;
 
 /** デバッグパネル（?debug のときだけ） */

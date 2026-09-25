@@ -15,6 +15,7 @@ import {
   type Vector3,
 } from 'three';
 import { BELL, JAR, JELLY_LOOK, TENTACLES } from '../../config';
+import { LOBES } from './profile';
 import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
@@ -84,6 +85,121 @@ void main() {
 }
 `;
 
+/**
+ * 細い糸の束を描くメッシュ（縁触手と、ポリプの触手）。count 本 × nodes 節。
+ * 糸は画面上で一定の太さの帯にする（widthPx は画面px）。seeds は1本ずつの太さ・明るさのばらつき（0〜1）
+ */
+export function createStrandMesh(
+  shared: SharedUniforms,
+  look: Pick<BellLook, 'uBody' | 'uGlow'>,
+  n: number,
+  m: number,
+  seeds: Float32Array,
+  widthPx: number,
+  brightness: number,
+): Mesh {
+  const verts = n * m * 2;
+  const geo = new BufferGeometry();
+  const position = new Float32BufferAttribute(new Float32Array(verts * 3), 3);
+  const tangent = new Float32BufferAttribute(new Float32Array(verts * 3), 3);
+  position.setUsage(DynamicDrawUsage);
+  tangent.setUsage(DynamicDrawUsage);
+  const side = new Float32Array(verts);
+  const t = new Float32Array(verts);
+  const seed = new Float32Array(verts);
+  const idx: number[] = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < m; j++) {
+      const v = (i * m + j) * 2;
+      side[v] = -1;
+      side[v + 1] = 1;
+      t[v] = t[v + 1] = j / (m - 1);
+      seed[v] = seed[v + 1] = seeds[i]!;
+      if (j < m - 1) idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+    }
+  }
+  geo.setAttribute('position', position);
+  geo.setAttribute('aTangent', tangent);
+  geo.setAttribute('aSide', new Float32BufferAttribute(side, 1));
+  geo.setAttribute('aT', new Float32BufferAttribute(t, 1));
+  geo.setAttribute('aSeed', new Float32BufferAttribute(seed, 1));
+  geo.setIndex(idx);
+  const mesh = new Mesh(
+    geo,
+    new ShaderMaterial({
+      glslVersion: GLSL3,
+      vertexShader: VERT,
+      fragmentShader: frag(FRAG),
+      // 帯の向きは画面上で決まるので、裏表どちらも描く
+      side: DoubleSide,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      blending: CustomBlending,
+      blendSrc: OneFactor,
+      blendDst: OneMinusSrcAlphaFactor,
+      uniforms: {
+        ...lampUniforms(shared),
+        uResolution: shared.uResolution,
+        uPixelRatio: shared.uPixelRatio,
+        uWidth: { value: widthPx },
+        uBrightness: { value: brightness },
+        uGlowPass: shared.uGlowPass,
+        uKey: shared.uKey,
+        uAmbient: shared.uAmbient,
+        uBody: look.uBody,
+        uGlow: look.uGlow,
+      },
+    }),
+  );
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * 糸の節の位置 x（count 本 × nodes 節 × xyz）を描画用の頂点に書き込む。
+ * alive が 0 の糸は長さ0の線にして描かない
+ */
+export function writeStrands(geo: BufferGeometry, x: Float32Array, n: number, m: number, alive?: Uint8Array): void {
+  const pos = geo.getAttribute('position') as Float32BufferAttribute;
+  const tan = geo.getAttribute('aTangent') as Float32BufferAttribute;
+  const P = pos.array as Float32Array;
+  const T = tan.array as Float32Array;
+  for (let i = 0; i < n; i++) {
+    const base = i * m * 3;
+    if (alive && !alive[i]) {
+      for (let j = 0; j < m * 2; j++) {
+        const v = (i * m * 2 + j) * 3;
+        P[v] = x[base]!;
+        P[v + 1] = x[base + 1]!;
+        P[v + 2] = x[base + 2]!;
+        T[v] = T[v + 1] = T[v + 2] = 0;
+      }
+      continue;
+    }
+    for (let j = 0; j < m; j++) {
+      const k = base + j * 3;
+      const a = base + Math.max(j - 1, 0) * 3;
+      const b = base + Math.min(j + 1, m - 1) * 3;
+      const tx = x[b]! - x[a]!;
+      const ty = x[b + 1]! - x[a + 1]!;
+      const tz = x[b + 2]! - x[a + 2]!;
+      const v = (i * m + j) * 2 * 3;
+      for (let side = 0; side < 2; side++) {
+        const o = v + side * 3;
+        P[o] = x[k]!;
+        P[o + 1] = x[k + 1]!;
+        P[o + 2] = x[k + 2]!;
+        T[o] = tx;
+        T[o + 1] = ty;
+        T[o + 2] = tz;
+      }
+    }
+  }
+  pos.needsUpdate = true;
+  tan.needsUpdate = true;
+}
+
 export interface RootFrame {
   /** 根元の位置（ワールド） */
   pos: Vector3;
@@ -100,89 +216,67 @@ export class Tentacles {
   private readonly x: Float32Array;
   private readonly px: Float32Array;
   private readonly seg: Float32Array;
+  /** 1本ずつの長さ（傘の半径 = 1）と、生えはじめる育ち具合（腕の間ほど早い） */
+  private readonly baseLen: Float32Array;
+  private readonly sproutAt: Float32Array;
+  /** 生えているか（生えはじめたら根元から伸ばしなおす） */
+  private readonly alive: Uint8Array;
   private readonly seeds: Float32Array;
   private readonly geo: BufferGeometry;
   private time = 0;
-  private initialized = false;
+  /** 傘の半径（瓶の高さ単位）。触手の長さと、水の流れの強さの目安 */
+  private radius: number = BELL.radius;
 
   constructor(shared: SharedUniforms, look: BellLook, rng: Rng) {
     const n = this.count;
     const m = this.nodes;
     this.angles = new Float32Array(n);
     this.seg = new Float32Array(n);
+    this.baseLen = new Float32Array(n);
+    this.sproutAt = new Float32Array(n);
+    this.alive = new Uint8Array(n);
     this.seeds = new Float32Array(n);
+    const lobe = (Math.PI * 2) / LOBES;
     for (let i = 0; i < n; i++) {
       this.seeds[i] = rng.next();
       this.angles[i] = ((i + 0.5 + rng.range(-0.3, 0.3)) / n) * Math.PI * 2;
-      const len = TENTACLES.length * BELL.radius * (1 + TENTACLES.lengthJitter * (rng.next() * 2 - 1));
-      this.seg[i] = len / (m - 1);
+      this.baseLen[i] = TENTACLES.length * (1 + TENTACLES.lengthJitter * (rng.next() * 2 - 1));
+      // 腕の先（縁弁の真ん中）からの角度の近さ。腕の間（0.5）ほど早く生える
+      const u = this.angles[i]! / lobe;
+      const d = Math.abs(u - Math.round(u));
+      this.sproutAt[i] = 0.85 * (0.4 * rng.next() + 0.6 * (1 - 2 * d));
     }
+    this.setForm(BELL.radius, 1);
     this.x = new Float32Array(n * m * 3);
     this.px = new Float32Array(n * m * 3);
 
-    const verts = n * m * 2;
-    const geo = new BufferGeometry();
-    const position = new Float32BufferAttribute(new Float32Array(verts * 3), 3);
-    const tangent = new Float32BufferAttribute(new Float32Array(verts * 3), 3);
-    position.setUsage(DynamicDrawUsage);
-    tangent.setUsage(DynamicDrawUsage);
-    const side = new Float32Array(verts);
-    const t = new Float32Array(verts);
-    const seed = new Float32Array(verts);
-    const idx: number[] = [];
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < m; j++) {
-        const v = (i * m + j) * 2;
-        side[v] = -1;
-        side[v + 1] = 1;
-        t[v] = t[v + 1] = j / (m - 1);
-        seed[v] = seed[v + 1] = this.seeds[i]!;
-        if (j < m - 1) idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
-      }
-    }
-    geo.setAttribute('position', position);
-    geo.setAttribute('aTangent', tangent);
-    geo.setAttribute('aSide', new Float32BufferAttribute(side, 1));
-    geo.setAttribute('aT', new Float32BufferAttribute(t, 1));
-    geo.setAttribute('aSeed', new Float32BufferAttribute(seed, 1));
-    geo.setIndex(idx);
-    this.geo = geo;
-
-    this.mesh = new Mesh(
-      geo,
-      new ShaderMaterial({
-        glslVersion: GLSL3,
-        vertexShader: VERT,
-        fragmentShader: frag(FRAG),
-        // 帯の向きは画面上で決まるので、裏表どちらも描く
-        side: DoubleSide,
-        transparent: true,
-        depthTest: false,
-        depthWrite: false,
-        blending: CustomBlending,
-        blendSrc: OneFactor,
-        blendDst: OneMinusSrcAlphaFactor,
-        uniforms: {
-          ...lampUniforms(shared),
-          uResolution: shared.uResolution,
-          uPixelRatio: shared.uPixelRatio,
-          uWidth: { value: TENTACLES.widthPx },
-          uBrightness: { value: TENTACLES.brightness },
-          uGlowPass: shared.uGlowPass,
-          uKey: shared.uKey,
-          uAmbient: shared.uAmbient,
-          uBody: look.uBody,
-          uGlow: look.uGlow,
-        },
-      }),
-    );
-    this.mesh.frustumCulled = false;
+    this.mesh = createStrandMesh(shared, look, n, m, this.seeds, TENTACLES.widthPx, TENTACLES.brightness);
+    this.geo = this.mesh.geometry;
     this.mesh.renderOrder = 30;
+  }
+
+  /** 根元から伸ばしなおす（個体を別の場所へ置きなおしたとき） */
+  reset(): void {
+    this.alive.fill(0);
+  }
+
+  /**
+   * 大きさと生えそろい具合（エフィラが育つにつれて）。radius は傘の半径、sprout は 0〜1。
+   * 腕の間の触手から先に、根元から少しずつ伸びる
+   */
+  setForm(radius: number, sprout: number): void {
+    this.radius = radius;
+    const m = this.nodes;
+    for (let i = 0; i < this.count; i++) {
+      const grow = Math.min(Math.max((sprout - this.sproutAt[i]!) / 0.15, 0), 1);
+      this.seg[i] = (this.baseLen[i]! * radius * grow) / (m - 1);
+    }
   }
 
   /**
    * 1ステップ進める。roots(i) は i 本目の根元を返す。
-   * jet は収縮で押し出される水の向き×強さ（ワールド、加速度）、inflow は緩むときに傘の下へ吸い込む強さ
+   * jet は収縮で押し出される水の向き×強さ（ワールド、加速度）、inflow は緩むときに傘の下へ吸い込む強さ。
+   * 小さな個体では、重さや水の流れも大きさに合わせて弱める（同じ形で縮めた動きになる）
    */
   step(dt: number, roots: (i: number) => RootFrame, jet: Vector3, jetOrigin: Vector3, inflow = 0): void {
     const n = this.count;
@@ -191,17 +285,24 @@ export class Tentacles {
     const px = this.px;
     const dt2 = dt * dt;
     const keep = 1 - TENTACLES.drag;
-    const g = -TENTACLES.gravity;
-    const bellR = BELL.radius;
+    const bellR = this.radius;
+    const scale = bellR / BELL.radius;
+    const g = -TENTACLES.gravity * scale;
     this.time += dt;
     const t = this.time;
-    const cur = TENTACLES.current;
+    const cur = TENTACLES.current * scale;
 
     for (let i = 0; i < n; i++) {
-      const root = roots(i);
       const L = this.seg[i]!;
       const base = i * m * 3;
-      if (!this.initialized) {
+      // まだ生えていない触手は、根元に畳んだまま
+      if (L <= 1e-6) {
+        this.alive[i] = 0;
+        continue;
+      }
+      const root = roots(i);
+      if (!this.alive[i]) {
+        this.alive[i] = 1;
         for (let j = 0; j < m; j++) {
           const k = base + j * 3;
           x[k] = px[k] = root.pos.x + root.dir.x * L * j;
@@ -279,40 +380,10 @@ export class Tentacles {
         if (x[k + 1]! < floorY) x[k + 1] = floorY;
       }
     }
-    this.initialized = true;
   }
 
   /** 描画用の頂点を書き換える */
   updateGeometry(): void {
-    const n = this.count;
-    const m = this.nodes;
-    const x = this.x;
-    const pos = this.geo.getAttribute('position') as Float32BufferAttribute;
-    const tan = this.geo.getAttribute('aTangent') as Float32BufferAttribute;
-    const P = pos.array as Float32Array;
-    const T = tan.array as Float32Array;
-    for (let i = 0; i < n; i++) {
-      const base = i * m * 3;
-      for (let j = 0; j < m; j++) {
-        const k = base + j * 3;
-        const a = base + Math.max(j - 1, 0) * 3;
-        const b = base + Math.min(j + 1, m - 1) * 3;
-        const tx = x[b]! - x[a]!;
-        const ty = x[b + 1]! - x[a + 1]!;
-        const tz = x[b + 2]! - x[a + 2]!;
-        const v = (i * m + j) * 2 * 3;
-        for (let side = 0; side < 2; side++) {
-          const o = v + side * 3;
-          P[o] = x[k]!;
-          P[o + 1] = x[k + 1]!;
-          P[o + 2] = x[k + 2]!;
-          T[o] = tx;
-          T[o + 1] = ty;
-          T[o + 2] = tz;
-        }
-      }
-    }
-    pos.needsUpdate = true;
-    tan.needsUpdate = true;
+    writeStrands(this.geo, this.x, this.count, this.nodes, this.alive);
   }
 }

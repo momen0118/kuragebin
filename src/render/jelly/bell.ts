@@ -19,7 +19,7 @@ import {
   Vector3,
   type Side,
 } from 'three';
-import { BELL, JELLY_LOOK } from '../../config';
+import { BELL, EPHYRA, JELLY_LOOK } from '../../config';
 import { LOBES, PROFILE_SEGMENTS } from './profile';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
@@ -42,6 +42,7 @@ const DEFINES = /* glsl */ `
 #define RIPPLE_W ${((Math.PI * 2) / BELL.marginRipplePeriod).toFixed(5)}
 #define GONAD_S ${GONAD_S.toFixed(3)}
 #define LAMP_SCATTER ${JELLY_LOOK.lampScatter.toFixed(3)}
+#define LAPPET_W ${EPHYRA.lappetWidth.toFixed(4)}
 `;
 
 const VERT = /* glsl */ `
@@ -53,6 +54,8 @@ uniform float uTime;
 uniform float uLayer;
 uniform float uSMax;
 uniform float uInset;
+// エフィラの腕の形（form.ts の armReach と同じ）。成体では uArmDepth = uLappet = 0
+uniform float uArmDepth, uArmBase, uArmTip, uLappet;
 out vec3 vWorldPos;
 out vec3 vWorldNormal;
 out vec3 vViewNormal;
@@ -86,9 +89,28 @@ float scallop(float th, float s) {
   return 1.0 - (round_ + cut) * w;
 }
 
+float smin(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+// 角度 θ での、傘の縁までの断面の長さの割合。腕の先で 1、腕の間の切れ込みの底で 1 - uArmDepth
+float armR(float th) {
+  float u = th / (TAU / float(LOBES));
+  float d = abs(u - floor(u + 0.5));
+  float notch = uLappet * exp(-pow(d / LAPPET_W, 2.0));
+  if (uArmDepth <= 1e-4) return 1.0 - notch;
+  float fl = 1.0 - uArmDepth;
+  float taper = (uArmBase - uArmTip) / uArmDepth;
+  float side = (uArmBase + taper * fl) / (sin(d * TAU / float(LOBES)) + taper);
+  return min(1.0, -smin(-smin(1.0, side, 0.05), -fl, 0.06)) - notch;
+}
+
 vec3 surf(float s, float th) {
-  vec2 pr = profileAt(s, th);
-  float r = pr.x * scallop(th, s);
+  // エフィラの腕の間では、断面の途中で縁になる（s = 1 が星形の輪郭）
+  float se = s * armR(th);
+  vec2 pr = profileAt(se, th);
+  float r = pr.x * scallop(th, se);
   // 縁のさざ波。縁弁の中でも縁は一本のきれいな線にならない
   float wave = sin(th * RIPPLE_N + uTime * RIPPLE_W + 1.7 * sin(th * 3.0 - uTime * 0.31));
   pr.y += RIPPLE * wave * smoothstep(0.85, 1.0, s);
@@ -106,7 +128,8 @@ void main() {
   vec3 dt = surf(s, th + e) - surf(s, th - e);
   vec3 nrm = cross(dt, ds);
   // 頂点の近くでは円周方向の差分が小さくなるので、断面だけから求めた向きと合わせる
-  vec2 tg = normalize(profileAt(min(s + h, 1.0), th) - profileAt(max(s - h, 0.0), th));
+  float reach = armR(th);
+  vec2 tg = normalize(profileAt(min((s + h) * reach, 1.0), th) - profileAt(max((s - h) * reach, 0.0), th));
   vec3 dirR = vec3(cos(th), 0.0, sin(th));
   vec3 nMer = normalize(vec3(dirR.x * -tg.y, tg.x, dirR.z * -tg.y));
   float nl = length(nrm);
@@ -134,6 +157,9 @@ ${common}
 ${DEFINES}
 ${LAMP_GLSL}
 uniform float uGlowPass, uLayer, uContract;
+// 放射管の枝分かれと環状管、四つ葉の濃さ（エフィラが育つにつれて 0 → 1）。
+// uYoung はエフィラの若さ（1 で放されたばかり）：小さな体は少し濃く、胃から腕へ伸びる管が見える
+uniform float uCanals, uGonads, uYoung;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
 // 生殖腺そのものの色（uGonad は発光の強さを掛けた色なので、昼はほぼ黒になる）
@@ -157,7 +183,7 @@ float canals(float s, float th) {
   float d2 = seg * 0.25 * smoothstep(0.74, 1.0, s) * 0.7;
   float b2 = exp(-pow((abs(abs(a) - d1) - d2) * r / (w * 0.8), 2.0)) * smoothstep(0.76, 0.84, s);
   float ring = exp(-pow((s - 0.975) / 0.009, 2.0));
-  return max(max(c, b1 * 0.8), max(b2 * 0.6, ring));
+  return max(max(c, b1 * 0.8 * uCanals), max(b2 * 0.6 * uCanals, ring * uCanals));
 }
 
 // 四つ葉の生殖腺。中心に口を開いた蹄鉄形が4つ
@@ -191,9 +217,9 @@ void main() {
   bool gonad = uLayer > 1.5;
 
   float canal = inner ? canals(s, th) : 0.0;
-  float gon = gonad ? gonads(s, th) : 0.0;
+  float gon = gonad ? gonads(s, th) * uGonads : 0.0;
   // 縁の近くの細い輪（筋肉）
-  float rings = inner ? (0.5 + 0.5 * cos(s * 150.0)) * smoothstep(0.62, 0.9, s) * 0.5 : 0.0;
+  float rings = inner ? (0.5 + 0.5 * cos(s * 150.0)) * smoothstep(0.62, 0.9, s) * 0.5 * uCanals : 0.0;
 
   // 光：窓からの光が透けて届く
   float wrap = saturate(dot(Nf, uKeyDir) * 0.5 + 0.5);
@@ -220,9 +246,9 @@ void main() {
     density = 0.18 * gon;
     tint = uGonadTint;
   } else if (inner) {
-    density = 0.004 + 0.08 * rim + 0.03 * canal + 0.012 * rings + 0.02 * margin;
+    density = 0.004 + 0.08 * rim + 0.03 * canal * (1.0 + 1.5 * uYoung) + 0.012 * rings + 0.02 * margin + 0.012 * uYoung;
   } else {
-    density = 0.006 + 0.17 * rim + 0.025 * margin;
+    density = 0.006 + 0.17 * rim + 0.025 * margin * (1.0 + uYoung) + 0.014 * uYoung;
   }
   vec3 col = tint * light * density * 1.6;
   float refr = gonad ? 0.0 : rim * (inner ? 0.12 : 0.22);
@@ -291,9 +317,21 @@ export interface BellLook {
 
 export interface Bell {
   meshes: Mesh[];
+  /** 生殖腺（四つ葉）の層。育つまでは描かない */
+  gonadMesh: Mesh;
   /** 縁弁ごとの断面の点列（BellShape.points を毎フレーム書き込み、needsUpdate を立てる） */
   profile: DataTexture;
   contract: { value: number };
+  /** 腕の形、放射管、四つ葉（エフィラの育ち具合） */
+  form: {
+    uArmDepth: { value: number };
+    uArmBase: { value: number };
+    uArmTip: { value: number };
+    uLappet: { value: number };
+    uCanals: { value: number };
+    uGonads: { value: number };
+    uYoung: { value: number };
+  };
 }
 
 export function createBell(shared: SharedUniforms, look: BellLook): Bell {
@@ -304,6 +342,15 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
   profile.needsUpdate = true;
   const tProfile = { value: profile };
   const contract = { value: 0 };
+  const form = {
+    uArmDepth: { value: 0 },
+    uArmBase: { value: EPHYRA.armBase },
+    uArmTip: { value: EPHYRA.armTip },
+    uLappet: { value: 0 },
+    uCanals: { value: 1 },
+    uGonads: { value: 1 },
+    uYoung: { value: 0 },
+  };
   const bellGeo = grid(BELL.ringSegments, BELL.radialSegments, 1.35);
   const gonadGeo = grid(14, 64, 1);
 
@@ -321,6 +368,7 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
       blendDst: OneMinusSrcAlphaFactor,
       uniforms: {
         ...lampUniforms(shared),
+        ...form,
         tProfile,
         uTime: shared.uTime,
         uContract: contract,
@@ -346,12 +394,7 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
     return m;
   };
 
-  const meshes = [
-    make(bellGeo, 0, BackSide, 32),
-    make(bellGeo, 1, BackSide, 33),
-    make(gonadGeo, 2, DoubleSide, 34, GONAD_S, 0.07),
-    make(bellGeo, 1, FrontSide, 35),
-    make(bellGeo, 0, FrontSide, 36),
-  ];
-  return { meshes, profile, contract };
+  const gonadMesh = make(gonadGeo, 2, DoubleSide, 34, GONAD_S, 0.07);
+  const meshes = [make(bellGeo, 0, BackSide, 32), make(bellGeo, 1, BackSide, 33), gonadMesh, make(bellGeo, 1, FrontSide, 35), make(bellGeo, 0, FrontSide, 36)];
+  return { meshes, gonadMesh, profile, contract, form };
 }

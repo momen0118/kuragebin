@@ -20,9 +20,27 @@ function relaxedAngle(s: number): number {
 }
 
 /** 縮んだときに足す曲がり。縁に近いほど大きい */
-function bendWeight(s: number): number {
-  return s ** BELL.bendPower;
+function bendWeight(s: number, power: number): number {
+  return s ** power;
 }
+
+/** 縮み方としなり方。成体は BELL の値、エフィラは腕が大きく折れ、腕ごとにずれてしなる */
+export interface ShapeParams {
+  contractBend: number;
+  bendPower: number;
+  flexGain: number;
+  flexSpread: number;
+  /** 縁弁（腕）ごとの縮みのずれの上限（秒）。0 ならそろって縮む */
+  lobeLag: number;
+}
+
+export const ADULT_SHAPE: ShapeParams = {
+  contractBend: BELL.contractBend,
+  bendPower: BELL.bendPower,
+  flexGain: BELL.flexGain,
+  flexSpread: BELL.flexSpread,
+  lobeLag: 0,
+};
 
 function smooth(t: number): number {
   const x = Math.min(Math.max(t, 0), 1);
@@ -78,9 +96,11 @@ export function scallop(theta: number, s: number): number {
 interface Lobe {
   flex: number;
   vel: number;
-  /** しなりの速さと、縮みへの反応のばらつき */
-  freq: number;
-  gain: number;
+  /** しなりの速さと、縮みへの反応のばらつき（-1〜1。params の flexSpread を掛けて使う） */
+  freqJitter: number;
+  gainJitter: number;
+  /** 縮みのずれ（0〜1。params の lobeLag を掛けて使う）。縮むたびに選び直す */
+  lag: number;
   /** ゆっくりした揺れ（2つの周期の重ね合わせ） */
   w1: number;
   w2: number;
@@ -101,17 +121,19 @@ export class BellShape {
   private readonly base = new Float64Array(PROFILE_SEGMENTS);
   private prevMargin = 0;
   private time = 0;
+  private params: ShapeParams = ADULT_SHAPE;
+  private wasContracting = false;
 
   constructor(private readonly rng: Rng) {
     const [pMin, pMax] = BELL.lobeSwayPeriod;
     const [iMin, iMax] = BELL.foldInterval;
     for (let k = 0; k < LOBES; k++) {
-      const spread = BELL.flexSpread;
       this.lobes.push({
         flex: 0,
         vel: 0,
-        freq: BELL.flexFreq * (1 + spread * (rng.next() * 2 - 1)),
-        gain: BELL.flexGain * (1 + spread * (rng.next() * 2 - 1)),
+        freqJitter: rng.next() * 2 - 1,
+        gainJitter: rng.next() * 2 - 1,
+        lag: rng.next(),
         w1: (Math.PI * 2) / rng.range(pMin, pMax),
         w2: (Math.PI * 2) / rng.range(pMin, pMax),
         ph1: rng.range(0, Math.PI * 2),
@@ -124,11 +146,21 @@ export class BellShape {
     this.integrate(() => 0);
   }
 
+  /** 縮み方としなり方を変える（エフィラが育つにつれて成体へ） */
+  setParams(params: ShapeParams): void {
+    this.params = params;
+  }
+
   /** 縁弁のしなりと折れを進めて、断面を作り直す */
   update(dt: number, pulse: Pulse): void {
     const lag = BELL.propagation;
+    const P = this.params;
     if (dt > 0) {
       this.time += dt;
+      // 縮み始めるたびに、腕ごとのずれを選び直す（エフィラのぎこちなさ）
+      const contracting = pulse.contracting;
+      if (contracting && !this.wasContracting && P.lobeLag > 0) for (const b of this.lobes) b.lag = this.rng.next();
+      this.wasContracting = contracting;
       // 縁が速く縮むほど、薄い縁は置いていかれて外へ反り、追いついて内へ行き過ぎる
       const m = pulse.value(lag);
       const rate = (m - this.prevMargin) / dt;
@@ -136,13 +168,15 @@ export class BellShape {
       const L = this.lobes;
       for (let k = 0; k < LOBES; k++) {
         const b = L[k]!;
-        const w = b.freq * Math.PI * 2;
+        const freq = BELL.flexFreq * (1 + P.flexSpread * b.freqJitter);
+        const gain = P.flexGain * (1 + P.flexSpread * b.gainJitter);
+        const w = freq * Math.PI * 2;
         // 緩んでいる間もゆっくり揺れる
         const sway = BELL.lobeSway * (0.6 * Math.sin(this.time * b.w1 + b.ph1) + 0.4 * Math.sin(this.time * b.w2 + b.ph2));
         const left = L[(k + LOBES - 1) % LOBES]!.flex;
         const right = L[(k + 1) % LOBES]!.flex;
         this.accel[k] =
-          -w * w * (b.flex - sway) - 2 * BELL.flexDamping * w * b.vel - b.gain * w * w * rate + BELL.lobeCoupling * (left + right - 2 * b.flex);
+          -w * w * (b.flex - sway) - 2 * BELL.flexDamping * w * b.vel - gain * w * w * rate + BELL.lobeCoupling * (left + right - 2 * b.flex);
       }
       for (let k = 0; k < LOBES; k++) {
         const b = L[k]!;
@@ -151,7 +185,7 @@ export class BellShape {
         this.stepFold(b, dt);
       }
     }
-    this.integrate((s) => pulse.value(lag * s));
+    this.integrate((delay) => pulse.value(delay));
   }
 
   /** ときどき内側へ折れて、しばらくすると戻る */
@@ -169,20 +203,28 @@ export class BellShape {
     b.fold += (b.foldTarget - b.fold) * (1 - Math.exp(-dt / 0.6));
   }
 
-  private integrate(contraction: (s: number) => number): void {
+  /** contraction(delay) は delay 秒前の縮み。縮みは頂点から縁へ遅れて伝わる */
+  private integrate(contraction: (delay: number) => number): void {
     const n = PROFILE_SEGMENTS;
     const ds = this.length / n;
     const p = this.points;
     const stride = (n + 1) * 2;
     const base = this.base;
-    for (let i = 0; i < n; i++) {
-      const s = (i + 0.5) / n;
-      base[i] = relaxedAngle(s) + BELL.contractBend * bendWeight(s) * contraction(s);
-    }
+    const P = this.params;
+    const lag = BELL.propagation;
+    const perLobe = P.lobeLag > 0;
+    const fillBase = (extra: number): void => {
+      for (let i = 0; i < n; i++) {
+        const s = (i + 0.5) / n;
+        base[i] = relaxedAngle(s) + P.contractBend * bendWeight(s, P.bendPower) * contraction(lag * s + extra);
+      }
+    };
+    if (!perLobe) fillBase(0);
     for (let k = 0; k < LOBES; k++) {
       const b = this.lobes[k];
       const flex = b ? b.flex : 0;
       const fold = b ? b.fold : 0;
+      if (perLobe) fillBase(b ? b.lag * P.lobeLag : 0);
       const o = k * stride;
       let r = 0;
       let y = BELL.apexY;
@@ -206,19 +248,32 @@ export class BellShape {
 
   /** 角度 θ での縁の位置 (r, y)（切れ込みを含む）と、断面の向き（外へ、下へ） */
   marginAt(theta: number, out: { r: number; y: number; tr: number; ty: number }): void {
+    this.pointAt(theta, 1, out);
+  }
+
+  /**
+   * 角度 θ、断面の位置 s（頂点 0〜縁 1）での点 (r, y)（切れ込みを含む）と、断面の向き。
+   * エフィラの腕の間では縁が s < 1 の所にある（form.ts の armReach）
+   */
+  pointAt(theta: number, s: number, out: { r: number; y: number; tr: number; ty: number }): void {
     const [l0, l1, w] = lobeBlend(theta);
     const n = PROFILE_SEGMENTS;
-    const [r0, y0] = this.lobePoint(l0, n);
-    const [r1, y1] = this.lobePoint(l1, n);
-    const [q0, z0] = this.lobePoint(l0, n - 1);
-    const [q1, z1] = this.lobePoint(l1, n - 1);
-    const r = r0 + (r1 - r0) * w;
-    const y = y0 + (y1 - y0) * w;
-    const dr = r - (q0 + (q1 - q0) * w);
-    const dy = y - (z0 + (z1 - z0) * w);
+    const f = Math.min(Math.max(s, 0), 1) * n;
+    const i = Math.min(Math.floor(f), n - 1);
+    const t = f - i;
+    const [a0, b0] = this.lobePoint(l0, i);
+    const [a1, b1] = this.lobePoint(l0, i + 1);
+    const [c0, d0] = this.lobePoint(l1, i);
+    const [c1, d1] = this.lobePoint(l1, i + 1);
+    const ri = a0 + (c0 - a0) * w;
+    const yi = b0 + (d0 - b0) * w;
+    const rj = a1 + (c1 - a1) * w;
+    const yj = b1 + (d1 - b1) * w;
+    const dr = rj - ri;
+    const dy = yj - yi;
     const l = Math.hypot(dr, dy) || 1;
-    out.r = r * scallop(theta, 1);
-    out.y = y;
+    out.r = (ri + dr * t) * scallop(theta, s);
+    out.y = yi + dy * t;
     out.tr = dr / l;
     out.ty = dy / l;
   }

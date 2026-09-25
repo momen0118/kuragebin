@@ -1,13 +1,14 @@
 // 泳ぎ。収縮の瞬間に前へ進み、緩和中はゆっくり沈む。
 // 壁・底・水面が近づくと向きを緩やかに変え、ぶつからない。
 import { Quaternion, Vector2, Vector3 } from 'three';
-import { BELL, JAR, POKE, SWIM } from '../../config';
+import { BELL, EPHYRA, JAR, POKE, SWIM } from '../../config';
 import type { Rng } from '../../sim/rng';
 import type { Pulse } from './pulse';
 
 const UP = new Vector3(0, 1, 0);
 const tmpA = new Vector3();
 const tmpB = new Vector3();
+const tmpC = new Vector3();
 const tmpQ = new Quaternion();
 
 /** 傘の中心が動ける範囲 */
@@ -17,11 +18,35 @@ export interface SwimBounds {
   top: number;
 }
 
+/** ほかの泳ぐ個体（近づきすぎたらよける） */
+export interface Neighbor {
+  pos: Vector3;
+  radius: number;
+}
+
+/** 大きさと、ぎこちなさ（エフィラ）で変わる泳ぎの強さ。成体は SWIM の値そのもの */
+interface SwimScale {
+  thrust: number;
+  sink: number;
+  lookAhead: number;
+  righting: number;
+  roll: number;
+  /** 縮むたびに転がる強さ */
+  tumble: number;
+  /** 漂うときの拍動の間とゆっくりさの割合（エフィラは間をあけずに打ち続ける） */
+  driftRest: number;
+  driftTempo: number;
+}
+
+const ADULT_SCALE: SwimScale = { thrust: 1, sink: 1, lookAhead: 1, righting: 1, roll: 1, tumble: 0, driftRest: 1, driftTempo: 1 };
+
 export function swimBounds(bellRadius: number = BELL.radius): SwimBounds {
   const inner = JAR.radius - JAR.glassThickness;
+  // 小さなエフィラは底の近くまで降りられる（瓶底のポリプより上）
+  const low = Math.min(Math.max(bellRadius / BELL.radius, 0.5), 1);
   return {
     radius: inner - bellRadius - SWIM.sidePadding,
-    bottom: JAR.bottomThickness + SWIM.bottomPadding,
+    bottom: JAR.bottomThickness + SWIM.bottomPadding * low,
     top: JAR.waterLevel - bellRadius * BELL.apexY - SWIM.topPadding,
   };
 }
@@ -50,9 +75,16 @@ export class Swimmer {
   private leanLeft = 0;
   private readonly leanDir = new Vector3(0, 1, 0);
 
+  /** 大きさとぎこちなさ（setForm） */
+  private scale: SwimScale = ADULT_SCALE;
+  private radius: number = BELL.radius;
+  private wasContracting = false;
+  /** 瓶底から離れたばかり（秒）。泳げる範囲の下にいても押し上げず、自分で泳いで上がる */
+  private rising = 0;
+
   constructor(
     private readonly rng: Rng,
-    private readonly bounds: SwimBounds = swimBounds(),
+    private bounds: SwimBounds = swimBounds(),
   ) {
     const b = bounds;
     const r = rng.range(0, b.radius * 0.6);
@@ -69,6 +101,47 @@ export class Swimmer {
     this.rollVel = rng.range(-1, 1) * SWIM.rollSpeed;
     this.currentPhase = rng.range(0, Math.PI * 2);
     this.leanTimer = rng.range(SWIM.leanInterval[0] * 0.3, SWIM.leanInterval[1] * 0.6);
+  }
+
+  /**
+   * 大きさ（傘の半径）とぎこちなさ（1 でエフィラ、0 で成体）。小さいほど弱く押し出してゆっくり沈み、
+   * エフィラはよく転がり、起き上がりが弱く、軸まわりによく回る
+   */
+  setForm(radius: number, jerk: number): void {
+    if (radius !== this.radius) {
+      this.radius = radius;
+      this.bounds = swimBounds(radius);
+    }
+    if (radius === BELL.radius && jerk <= 0) {
+      this.scale = ADULT_SCALE;
+      return;
+    }
+    const k = radius / BELL.radius;
+    const mix = (a: number, b: number): number => a + (b - a) * jerk;
+    this.scale = {
+      thrust: k ** 0.8 * mix(1, EPHYRA.thrust),
+      sink: k,
+      lookAhead: Math.max(k, 0.3),
+      righting: mix(1, EPHYRA.righting),
+      roll: mix(1, EPHYRA.roll),
+      tumble: EPHYRA.tumble * jerk,
+      driftRest: mix(1, 0.15),
+      driftTempo: mix(1, 1 / SWIM.driftTempo),
+    };
+  }
+
+  /** 位置と向きを決めなおす（ストロビラから離れたエフィラ）。速さは vel */
+  place(pos: Vector3, up: Vector3, vel: Vector3): void {
+    this.rising = pos.y < this.bounds.bottom ? 8 : 0;
+    this.pos.copy(pos);
+    this.vel.copy(vel);
+    this.quat.setFromUnitVectors(UP, tmpA.copy(up).normalize());
+    this.axis.copy(UP).applyQuaternion(this.quat);
+    this.wander.copy(this.axis);
+    this.angVel.set(0, 0, 0);
+    this.mode = 'cruise';
+    this.modeTimer = SWIM.cruiseMaxTime * 0.3;
+    this.modeTarget = this.pickTarget('cruise');
   }
 
   /** 大きく傾いている最中か */
@@ -131,7 +204,16 @@ export class Swimmer {
     else this.wanderTarget.copy(UP);
   }
 
-  update(dt: number, pulse: Pulse): void {
+  update(dt: number, pulse: Pulse, others: readonly Neighbor[] = []): void {
+    const S = this.scale;
+    // エフィラは縮むたびに少し転がる（ぎこちない）
+    const contracting = pulse.contracting;
+    if (contracting && !this.wasContracting && S.tumble > 0) {
+      this.angVel.x += this.rng.gauss() * S.tumble * 0.8;
+      this.angVel.z += this.rng.gauss() * S.tumble * 0.8;
+      this.rollVel += this.rng.gauss() * S.tumble * 0.3;
+    }
+    this.wasContracting = contracting;
     const b = this.bounds;
     // 縮みの深さとは切り離した推進（深く縮んでも1回に進む量は同じ）
     const push = pulse.thrustRate();
@@ -145,11 +227,11 @@ export class Swimmer {
     const leaning = this.leanLeft > 0;
 
     // 推進：縮む速さに応じて傘の向きへ。大きく傾いている間は、その場で漂うように弱く
-    let thrust = this.mode === 'drift' ? SWIM.thrust * SWIM.driftThrust : SWIM.thrust;
+    let thrust = (this.mode === 'drift' ? SWIM.thrust * SWIM.driftThrust : SWIM.thrust) * S.thrust;
     if (leaning) thrust *= SWIM.leanThrust;
     this.vel.addScaledVector(this.axis, thrust * push * dt);
     // 沈む力と水の抵抗
-    this.vel.y -= SWIM.sink * dt;
+    this.vel.y -= SWIM.sink * S.sink * dt;
     this.vel.multiplyScalar(Math.exp(-SWIM.drag * dt));
     this.pos.addScaledVector(this.vel, dt);
     // ごくゆるい水の流れに乗って漂う
@@ -165,7 +247,7 @@ export class Swimmer {
     this.wander.lerp(this.wanderTarget, 1 - Math.exp(-dt / 2.5)).normalize();
 
     // 先読みした位置で壁・底・水面を避ける
-    const ahead = tmpA.copy(this.pos).addScaledVector(this.axis, SWIM.lookAhead).addScaledVector(this.vel, SWIM.lookAheadTime);
+    const ahead = tmpA.copy(this.pos).addScaledVector(this.axis, SWIM.lookAhead * S.lookAhead).addScaledVector(this.vel, SWIM.lookAheadTime);
     const desired = tmpB.copy(leaning ? this.leanDir : this.wander);
     const m = SWIM.wallMargin;
     const mv = SWIM.floorMargin;
@@ -181,11 +263,25 @@ export class Swimmer {
     if (dTop < mv * 0.5) desired.y -= Math.min((mv * 0.5 - dTop) / (mv * 0.5), 1.5) ** 2 * SWIM.avoidTop;
     const dBottom = ahead.y - b.bottom;
     if (dBottom < mv) desired.y += Math.min((mv - dBottom) / mv, 1.5) ** 2 * SWIM.avoidFloor;
+    // ほかの泳ぐ個体に近づきすぎたら、離れる向きへ向きを変え、少し押し離す（重ならない）
+    for (const o of others) {
+      const dx = this.pos.x - o.pos.x;
+      const dy = this.pos.y - o.pos.y;
+      const dz = this.pos.z - o.pos.z;
+      const d = Math.hypot(dx, dy, dz);
+      const reach = (this.radius + o.radius) * SWIM.othersMargin;
+      if (d >= reach || d < 1e-6) continue;
+      const k = (reach - d) / reach;
+      desired.x += (dx / d) * k * k * SWIM.avoidOthers;
+      desired.y += (dy / d) * k * k * SWIM.avoidOthers * 0.5;
+      desired.z += (dz / d) * k * k * SWIM.avoidOthers;
+      this.vel.addScaledVector(tmpC.set(dx, dy, dz).divideScalar(d), k * SWIM.othersPush * dt);
+    }
     if (desired.lengthSq() < 1e-6) desired.copy(UP);
     desired.normalize();
     // 傾きすぎたら起き上がろうとする（自分から大きく傾いている間は起き上がらない）
     const lean = 1 - this.axis.y;
-    if (!leaning) desired.addScaledVector(UP, SWIM.righting * lean).normalize();
+    if (!leaning) desired.addScaledVector(UP, SWIM.righting * S.righting * lean).normalize();
     if (desired.y < SWIM.minAxisY) {
       desired.y = SWIM.minAxisY;
       desired.normalize();
@@ -202,7 +298,7 @@ export class Swimmer {
       this.modeTimer = SWIM.cruiseMaxTime;
       this.modeTarget = this.pickTarget('cruise');
     }
-    if (this.mode === 'drift') pulse.setStyle(SWIM.driftAmp, SWIM.driftRest, SWIM.driftTempo);
+    if (this.mode === 'drift') pulse.setStyle(SWIM.driftAmp, SWIM.driftRest * S.driftRest, SWIM.driftTempo * S.driftTempo);
     else pulse.setStyle(1, 0, 1);
 
     // 向きを変える。収縮しているときほど変えやすい
@@ -217,7 +313,8 @@ export class Swimmer {
     }
     // 軸まわりのゆっくりした回転
     this.rollVel += this.rng.gauss() * 0.05 * dt;
-    this.rollVel = Math.max(-SWIM.rollSpeed, Math.min(SWIM.rollSpeed, this.rollVel * (1 - 0.02 * dt)));
+    const roll = SWIM.rollSpeed * S.roll;
+    this.rollVel = Math.max(-roll, Math.min(roll, this.rollVel * (1 - 0.02 * dt)));
     this.axis.copy(UP).applyQuaternion(this.quat);
     tmpQ.setFromAxisAngle(this.axis, this.rollVel * dt);
     this.quat.premultiply(tmpQ).normalize();
@@ -246,7 +343,12 @@ export class Swimmer {
       this.vel.y -= (this.pos.y - b.top) * SWIM.fenceSpring * dt + Math.max(this.vel.y, 0) * Math.min(1, 10 * dt);
       this.pos.y = Math.min(this.pos.y, b.top + 0.02);
     }
-    if (this.pos.y < b.bottom) {
+    if (this.rising > 0) {
+      // 瓶底から離れたばかり：下へは行かせず、泳いで上がるのを待つ
+      this.rising -= dt;
+      if (this.pos.y >= b.bottom) this.rising = 0;
+      if (this.vel.y < 0) this.vel.y *= 1 - Math.min(1, 6 * dt);
+    } else if (this.pos.y < b.bottom) {
       this.vel.y += (b.bottom - this.pos.y) * SWIM.fenceSpring * dt - Math.min(this.vel.y, 0) * Math.min(1, 10 * dt);
       this.pos.y = Math.max(this.pos.y, b.bottom - 0.02);
     }

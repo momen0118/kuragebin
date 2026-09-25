@@ -137,6 +137,39 @@ body {
   margin-left: 0;
 }
 
+.debug-panel .head {
+  cursor: pointer;
+}
+
+.debug-panel.collapsed .body {
+  display: none;
+}
+
+.debug-panel .creature-list {
+  max-height: 96px;
+  overflow-y: auto;
+  cursor: pointer;
+}
+
+.debug-panel .creature-list .picked {
+  color: rgb(196, 222, 255);
+  opacity: 1;
+}
+
+.debug-panel .selected select {
+  margin-left: 0;
+}
+
+.debug-panel .progress {
+  width: 100%;
+  margin: 2px 0 4px;
+}
+
+.debug-panel label select.cap {
+  flex: 0 1 auto;
+  margin-left: 2px;
+}
+
 /*
  * 画面下の隅のアイコン。中央は瓶の点3つに空けておく。
  * 右下は瓶に何かをする操作（ライト、あとで餌を一番隅に足す）、左下は日誌（あとで足す）

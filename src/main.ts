@@ -1,9 +1,12 @@
 import './style.css';
+import { Vector3 } from 'three';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
 import { hourOf, lightAt, sunOf } from './render/lighting';
 import { Clock } from './sim/clock';
+import { fillAdults, removeCreature, setDiscs, setProgress, setStage, spawnCreature } from './sim/edit';
+import type { GameState, Stage } from './sim/state';
 import { LampToggle } from './ui/lampToggle';
 import { onTap } from './ui/tap';
 import { registerServiceWorker } from './pwa/register';
@@ -73,6 +76,9 @@ async function main(): Promise<void> {
   if (debug) {
     // 確認用：中間の画像を出す（?view=bg / contents / glow / room）、部品を隠す（?hide=snow,table など）
     app.debugView = params.get('view');
+    // 撮影用：細部を見るためにデバイスピクセル比の上限を上げる（?maxdpr=4）
+    const maxDpr = Number(params.get('maxdpr'));
+    if (maxDpr > 0) app.maxDpr = maxDpr;
     app.setPatternDebug(params.has('pattern'));
     for (const name of (params.get('hide') ?? '').split(',')) {
       const part = app.parts[name];
@@ -86,6 +92,12 @@ async function main(): Promise<void> {
     if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
   });
   const [game] = await Promise.all([gameReady, app.load(import.meta.env.BASE_URL)]);
+
+  // 表示中の瓶の個体を描く（瓶の切り替えは 3-2）
+  const shownJar = 0;
+  const showJar = (s: GameState): void => app.setJar(s.jars[shownJar]!);
+  showJar(game.state);
+  game.onChange(showJar);
 
   // 夜のデスクライトのオン・オフ（初期はオン、保存される）。アイコンは夜の間だけ出す
   app.setLampOn(game.state.settings.lamp);
@@ -136,10 +148,24 @@ async function main(): Promise<void> {
             app.setLampOn(game.state.settings.lamp);
             lampToggle.set(game.state.settings.lamp);
           },
+          onSpawn: (stage) => game.edit((s, rules) => void spawnCreature(s, shownJar, stage, rules)),
+          onStage: (id, stage) => game.edit((s, rules) => setStage(s, id, stage, rules)),
+          onProgress: (id, p) => game.edit((s) => setProgress(s, id, p)),
+          onDiscs: (id, n) => game.edit((s, rules) => setDiscs(s, id, n, rules)),
+          onRemove: (id) => game.edit((s, rules) => removeCreature(s, id, rules)),
+          onFill: (n) => game.edit((s, rules) => fillAdults(s, shownJar, n, rules)),
+          onCap: (n) => game.setRules({ maxSwimmers: n }),
+          onRealSize: (on) => {
+            app.creatures.setRealSize(on);
+            showJar(game.state);
+          },
         })
       : null;
   if (panel) {
-    const show = (): void => panel.showState(game.state, game.info, clock.speed, clock.drift);
+    const show = (): void => {
+      panel.showState(game.state, game.info, clock.speed, clock.drift);
+      panel.showCreatures(game.state.jars[shownJar]!, game.lifeRules.maxSwimmers);
+    };
     game.onChange(show);
     show();
   }
@@ -155,12 +181,49 @@ async function main(): Promise<void> {
 
   if (capture) {
     const w = window as unknown as Record<string, unknown>;
+    const edit = (fn: Parameters<typeof game.edit>[0]): void => game.edit(fn);
     w.__kurage = {
       frame: (dt: number) => app.frame(dt),
       simulate: (seconds: number) => {
         for (let t = 0; t < seconds; t += 1 / 60) app.simulate(1 / 60);
       },
       jelly: () => app.jellyScreenPosition(canvas.clientWidth, canvas.clientHeight),
+      // 個体を出す・変える（見た目の確認用）。spawn は番号を返す
+      spawn: (stage: Stage, progress = 0, spot?: [number, number]) => {
+        let id = 0;
+        edit((s, rules) => {
+          const c = spawnCreature(s, shownJar, stage, rules);
+          if (spot && c.spot) c.spot = spot;
+          id = c.id;
+          setProgress(s, id, progress);
+        });
+        return id;
+      },
+      setStage: (id: number, stage: Stage) => edit((s, rules) => setStage(s, id, stage, rules)),
+      setProgress: (id: number, p: number) => edit((s) => setProgress(s, id, p)),
+      setDiscs: (id: number, n: number) => edit((s, rules) => setDiscs(s, id, n, rules)),
+      remove: (id: number) => edit((s, rules) => removeCreature(s, id, rules)),
+      fill: (n: number) => edit((s, rules) => fillAdults(s, shownJar, n, rules)),
+      clear: () => edit((s) => (s.jars[shownJar]!.creatures = [])),
+      edit: (fn: (s: GameState) => void) => edit(fn),
+      state: () => game.state,
+      advance: (seconds: number) => {
+        clock.jump(seconds * 1000);
+        game.resume();
+      },
+      // 個体の画面上の位置（CSS px）
+      where: (id: number) => {
+        const p = app.creatures.positionForDebug(id);
+        if (!p) return null;
+        p.project(app.camera);
+        return [((p.x + 1) / 2) * canvas.clientWidth, ((1 - p.y) / 2) * canvas.clientHeight];
+      },
+      place: (id: number, pos: [number, number, number], up: [number, number, number] = [0, 1, 0]) =>
+        app.creatures.placeForDebug(id, new Vector3(...pos), new Vector3(...up)),
+      realSize: (on: boolean) => {
+        app.creatures.setRealSize(on);
+        showJar(game.state);
+      },
       tap: (x: number, y: number) => app.tap(x, y),
       setHour: (h: number) => {
         hourOverride = h;
