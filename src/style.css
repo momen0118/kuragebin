@@ -140,8 +140,9 @@ body {
   pointer-events: auto;
 }
 
+/* 点いているときはライトと同じ、青みのある白 */
 .lamp-toggle.on {
-  color: rgb(214, 230, 255);
+  color: rgb(196, 222, 255);
 }
 
 .lamp-toggle.on svg {
