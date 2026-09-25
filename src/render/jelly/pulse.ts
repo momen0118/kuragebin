@@ -107,20 +107,34 @@ export class Pulse {
     }
   }
 
+  /** 時刻 t を含む周期 */
+  private cycleAt(t: number): Cycle {
+    for (let i = this.cycles.length - 1; i > 0; i--) {
+      const c = this.cycles[i]!;
+      if (t >= c.start) return c;
+    }
+    return this.cycles[0]!;
+  }
+
   /** delay 秒前の p */
   value(delay = 0): number {
     const t = this.time - delay;
-    for (let i = this.cycles.length - 1; i >= 0; i--) {
-      const c = this.cycles[i]!;
-      if (t >= c.start || i === 0) return cycleValue(c, t);
-    }
-    return 0;
+    return cycleValue(this.cycleAt(t), t);
   }
 
   /** p の変化の速さ（1/秒）。正なら縮んでいる */
   rate(): number {
     const h = 1 / 240;
     return (this.value(0) - this.value(h)) / h;
+  }
+
+  /**
+   * 推進に使う縮む速さ（1/秒）。縮みの深さで割るので、1回の縮みで押し出す量は深さによらず同じ。
+   * 形は大きく変わっても、進む距離はゆったりのまま
+   */
+  thrustRate(): number {
+    const c = this.cycleAt(this.time);
+    return Math.max(this.rate(), 0) / Math.max(c.amp, 0.3);
   }
 
   /** 今の周期の中で縮んでいる最中か */

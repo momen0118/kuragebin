@@ -1,4 +1,5 @@
-// 縁触手。ばね鎖（verlet）で、傘の動きから遅れてたわむ。
+// 縁触手。張りのない細く柔らかい糸（verlet の鎖で長さだけを保つ）。
+// 重力と水の抵抗にまかせて垂れ、泳げば後ろにたなびき、止まればゆっくり落ちて垂れ下がる。
 // 描くときは画面上で一定の太さの細い帯にする。
 import {
   BufferGeometry,
@@ -176,9 +177,9 @@ export class Tentacles {
 
   /**
    * 1ステップ進める。roots(i) は i 本目の根元を返す。
-   * jet は収縮で押し出される水の向き×強さ（ワールド、加速度）
+   * jet は収縮で押し出される水の向き×強さ（ワールド、加速度）、inflow は緩むときに傘の下へ吸い込む強さ
    */
-  step(dt: number, roots: (i: number) => RootFrame, jet: Vector3, jetOrigin: Vector3): void {
+  step(dt: number, roots: (i: number) => RootFrame, jet: Vector3, jetOrigin: Vector3, inflow = 0): void {
     const n = this.count;
     const m = this.nodes;
     const x = this.x;
@@ -215,11 +216,16 @@ export class Tentacles {
         const oy = x[k + 1]! - jetOrigin.y;
         const oz = x[k + 2]! - jetOrigin.z;
         const near = 1 / (1 + (ox * ox + oy * oy + oz * oz) / (bellR * bellR * 2.5));
-        // 水のゆるい流れ。場所と時間でゆっくり向きが変わる
+        // 水のゆるい流れ。場所でゆっくり向きが変わるので、近くの触手は一緒に揺れてまとまる
+        const px0 = x[k]!;
         const y = x[k + 1]!;
-        const ax = jet.x * near + cur * Math.sin(y * 31 + t * 0.9 + i * 0.7);
-        const ay = jet.y * near + g;
-        const az = jet.z * near + cur * Math.cos(y * 27 - t * 0.7 + i * 1.3);
+        const pz0 = x[k + 2]!;
+        const own = TENTACLES.currentOwn;
+        const od = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
+        const pull = (inflow * near) / od;
+        const ax = jet.x * near - ox * pull + cur * (Math.sin(y * 23 + t * 0.7 + px0 * 37) + own * Math.sin(t * 1.3 + i * 0.9));
+        const ay = jet.y * near - oy * pull + g;
+        const az = jet.z * near - oz * pull + cur * (Math.cos(y * 19 - t * 0.6 + pz0 * 41) + own * Math.cos(t * 1.1 + i * 1.7));
         const vx = (x[k]! - px[k]!) * keep;
         const vy = (x[k + 1]! - px[k + 1]!) * keep;
         const vz = (x[k + 2]! - px[k + 2]!) * keep;
@@ -231,23 +237,8 @@ export class Tentacles {
         x[k + 2] = x[k + 2]! + vz + az * dt2;
       }
 
+      // 張りはない。長さだけを保つ糸
       for (let iter = 0; iter < 3; iter++) {
-        // 根元の向きを保つ
-        const k1 = base + 3;
-        const s = TENTACLES.rootStiffness;
-        x[k1] = x[k1]! + (root.pos.x + root.dir.x * L - x[k1]!) * s;
-        x[k1 + 1] = x[k1 + 1]! + (root.pos.y + root.dir.y * L - x[k1 + 1]!) * s;
-        x[k1 + 2] = x[k1 + 2]! + (root.pos.z + root.dir.z * L - x[k1 + 2]!) * s;
-        // 短い触手は少し張りがあり、傘が傾いても縁の向きに沿う（まっすぐ真下へは垂れない）
-        const bs = TENTACLES.bendStiffness;
-        for (let j = 2; j < m; j++) {
-          const a = base + (j - 2) * 3;
-          const b = base + (j - 1) * 3;
-          const c = base + j * 3;
-          x[c] = x[c]! + (2 * x[b]! - x[a]! - x[c]!) * bs;
-          x[c + 1] = x[c + 1]! + (2 * x[b + 1]! - x[a + 1]! - x[c + 1]!) * bs;
-          x[c + 2] = x[c + 2]! + (2 * x[b + 2]! - x[a + 2]! - x[c + 2]!) * bs;
-        }
         for (let j = 1; j < m; j++) {
           const a = base + (j - 1) * 3;
           const b = base + j * 3;

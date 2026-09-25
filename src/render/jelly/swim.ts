@@ -133,8 +133,8 @@ export class Swimmer {
 
   update(dt: number, pulse: Pulse): void {
     const b = this.bounds;
-    const rate = pulse.rate();
-    const push = Math.max(rate, 0);
+    // 縮みの深さとは切り離した推進（深く縮んでも1回に進む量は同じ）
+    const push = pulse.thrustRate();
 
     // ときどき大きく傾く
     if (this.leanLeft > 0) this.leanLeft -= dt;

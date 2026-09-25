@@ -105,8 +105,11 @@ export class Jellyfish {
     const M = this.matrix;
     const axis = this.swimmer.axis;
     this.center.setFromMatrixPosition(M);
-    const rate = Math.max(this.pulse.rate(), 0);
+    const rawRate = this.pulse.rate();
+    const rate = Math.max(rawRate, 0);
     this.jet.copy(axis).multiplyScalar(-TENTACLES.jet * rate);
+    // 緩むときは傘の下へ水が吸い込まれ、触手も少し引き寄せられる
+    const inflow = TENTACLES.inflow * Math.max(-rawRate, 0);
     const root = this.root;
     const angles = this.tentacles.angles;
     const edge = this.edge;
@@ -129,6 +132,7 @@ export class Jellyfish {
       },
       this.jet,
       this.center,
+      inflow,
     );
 
     const armAngles = this.arms.angles;
