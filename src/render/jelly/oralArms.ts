@@ -282,7 +282,7 @@ export class OralArms {
       }
       for (let j = 1; j < m; j++) {
         const k = base + j * 3;
-        const r = Math.hypot(x[k]!, x[k + 2]!);
+        const r = Math.sqrt(x[k]! * x[k]! + x[k + 2]! * x[k + 2]!);
         const lim = INNER_R - 0.012;
         if (r > lim) {
           x[k] = (x[k]! / r) * lim;

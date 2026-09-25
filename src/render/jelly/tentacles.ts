@@ -292,6 +292,8 @@ export class Tentacles {
     const t = this.time;
     const cur = TENTACLES.current * scale;
 
+    const invNear = 1 / (bellR * bellR * 2.5);
+    const own = TENTACLES.currentOwn;
     for (let i = 0; i < n; i++) {
       const L = this.seg[i]!;
       const base = i * m * 3;
@@ -300,6 +302,9 @@ export class Tentacles {
         this.alive[i] = 0;
         continue;
       }
+      // 1本ずつ勝手に揺れる分（節によらない）
+      const ownX = own * Math.sin(t * 1.3 + i * 0.9);
+      const ownZ = own * Math.cos(t * 1.1 + i * 1.7);
       const root = roots(i);
       if (!this.alive[i]) {
         this.alive[i] = 1;
@@ -318,20 +323,20 @@ export class Tentacles {
       for (let j = 1; j < m; j++) {
         const k = base + j * 3;
         // 傘の真下ほど強く押し出される
-        const ox = x[k]! - jetOrigin.x;
-        const oy = x[k + 1]! - jetOrigin.y;
-        const oz = x[k + 2]! - jetOrigin.z;
-        const near = 1 / (1 + (ox * ox + oy * oy + oz * oz) / (bellR * bellR * 2.5));
-        // 水のゆるい流れ。場所でゆっくり向きが変わるので、近くの触手は一緒に揺れてまとまる
         const px0 = x[k]!;
         const y = x[k + 1]!;
         const pz0 = x[k + 2]!;
-        const own = TENTACLES.currentOwn;
-        const od = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
+        const ox = px0 - jetOrigin.x;
+        const oy = y - jetOrigin.y;
+        const oz = pz0 - jetOrigin.z;
+        const d2 = ox * ox + oy * oy + oz * oz;
+        const near = 1 / (1 + d2 * invNear);
+        // 水のゆるい流れ。場所でゆっくり向きが変わるので、近くの触手は一緒に揺れてまとまる
+        const od = Math.sqrt(d2) || 1;
         const pull = (inflow * near) / od;
-        const ax = jet.x * near - ox * pull + cur * (Math.sin(y * 23 + t * 0.7 + px0 * 37) + own * Math.sin(t * 1.3 + i * 0.9));
+        const ax = jet.x * near - ox * pull + cur * (Math.sin(y * 23 + t * 0.7 + px0 * 37) + ownX);
         const ay = jet.y * near - oy * pull + g;
-        const az = jet.z * near - oz * pull + cur * (Math.cos(y * 19 - t * 0.6 + pz0 * 41) + own * Math.cos(t * 1.1 + i * 1.7));
+        const az = jet.z * near - oz * pull + cur * (Math.cos(y * 19 - t * 0.6 + pz0 * 41) + ownZ);
         const vx = (x[k]! - px[k]!) * keep;
         const vy = (x[k + 1]! - px[k + 1]!) * keep;
         const vz = (x[k + 2]! - px[k + 2]!) * keep;
@@ -370,7 +375,7 @@ export class Tentacles {
       // 瓶の壁と底からははみ出さない
       for (let j = 1; j < m; j++) {
         const k = base + j * 3;
-        const r = Math.hypot(x[k]!, x[k + 2]!);
+        const r = Math.sqrt(x[k]! * x[k]! + x[k + 2]! * x[k + 2]!);
         const lim = INNER_R - 0.006;
         if (r > lim) {
           x[k] = (x[k]! / r) * lim;

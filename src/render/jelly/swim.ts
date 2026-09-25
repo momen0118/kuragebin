@@ -8,7 +8,6 @@ import type { Pulse } from './pulse';
 const UP = new Vector3(0, 1, 0);
 const tmpA = new Vector3();
 const tmpB = new Vector3();
-const tmpC = new Vector3();
 const tmpQ = new Quaternion();
 
 /** 傘の中心が動ける範囲 */
@@ -263,19 +262,32 @@ export class Swimmer {
     if (dTop < mv * 0.5) desired.y -= Math.min((mv * 0.5 - dTop) / (mv * 0.5), 1.5) ** 2 * SWIM.avoidTop;
     const dBottom = ahead.y - b.bottom;
     if (dBottom < mv) desired.y += Math.min((mv - dBottom) / mv, 1.5) ** 2 * SWIM.avoidFloor;
-    // ほかの泳ぐ個体に近づきすぎたら、離れる向きへ向きを変え、少し押し離す（重ならない）
+    // ほかの泳ぐ個体に近づきすぎたら、離れる向きへ向きを変え、少し押し離す（重ならない）。
+    // 画面の上で重ならないように、奥行きの差は小さく数え、横と上下に離れる
     for (const o of others) {
+      if (o.pos === this.pos) continue;
       const dx = this.pos.x - o.pos.x;
       const dy = this.pos.y - o.pos.y;
-      const dz = this.pos.z - o.pos.z;
-      const d = Math.hypot(dx, dy, dz);
+      const dz = (this.pos.z - o.pos.z) * SWIM.othersDepth;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
       const reach = (this.radius + o.radius) * SWIM.othersMargin;
-      if (d >= reach || d < 1e-6) continue;
+      if (d >= reach) continue;
       const k = (reach - d) / reach;
-      desired.x += (dx / d) * k * k * SWIM.avoidOthers;
-      desired.y += (dy / d) * k * k * SWIM.avoidOthers * 0.5;
-      desired.z += (dz / d) * k * k * SWIM.avoidOthers;
-      this.vel.addScaledVector(tmpC.set(dx, dy, dz).divideScalar(d), k * SWIM.othersPush * dt);
+      // 離れる向き（画面の横と上下）。ちょうど前後に重なっているときは、上下どちらかへ
+      let ux = dx;
+      let uy = dy;
+      const h = Math.sqrt(ux * ux + uy * uy);
+      if (h < 1e-4) {
+        ux = 0;
+        uy = this.pos.z >= o.pos.z ? 1 : -1;
+      } else {
+        ux /= h;
+        uy /= h;
+      }
+      desired.x += ux * k * k * SWIM.avoidOthers;
+      desired.y += uy * k * k * SWIM.avoidOthers * 0.5;
+      this.vel.x += ux * k * SWIM.othersPush * dt;
+      this.vel.y += uy * k * SWIM.othersPush * dt;
     }
     if (desired.lengthSq() < 1e-6) desired.copy(UP);
     desired.normalize();

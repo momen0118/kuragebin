@@ -7,7 +7,7 @@ import type { SharedUniforms } from '../uniforms';
 import { createBell, type Bell, type BellLook } from './bell';
 import { ADULT_FORM, armReach, formAt, pulseParams, shapeParams, type JellyForm } from './form';
 import { OralArms } from './oralArms';
-import { BellShape, LOBES } from './profile';
+import { BellShape, LOBES, lobeBlend, scallop } from './profile';
 import { Pulse } from './pulse';
 import { Swimmer, type Neighbor } from './swim';
 import { Tentacles, type RootFrame } from './tentacles';
@@ -42,6 +42,17 @@ export class Jellyfish {
   private readonly armJet = new Vector3();
   private readonly center = new Vector3();
   private readonly edge = { r: 0, y: 0, tr: 0, ty: 0 };
+  /**
+   * 触手の根元ごとに先に求めておくもの（角度は変わらないので）：向き、縁弁の混ぜ具合、
+   * 縁までの長さの割合（エフィラの腕の形）と切れ込みの割合。形が変わったときに求めなおす
+   */
+  private readonly rootCos: Float32Array;
+  private readonly rootSin: Float32Array;
+  private readonly rootL0: Uint8Array;
+  private readonly rootL1: Uint8Array;
+  private readonly rootW: Float32Array;
+  private readonly rootReach: Float32Array;
+  private readonly rootScallop: Float32Array;
 
   constructor(shared: SharedUniforms, rng: Rng, growth = 1, startRadius: number = EPHYRA.radius) {
     this.pulse = new Pulse(rng);
@@ -56,6 +67,23 @@ export class Jellyfish {
     this.tentacles = new Tentacles(shared, this.look, rng);
     this.arms = new OralArms(shared, this.look, rng);
     this.group.add(this.tentacles.mesh, this.arms.mesh, ...this.bell.meshes);
+    const n = this.tentacles.count;
+    this.rootCos = new Float32Array(n);
+    this.rootSin = new Float32Array(n);
+    this.rootL0 = new Uint8Array(n);
+    this.rootL1 = new Uint8Array(n);
+    this.rootW = new Float32Array(n);
+    this.rootReach = new Float32Array(n);
+    this.rootScallop = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const th = this.tentacles.angles[i]!;
+      this.rootCos[i] = Math.cos(th);
+      this.rootSin[i] = Math.sin(th);
+      const [l0, l1, w] = lobeBlend(th);
+      this.rootL0[i] = l0;
+      this.rootL1[i] = l1;
+      this.rootW[i] = w;
+    }
     this.setGrowth(growth, startRadius);
     this.updateMatrix();
     this.step(0);
@@ -93,6 +121,13 @@ export class Jellyfish {
     u.uYoung.value = f.jerk;
     this.bell.gonadMesh.visible = f.gonads > 0.01;
     this.tentacles.setForm(f.radius, f.tentacles);
+    // 触手の根元：エフィラの腕の間では縁が傘の途中にある
+    for (let i = 0; i < this.tentacles.count; i++) {
+      const th = this.tentacles.angles[i]!;
+      const reach = armReach(th, f, LOBES);
+      this.rootReach[i] = reach;
+      this.rootScallop[i] = scallop(th, reach);
+    }
     this.tentacles.mesh.visible = f.tentacles > 0;
     this.arms.setForm(f.radius, f.oralArms);
     this.pulse.setParams(pulseParams(f.jerk));
@@ -105,6 +140,16 @@ export class Jellyfish {
     this.swimmer.place(pos, up, vel);
     // 離れたばかりは腕を畳んでいて、ゆっくり開く
     this.pulse.startle(0.8);
+    this.tentacles.reset();
+    this.arms.reset();
+    this.updateMatrix();
+    this.step(0);
+    this.sync();
+  }
+
+  /** 泳ぎはじめる場所を決めなおす（向きはそのまま）。触手と口腕は根元から伸ばしなおす */
+  relocate(pos: Vector3): void {
+    this.swimmer.pos.copy(pos);
     this.tentacles.reset();
     this.arms.reset();
     this.updateMatrix();
@@ -186,16 +231,15 @@ export class Jellyfish {
     // 緩むときは傘の下へ水が吸い込まれ、触手も少し引き寄せられる
     const inflow = TENTACLES.inflow * Math.max(-rawRate, 0) * k;
     const root = this.root;
-    const angles = this.tentacles.angles;
     const edge = this.edge;
     this.tentacles.step(
       dt,
       (i) => {
-        const th = angles[i]!;
-        const c = Math.cos(th);
-        const s = Math.sin(th);
+        const c = this.rootCos[i]!;
+        const s = this.rootSin[i]!;
         // 触手はその角度の縁から、少し外へ開きながら下へ垂れる（エフィラの腕の間では、縁は傘の途中）
-        this.shape.pointAt(th, armReach(th, f, LOBES), edge);
+        this.shape.pointAtBlend(this.rootL0[i]!, this.rootL1[i]!, this.rootW[i]!, this.rootReach[i]!, edge);
+        edge.r *= this.rootScallop[i]!;
         let dr = edge.tr + TENTACLES.splayOut;
         let dy = edge.ty - TENTACLES.splayDown;
         const dl = Math.hypot(dr, dy) || 1;

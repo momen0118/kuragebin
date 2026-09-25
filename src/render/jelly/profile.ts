@@ -257,22 +257,38 @@ export class BellShape {
    */
   pointAt(theta: number, s: number, out: { r: number; y: number; tr: number; ty: number }): void {
     const [l0, l1, w] = lobeBlend(theta);
+    this.pointAtBlend(l0, l1, w, s, out);
+    out.r *= scallop(theta, s);
+  }
+
+  /**
+   * pointAt の、縁弁の混ぜ具合（lobeBlend）を先に求めてある版。切れ込み（scallop）は掛けない。
+   * 触手の根元のように同じ角度で何度も使うときに（毎ステップ150本）
+   */
+  pointAtBlend(l0: number, l1: number, w: number, s: number, out: { r: number; y: number; tr: number; ty: number }): void {
     const n = PROFILE_SEGMENTS;
+    const p = this.points;
     const f = Math.min(Math.max(s, 0), 1) * n;
     const i = Math.min(Math.floor(f), n - 1);
     const t = f - i;
-    const [a0, b0] = this.lobePoint(l0, i);
-    const [a1, b1] = this.lobePoint(l0, i + 1);
-    const [c0, d0] = this.lobePoint(l1, i);
-    const [c1, d1] = this.lobePoint(l1, i + 1);
+    const o0 = l0 * (n + 1) * 2 + i * 2;
+    const o1 = l1 * (n + 1) * 2 + i * 2;
+    const a0 = p[o0]!;
+    const b0 = p[o0 + 1]!;
+    const a1 = p[o0 + 2]!;
+    const b1 = p[o0 + 3]!;
+    const c0 = p[o1]!;
+    const d0 = p[o1 + 1]!;
+    const c1 = p[o1 + 2]!;
+    const d1 = p[o1 + 3]!;
     const ri = a0 + (c0 - a0) * w;
     const yi = b0 + (d0 - b0) * w;
     const rj = a1 + (c1 - a1) * w;
     const yj = b1 + (d1 - b1) * w;
     const dr = rj - ri;
     const dy = yj - yi;
-    const l = Math.hypot(dr, dy) || 1;
-    out.r = (ri + dr * t) * scallop(theta, s);
+    const l = Math.sqrt(dr * dr + dy * dy) || 1;
+    out.r = ri + dr * t;
     out.y = yi + dy * t;
     out.tr = dr / l;
     out.ty = dy / l;

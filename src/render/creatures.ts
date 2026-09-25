@@ -2,12 +2,12 @@
 // 瓶底の個体（ポリプ・ストロビラ）を作ったり消したりし、毎フレーム動かす。
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
 import { Group, Vector3, type Camera, type Object3D } from 'three';
-import { EPHYRA } from '../config';
+import { EPHYRA, SWIM } from '../config';
 import { createRng } from '../sim/rng';
 import { isSwimmer, type Creature, type JarState } from '../sim/state';
 import { Jellyfish } from './jelly/jellyfish';
 import { Polyp } from './jelly/polyp';
-import type { Neighbor } from './jelly/swim';
+import { swimBounds, type Neighbor } from './jelly/swim';
 import type { SharedUniforms } from './uniforms';
 
 interface SwimmerView {
@@ -84,6 +84,9 @@ export class Creatures {
           view.waiting = false;
           jelly.group.visible = true;
         });
+      } else {
+        // ほかの個体から離れた所で泳ぎはじめる（重なって現れないように）
+        this.placeApart(jelly, c.seed);
       }
       v = view;
       this.group.add(jelly.group);
@@ -94,6 +97,33 @@ export class Creatures {
     }
     this.views.set(c.id, v);
     return v;
+  }
+
+  /** 泳げる範囲からいくつか場所を選び、ほかの泳ぐ個体からいちばん離れた所に置く（画面の上での離れ方で比べる） */
+  private placeApart(jelly: Jellyfish, seed: number): void {
+    const others = this.swimmers.filter((j) => j !== jelly);
+    if (!others.length) return;
+    const rng = createRng((seed ^ 0x9e3779b9) >>> 0);
+    const b = swimBounds(jelly.radius);
+    const best = new Vector3();
+    let bestD = -1;
+    const p = new Vector3();
+    for (let i = 0; i < 12; i++) {
+      const r = Math.sqrt(rng.next()) * b.radius * 0.9;
+      const th = rng.range(0, Math.PI * 2);
+      p.set(r * Math.cos(th), rng.range(b.bottom + 0.03, b.top - 0.03), r * Math.sin(th));
+      let d = Infinity;
+      for (const o of others) {
+        const q = o.swimmer.pos;
+        const dz = (p.z - q.z) * SWIM.othersDepth;
+        d = Math.min(d, Math.sqrt((p.x - q.x) ** 2 + (p.y - q.y) ** 2 + dz * dz) / (jelly.radius + o.radius));
+      }
+      if (d > bestD) {
+        bestD = d;
+        best.copy(p);
+      }
+    }
+    jelly.relocate(best);
   }
 
   private apply(v: View, c: Creature, jar: JarState): void {

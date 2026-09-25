@@ -326,11 +326,12 @@ export const SWIM = {
   current: 0.004,
   /**
    * ほかの泳ぐ個体をよける。傘の半径の和の othersMargin 倍より近づくと、離れる向きへ向きを変え（avoidOthers）、
-   * 少し押し離す（othersPush、瓶の高さ/秒²）
+   * 少し押し離す（othersPush、瓶の高さ/秒²）。画面の上で重ならないよう、奥行きの差は othersDepth 倍に数える
    */
-  othersMargin: 1.8,
+  othersMargin: 1.2,
   avoidOthers: 2.0,
-  othersPush: 0.04,
+  othersPush: 0.06,
+  othersDepth: 0.35,
 } as const;
 
 /** つついたときの反応 */
@@ -429,8 +430,8 @@ export const JELLY_LOOK = {
  * [始まり, 終わり] は、その変化が進む育ち具合の範囲
  */
 export const EPHYRA = {
-  /** 放されたときの傘の半径（腕の先まで、瓶の高さ単位）。実物のおよそ2.5倍。成体（BELL.radius）まで指数的に育つ */
-  radius: 0.02,
+  /** 放されたときの傘の半径（腕の先まで、瓶の高さ単位）。実物のおよそ2倍。成体（BELL.radius）まで指数的に育つ */
+  radius: 0.016,
   /**
    * 腕の形。腕の間の切れ込みの深さ（半径に対する割合）と、腕の半幅（半径に対する割合）を根元と先で。
    * 腕は先へ少し細り、切れ込みの底は丸い
@@ -482,7 +483,7 @@ export const EPHYRA = {
   righting: 0.6,
   roll: 3,
   /** 実物大の比（確認用の「実物大」で、ポリプ・ストロビラ・エフィラの大きさに掛ける） */
-  realScale: 0.4,
+  realScale: 0.5,
 } as const;
 
 /**
@@ -490,8 +491,8 @@ export const EPHYRA = {
  * 長さの単位は瓶の高さ。形の割合は体の高さ = 1
  */
 export const POLYP = {
-  /** 体の高さ（触手を除く）。実物のおよそ2.5倍 */
-  height: 0.024,
+  /** 体の高さ（触手を除く）。実物のおよそ2倍。瓶底で「ふと見ると何か生えている」くらい */
+  height: 0.0192,
   /** 足・茎・口の縁の半径、口盤のくぼみ、口（口丘）の半径と高さ（体の高さ = 1） */
   footRadius: 0.2,
   stalkRadius: 0.11,
