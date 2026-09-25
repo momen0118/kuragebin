@@ -24,7 +24,7 @@ function supportsWebGL2(): boolean {
 
 /**
  * 描く大きさ（CSS px）。iOS のホーム画面から開いたときは、画面の下まで描けるよう画面の大きさも見る
- * （上端の時計の帯の裏まで描く設定では、高さが帯の分だけ短く報告されることがある）
+ * （上端の時計の帯の裏まで描く設定では、高さが帯の分だけ短く報告され、ページもその高さで切られる）
  */
 function viewportSize(): [number, number] {
   const w = window.innerWidth;
@@ -48,6 +48,11 @@ function layout(canvas: HTMLCanvasElement, app: App): void {
   const key = `${vw}x${vh}@${dpr}`;
   if (key === laidOut) return;
   laidOut = key;
+  // 報告された高さより画面が長いときは、ページそのものも画面の下まで伸ばす。
+  // 描く範囲だけ伸ばしても、ページの高さより下は表示されない
+  const tall = vh > window.innerHeight ? `${vh}px` : '';
+  document.documentElement.style.height = tall;
+  document.body.style.height = tall;
   canvas.style.width = `${vw}px`;
   canvas.style.height = `${vh}px`;
   app.resize(vw, vh, dpr);
@@ -76,6 +81,10 @@ async function main(): Promise<void> {
   }
   layout(canvas, app);
   window.addEventListener('resize', () => layout(canvas, app));
+  // ページを伸ばしたときに、何かの拍子でずれないように（画面は動かさない）
+  window.addEventListener('scroll', () => {
+    if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+  });
   const [game] = await Promise.all([gameReady, app.load(import.meta.env.BASE_URL)]);
 
   // 夜のデスクライトのオン・オフ（初期はオン、保存される）。アイコンは夜の間だけ出す
