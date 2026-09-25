@@ -28,14 +28,23 @@ describe('泳ぎ', () => {
     }
   });
 
-  test('ほとんどの時間は上向き（横倒しで泳ぎ続けない）', { timeout: 60000 }, () => {
-    const j = new Jellyfish(createSharedUniforms(), createRng(7));
-    let upright = 0;
-    const n = 60 * 180;
-    for (let i = 0; i < n; i++) {
-      j.update(1 / 60);
-      if (j.swimmer.axis.y > Math.cos((45 * Math.PI) / 180)) upright++;
+  test('ふだんは上向きで、ときどき大きく傾く（ひっくり返らない）', { timeout: 60000 }, () => {
+    for (const seed of [7, 8]) {
+      const j = new Jellyfish(createSharedUniforms(), createRng(seed));
+      let upright = 0;
+      let maxTilt = 0;
+      let minY = 1;
+      const n = 60 * 300;
+      for (let i = 0; i < n; i++) {
+        j.update(1 / 60);
+        const ay = j.swimmer.axis.y;
+        if (ay > Math.cos((45 * Math.PI) / 180)) upright++;
+        maxTilt = Math.max(maxTilt, Math.acos(Math.min(1, ay)));
+        minY = Math.min(minY, ay);
+      }
+      expect(upright / n).toBeGreaterThan(0.6);
+      expect(maxTilt).toBeGreaterThan((50 * Math.PI) / 180);
+      expect(minY).toBeGreaterThan(-0.35);
     }
-    expect(upright / n).toBeGreaterThan(0.9);
   });
 });

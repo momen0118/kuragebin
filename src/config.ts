@@ -186,38 +186,63 @@ export const PULSE = {
   /** 開くときにわずかに開きすぎてから戻る量と、開く速さ（大きいほど速い） */
   overshoot: 0.08,
   relaxOmega: 3.4,
-  /** 1回ごとの縮みの深さのばらつき（最小〜最大） */
-  ampMin: 0.75,
+  /** 1回ごとの縮みの深さのばらつき（最小〜最大）。1 でお椀、弱いと浅いお椀 */
+  ampMin: 0.6,
   ampMax: 1.0,
+  /** ときどき強く縮んで釣鐘のように深くなる。その確率と深さ */
+  strongChance: 0.12,
+  strongAmpMin: 1.15,
+  strongAmpMax: 1.4,
 } as const;
 
 /** 傘の形（傘の半径 = 1 とした単位） */
 export const BELL = {
-  /** 瓶の中での傘の半径 */
+  /** 瓶の中での傘の半径（緩みきったとき） */
   radius: 0.1,
   /** 頂点の高さ（傘のローカル） */
   apexY: 0.5,
   /**
-   * 緩んだ断面の傾き = a·s + b·s⁴（s は頂点0〜縁1、ラジアン）。上は平たく、縁で下へ曲がる。
+   * 緩んだ断面の傾き = a·s + b·s⁴（s は頂点0〜縁1、ラジアン）。緩みきると平たい皿で、縁だけ少し下がる。
    * 縁の半径が 1 になるよう断面の長さを決める
    */
-  relaxedCurve: [0.6, 1.2] as const,
-  /** 縮んだときに足す曲がり（縁でのラジアン）と、その縁への寄り方 */
-  contractBend: 0.9,
-  bendPower: 1.4,
+  relaxedCurve: [0.25, 0.5] as const,
+  /**
+   * 縮んだときに足す曲がり（縁でのラジアン、拍動の深さ 1 のとき）と、その縁への寄り方。
+   * 深さ 1 でお椀、強い拍動（1.3 ほど）で釣鐘のように深くなる
+   */
+  contractBend: 1.25,
+  bendPower: 1.2,
   /** 縮みが頂点から縁へ伝わるのにかかる時間（秒） */
   propagation: 0.14,
-  /** 縁のしなり：揺れの速さ（Hz）、減衰、縮む速さに対する反り */
-  flexFreq: 1.7,
-  flexDamping: 0.38,
-  flexGain: 0.045,
-  /** 傘の厚み（頂点と縁） */
-  thicknessApex: 0.34,
-  thicknessMargin: 0.025,
-  /** 8つの切れ込み（感覚器のある所）の深さ */
-  notchDepth: 0.045,
+  /** 縁弁（8枚）のしなり：揺れの速さ（Hz）、減衰、縮む速さに対する反り、縁弁ごとのばらつき（割合） */
+  flexFreq: 1.6,
+  flexDamping: 0.34,
+  flexGain: 0.05,
+  flexSpread: 0.3,
+  /** しなりが効きはじめる所（s）。縁に近いほど柔らかい */
+  flexStart: 0.45,
+  /** 隣の縁弁とのつながりの強さ（1/秒²） */
+  lobeCoupling: 14,
+  /** 緩んでいる間もゆっくり揺れる：縁での角度（ラジアン）と周期（秒）の範囲 */
+  lobeSway: 0.22,
+  lobeSwayPeriod: [3.5, 8] as const,
+  /** ときどき縁弁が内側へ折れる：縁での角度、続く時間（秒）、縁弁ごとの間隔（秒） */
+  foldAngle: [0.4, 0.75] as const,
+  foldDuration: [1.5, 4] as const,
+  foldInterval: [30, 90] as const,
+  /** 傘の厚み（頂点と縁）。薄く柔らかい */
+  thicknessApex: 0.18,
+  thicknessMargin: 0.02,
+  /** 縁弁の形：花びらの丸み（縁弁の端での半径の減り）と、切れ込み（感覚器のある所）の深さと幅 */
+  lobeRound: 0.05,
+  notchDepth: 0.07,
+  notchWidth: 0.05,
+  /** 縁のさざ波：高さ（傘の半径単位）、1周あたりの数、ひと回りする時間（秒） */
+  marginRipple: 0.012,
+  marginRippleCount: 24,
+  marginRipplePeriod: 7,
   ringSegments: 36,
-  radialSegments: 96,
+  radialSegments: 128,
 } as const;
 
 /** 泳ぎ */
@@ -240,9 +265,19 @@ export const SWIM = {
   wanderMax: 9,
   /** 上向きへのこだわり。気まぐれに傾く上限 */
   upBias: 1.0,
-  wanderTilt: 0.45,
+  wanderTilt: 0.8,
   /** 起き上がろうとする強さ */
-  righting: 0.5,
+  righting: 0.3,
+  /**
+   * ときどき大きく傾く。傾き（ラジアン）、続く時間（秒）、次までの間隔（秒）。
+   * 手前へ傾くことが多く、斜め上や真上から四つ葉が見える
+   */
+  leanTilt: [0.75, 1.3] as const,
+  leanDuration: [6, 14] as const,
+  leanInterval: [25, 70] as const,
+  leanTowardViewer: 0.65,
+  /** 大きく傾いている間の推進の割合（その場で漂うように弱く） */
+  leanThrust: 0.35,
   /** 避けはじめる距離（横の壁と、上下） */
   wallMargin: 0.05,
   floorMargin: 0.12,
@@ -302,16 +337,17 @@ export const TENTACLES = {
   count: 150,
   nodes: 5,
   /** 根元で外へ開く量と、下へ垂れる量（縁の接線に足す） */
-  splayOut: 0.55,
-  splayDown: 0.25,
+  splayOut: 0.35,
+  splayDown: 0.45,
   /** 長さ（傘の半径に対する倍率、直径の1/4ほど）とばらつき */
   length: 0.5,
   lengthJitter: 0.3,
   /** 水の抵抗（1ステップあたりの速度の減衰） */
   drag: 0.1,
-  gravity: 0.25,
-  /** 根元の向きを保つ強さ */
+  gravity: 0.18,
+  /** 根元の向きを保つ強さと、触手自身の張り（まっすぐに戻ろうとする強さ） */
   rootStiffness: 0.5,
+  bendStiffness: 0.2,
   /** 収縮時の水流の強さ */
   jet: 1.4,
   /** 線の太さ（画面px）と明るさ */
@@ -325,9 +361,9 @@ export const TENTACLES = {
 export const ORAL_ARMS = {
   count: 4,
   nodes: 7,
-  /** 付け根：中心からの距離と高さ（傘の半径 = 1）、外への開き */
+  /** 付け根：中心からの距離と高さ（傘の半径 = 1）、外への開き。傘の下面の真ん中から垂れる */
   rootRadius: 0.13,
-  rootHeight: 0.13,
+  rootHeight: 0.28,
   splay: 0.17,
   /** 長さ・幅（傘の半径に対する倍率） */
   length: 0.95,

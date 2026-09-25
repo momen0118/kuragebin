@@ -5,7 +5,7 @@ import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
 import { createBell, type Bell, type BellLook } from './bell';
 import { OralArms } from './oralArms';
-import { BellShape, notch } from './profile';
+import { BellShape } from './profile';
 import { Pulse } from './pulse';
 import { Swimmer } from './swim';
 import { Tentacles, type RootFrame } from './tentacles';
@@ -18,7 +18,7 @@ export class Jellyfish {
   readonly swimmer: Swimmer;
   readonly look: BellLook;
   readonly bell: Bell;
-  readonly shape = new BellShape();
+  readonly shape: BellShape;
   readonly tentacles: Tentacles;
   readonly arms: OralArms;
   private readonly matrix = new Matrix4();
@@ -33,10 +33,12 @@ export class Jellyfish {
   private readonly jet = new Vector3();
   private readonly armJet = new Vector3();
   private readonly center = new Vector3();
+  private readonly edge = { r: 0, y: 0, tr: 0, ty: 0 };
 
   constructor(shared: SharedUniforms, rng: Rng) {
     this.pulse = new Pulse(rng);
     this.swimmer = new Swimmer(rng);
+    this.shape = new BellShape(rng);
     this.look = {
       uBody: { value: new Vector3(...JELLY_LOOK.body) },
       uGlow: { value: new Vector3(...JELLY_LOOK.glow) },
@@ -101,28 +103,27 @@ export class Jellyfish {
     this.shape.update(dt, this.pulse);
     this.updateMatrix();
     const M = this.matrix;
-    const [mr, my] = this.shape.margin();
-    const [tr, ty] = this.shape.marginTangent();
-    // 触手は縁から、少し外へ開きながら下へ垂れる
-    let dr = tr + TENTACLES.splayOut;
-    let dy = ty - TENTACLES.splayDown;
-    const dl = Math.hypot(dr, dy) || 1;
-    dr /= dl;
-    dy /= dl;
     const axis = this.swimmer.axis;
     this.center.setFromMatrixPosition(M);
     const rate = Math.max(this.pulse.rate(), 0);
     this.jet.copy(axis).multiplyScalar(-TENTACLES.jet * rate);
     const root = this.root;
     const angles = this.tentacles.angles;
+    const edge = this.edge;
     this.tentacles.step(
       dt,
       (i) => {
         const th = angles[i]!;
         const c = Math.cos(th);
         const s = Math.sin(th);
-        const r = mr * notch(th, 1);
-        root.pos.set(r * c, my, r * s).applyMatrix4(M);
+        // 触手はその角度の縁弁の縁から、少し外へ開きながら下へ垂れる
+        this.shape.marginAt(th, edge);
+        let dr = edge.tr + TENTACLES.splayOut;
+        let dy = edge.ty - TENTACLES.splayDown;
+        const dl = Math.hypot(dr, dy) || 1;
+        dr /= dl;
+        dy /= dl;
+        root.pos.set(edge.r * c, edge.y, edge.r * s).applyMatrix4(M);
         root.dir.set(dr * c, dy, dr * s).transformDirection(M);
         return root;
       },
@@ -154,7 +155,8 @@ export class Jellyfish {
 
   private sync(): void {
     for (const m of this.bell.meshes) m.matrix.copy(this.matrix);
-    this.bell.profile.value.set(this.shape.points);
+    (this.bell.profile.image.data as Float32Array).set(this.shape.points);
+    this.bell.profile.needsUpdate = true;
     this.bell.contract.value = this.pulse.value(BELL.propagation);
     const k = this.glowLevel * JELLY_LOOK.glowStrength * (1 + POKE.flash * this.flash);
     this.look.uGlow.value.set(...JELLY_LOOK.glow).multiplyScalar(k);

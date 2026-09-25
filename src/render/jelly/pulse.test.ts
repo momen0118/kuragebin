@@ -69,6 +69,29 @@ describe('Pulse', () => {
     expect(new Set(gaps.map((g) => g.toFixed(3))).size).toBeGreaterThan(gaps.length / 2);
   });
 
+  test('縮みの深さはばらつき、ときどき強く縮んで釣鐘のようになる', () => {
+    const p = new Pulse(createRng(11));
+    const peaks: number[] = [];
+    let cur = 0;
+    let was = false;
+    for (let i = 0; i < 120 * 600; i++) {
+      p.update(1 / 120);
+      const c = p.contracting;
+      if (c && !was) {
+        peaks.push(cur);
+        cur = 0;
+      }
+      cur = Math.max(cur, p.value());
+      was = c;
+    }
+    const ps = peaks.slice(1);
+    const strong = ps.filter((v) => v >= PULSE.strongAmpMin * 0.98).length / ps.length;
+    expect(strong).toBeGreaterThan(0.04);
+    expect(strong).toBeLessThan(0.25);
+    // 浅いお椀までしか縮まない回もある
+    expect(Math.min(...ps)).toBeLessThan(0.75);
+  });
+
   test('同じシードからは同じ拍動', () => {
     const a = new Pulse(createRng(9));
     const b = new Pulse(createRng(9));

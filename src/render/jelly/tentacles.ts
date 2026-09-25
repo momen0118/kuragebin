@@ -238,6 +238,16 @@ export class Tentacles {
         x[k1] = x[k1]! + (root.pos.x + root.dir.x * L - x[k1]!) * s;
         x[k1 + 1] = x[k1 + 1]! + (root.pos.y + root.dir.y * L - x[k1 + 1]!) * s;
         x[k1 + 2] = x[k1 + 2]! + (root.pos.z + root.dir.z * L - x[k1 + 2]!) * s;
+        // 短い触手は少し張りがあり、傘が傾いても縁の向きに沿う（まっすぐ真下へは垂れない）
+        const bs = TENTACLES.bendStiffness;
+        for (let j = 2; j < m; j++) {
+          const a = base + (j - 2) * 3;
+          const b = base + (j - 1) * 3;
+          const c = base + j * 3;
+          x[c] = x[c]! + (2 * x[b]! - x[a]! - x[c]!) * bs;
+          x[c + 1] = x[c + 1]! + (2 * x[b + 1]! - x[a + 1]! - x[c + 1]!) * bs;
+          x[c + 2] = x[c + 2]! + (2 * x[b + 2]! - x[a + 2]! - x[c + 2]!) * bs;
+        }
         for (let j = 1; j < m; j++) {
           const a = base + (j - 1) * 3;
           const b = base + j * 3;

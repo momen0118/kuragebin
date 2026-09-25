@@ -4,19 +4,23 @@ import {
   BackSide,
   BufferGeometry,
   CustomBlending,
+  DataTexture,
   DoubleSide,
   Float32BufferAttribute,
+  FloatType,
   FrontSide,
   GLSL3,
   Mesh,
+  NearestFilter,
   OneFactor,
   OneMinusSrcAlphaFactor,
+  RGFormat,
   ShaderMaterial,
   Vector3,
   type Side,
 } from 'three';
-import { BELL } from '../../config';
-import { PROFILE_SEGMENTS } from './profile';
+import { BELL, JELLY_LOOK } from '../../config';
+import { LOBES, PROFILE_SEGMENTS } from './profile';
 import type { SharedUniforms } from '../uniforms';
 import common from '../shaders/common.glsl?raw';
 import { frag } from '../shaders/glsl';
@@ -26,17 +30,24 @@ const GONAD_S = 0.52;
 
 const DEFINES = /* glsl */ `
 #define PROFILE_N ${PROFILE_SEGMENTS}
+#define LOBES ${LOBES}
 #define THICK_APEX ${BELL.thicknessApex.toFixed(5)}
 #define THICK_MARGIN ${BELL.thicknessMargin.toFixed(5)}
+#define LOBE_ROUND ${BELL.lobeRound.toFixed(5)}
 #define NOTCH_DEPTH ${BELL.notchDepth.toFixed(5)}
+#define NOTCH_WIDTH ${BELL.notchWidth.toFixed(5)}
+#define RIPPLE ${BELL.marginRipple.toFixed(5)}
+#define RIPPLE_N ${BELL.marginRippleCount.toFixed(1)}
+#define RIPPLE_W ${((Math.PI * 2) / BELL.marginRipplePeriod).toFixed(5)}
 #define GONAD_S ${GONAD_S.toFixed(3)}
 `;
 
 const VERT = /* glsl */ `
 ${common}
 ${DEFINES}
-// 断面の点列（profile.ts の BellShape が毎フレーム作る）
-uniform vec2 uProfile[PROFILE_N + 1];
+// 縁弁ごとの断面の点列（profile.ts の BellShape が毎ステップ作る）。横が断面の点、縦が縁弁
+uniform sampler2D tProfile;
+uniform float uTime;
 uniform float uLayer;
 uniform float uSMax;
 uniform float uInset;
@@ -45,31 +56,61 @@ out vec3 vWorldNormal;
 out vec3 vViewNormal;
 out vec2 vST;
 
-vec2 profileAt(float s) {
+vec2 lobeProfile(int lobe, float s) {
   float f = clamp(s, 0.0, 1.0) * float(PROFILE_N);
   int i = int(min(floor(f), float(PROFILE_N - 1)));
-  return mix(uProfile[i], uProfile[i + 1], f - float(i));
+  vec2 a = texelFetch(tProfile, ivec2(i, lobe), 0).rg;
+  vec2 b = texelFetch(tProfile, ivec2(i + 1, lobe), 0).rg;
+  return mix(a, b, f - float(i));
 }
 
-float notchK(float th, float s) {
-  float k = th / (PI / 4.0) - 0.5;
-  float d = (k - floor(k + 0.5)) * (PI / 4.0);
-  float w = saturate((s - 0.86) / 0.14);
-  return 1.0 - NOTCH_DEPTH * exp(-d * d / 0.0035) * w * w;
+// 隣り合う2枚の縁弁を角度で混ぜる。縁弁の真ん中あたりはその縁弁だけ（profile.ts の lobeBlend と同じ式）
+vec2 profileAt(float s, float th) {
+  float u = th / (TAU / float(LOBES));
+  float k = floor(u);
+  float w = smoothstep(0.32, 0.68, u - k);
+  int l0 = int(mod(k, float(LOBES)));
+  int l1 = int(mod(k + 1.0, float(LOBES)));
+  return mix(lobeProfile(l0, s), lobeProfile(l1, s), w);
+}
+
+// 縁弁の形：花びらの丸みと、切れ込み（profile.ts の scallop と同じ式）
+float scallop(float th, float s) {
+  float u = th / (TAU / float(LOBES));
+  float d = abs(u - floor(u + 0.5));
+  float w = smoothstep(0.8, 1.0, s);
+  float round_ = LOBE_ROUND * pow(2.0 * d, 3.0);
+  float cut = NOTCH_DEPTH * exp(-pow((0.5 - d) / NOTCH_WIDTH, 2.0));
+  return 1.0 - (round_ + cut) * w;
+}
+
+vec3 surf(float s, float th) {
+  vec2 pr = profileAt(s, th);
+  float r = pr.x * scallop(th, s);
+  // 縁のさざ波。縁弁の中でも縁は一本のきれいな線にならない
+  float wave = sin(th * RIPPLE_N + uTime * RIPPLE_W + 1.7 * sin(th * 3.0 - uTime * 0.31));
+  pr.y += RIPPLE * wave * smoothstep(0.85, 1.0, s);
+  return vec3(cos(th) * r, pr.y, sin(th) * r);
 }
 
 void main() {
   float s = max(uv.x * uSMax, 0.0008);
   float th = uv.y * TAU;
-  vec2 pr = profileAt(s);
+  vec3 pos = surf(s, th);
+  // 法線は断面方向と円周方向の差分から（縁弁ごとに形が違うので）
   float h = 0.5 / float(PROFILE_N);
-  vec2 tg = normalize(profileAt(s + h) - profileAt(max(s - h, 0.0)));
-  // 外向きの法線（頂点では真上）
-  vec2 n2 = vec2(-tg.y, tg.x);
+  float e = 0.004;
+  vec3 ds = surf(min(s + h, 1.0), th) - surf(max(s - h, 0.0), th);
+  vec3 dt = surf(s, th + e) - surf(s, th - e);
+  vec3 nrm = cross(dt, ds);
+  // 頂点の近くでは円周方向の差分が小さくなるので、断面だけから求めた向きと合わせる
+  vec2 tg = normalize(profileAt(min(s + h, 1.0), th) - profileAt(max(s - h, 0.0), th));
   vec3 dirR = vec3(cos(th), 0.0, sin(th));
-  float nk = notchK(th, s);
-  vec3 pos = vec3(dirR.x * pr.x * nk, pr.y, dirR.z * pr.x * nk);
-  vec3 nrm = normalize(vec3(dirR.x * n2.x, n2.y, dirR.z * n2.x));
+  vec3 nMer = normalize(vec3(dirR.x * -tg.y, tg.x, dirR.z * -tg.y));
+  float nl = length(nrm);
+  nrm = nl > 1e-7 ? nrm / nl : nMer;
+  if (dot(nrm, nMer) < 0.0) nrm = -nrm;
+  nrm = normalize(mix(nMer, nrm, smoothstep(0.02, 0.1, s)));
   if (uLayer > 1.5) {
     // 生殖腺：傘の中に、ひとまわり小さなドームとして浮かべる（横からでも弧に見える）
     pos = vec3(pos.x * 0.7, pos.y * 0.78 - uInset, pos.z * 0.7);
@@ -92,6 +133,8 @@ ${DEFINES}
 uniform float uGlowPass, uLayer, uContract;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
+// 生殖腺そのものの色（uGonad は発光の強さを掛けた色なので、昼はほぼ黒になる）
+uniform vec3 uGonadTint;
 uniform sampler2D tRoom;
 uniform vec2 uResolution;
 in vec3 vWorldPos;
@@ -123,10 +166,10 @@ float gonads(float s, float th) {
     vec2 c = 0.43 * vec2(cos(ang), sin(ang));
     vec2 d = q - c;
     float r = length(d);
-    float ring = exp(-pow((r - 0.25) / 0.055, 2.0));
+    float ring = exp(-pow((r - 0.24) / 0.075, 2.0));
     float facing = dot(d / max(r, 1e-4), -normalize(c));
     ring *= 1.0 - 0.85 * smoothstep(0.55, 0.9, facing);
-    float fill = exp(-pow(r / 0.24, 3.0)) * 0.22;
+    float fill = exp(-pow(r / 0.24, 3.0)) * 0.3;
     g += ring + fill;
   }
   return g * (1.0 - smoothstep(0.85, 1.0, s / GONAD_S));
@@ -166,8 +209,8 @@ void main() {
   float density;
   vec3 tint = uBody;
   if (gonad) {
-    density = 0.09 * gon;
-    tint = uGonad;
+    density = 0.18 * gon;
+    tint = uGonadTint;
   } else if (inner) {
     density = 0.004 + 0.08 * rim + 0.03 * canal + 0.012 * rings + 0.02 * margin;
   } else {
@@ -182,7 +225,7 @@ void main() {
   float pulseGlow = 0.85 + 0.3 * uContract;
   vec3 glow;
   if (gonad) {
-    glow = uGonad * gon * 0.4;
+    glow = uGonad * gon * 0.32;
   } else if (inner) {
     glow = uGlow * (0.03 * rim + 0.06 * canal + 0.1 * margin);
   } else {
@@ -234,13 +277,18 @@ export interface BellLook {
 
 export interface Bell {
   meshes: Mesh[];
-  /** 断面の点列（BellShape.points を毎フレーム書き込む） */
-  profile: { value: Float32Array };
+  /** 縁弁ごとの断面の点列（BellShape.points を毎フレーム書き込み、needsUpdate を立てる） */
+  profile: DataTexture;
   contract: { value: number };
 }
 
 export function createBell(shared: SharedUniforms, look: BellLook): Bell {
-  const profile = { value: new Float32Array((PROFILE_SEGMENTS + 1) * 2) };
+  const profile = new DataTexture(new Float32Array(LOBES * (PROFILE_SEGMENTS + 1) * 2), PROFILE_SEGMENTS + 1, LOBES, RGFormat, FloatType);
+  profile.minFilter = NearestFilter;
+  profile.magFilter = NearestFilter;
+  profile.generateMipmaps = false;
+  profile.needsUpdate = true;
+  const tProfile = { value: profile };
   const contract = { value: 0 };
   const bellGeo = grid(BELL.ringSegments, BELL.radialSegments, 1.35);
   const gonadGeo = grid(14, 64, 1);
@@ -258,7 +306,8 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
       blendSrc: OneFactor,
       blendDst: OneMinusSrcAlphaFactor,
       uniforms: {
-        uProfile: profile,
+        tProfile,
+        uTime: shared.uTime,
         uContract: contract,
         uLayer: { value: layer },
         uSMax: { value: sMax },
@@ -272,6 +321,7 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
         uBody: look.uBody,
         uGlow: look.uGlow,
         uGonad: look.uGonad,
+        uGonadTint: { value: new Vector3(...JELLY_LOOK.gonad) },
       },
     });
     const m = new Mesh(geo, mat);

@@ -59,12 +59,15 @@ export class Pulse {
     // 数十秒かけてゆっくり揺れるテンポと、周期ごとの揺らぎ
     const drift = 1 + 0.07 * Math.sin(start * 0.045 + this.tempoPhase) + 0.04 * Math.sin(start * 0.13 + this.tempoPhase * 2.3);
     const k = (drift * this.style.tempo) / this.tempo;
+    // ふだんは浅いお椀〜お椀、ときどき強く縮んで釣鐘のように深くなる
+    const strong = this.rng.next() < PULSE.strongChance;
+    const amp = strong ? this.rng.range(PULSE.strongAmpMin, PULSE.strongAmpMax) : this.rng.range(PULSE.ampMin, PULSE.ampMax);
     return {
       start,
       tc: PULSE.contract * k * (1 + j * 0.5 * this.rng.gauss()),
       tr: PULSE.relax * k * (1 + j * this.rng.gauss()),
       rest: this.rng.range(PULSE.restMin, PULSE.restMax) * k + this.style.rest * this.rng.range(0.6, 1.4),
-      amp: this.rng.range(PULSE.ampMin, PULSE.ampMax) * this.style.amp,
+      amp: amp * this.style.amp,
       p0,
     };
   }

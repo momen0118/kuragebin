@@ -1,13 +1,19 @@
 // 傘の断面の形。頂点から縁までの長さは変えずに、曲がり方だけを変えて拍動させる。
-// 縮みは頂点から縁へ遅れて伝わり、薄い縁はばねのように少し遅れてしなる。
-// 毎ステップ CPU で断面の点列を作り、頂点シェーダ（bell.ts）はそれを補間して使う。
+// 緩みきると平たい皿、縮むとお椀、強く縮むと釣鐘のように深くなる。縮みは頂点から縁へ遅れて伝わる。
+// 縁は浅い切れ込みで8枚の縁弁（花びら）に分かれ、1枚ずつ少しずつ独立にしなる。
+// 拍動に遅れてしなるだけでなく、緩んでいる間もゆっくり揺れ、ときどき内側へ折れる。
+// 毎ステップ CPU で縁弁ごとの断面の点列を作り、頂点シェーダ（bell.ts）は角度で補間して使う。
 import { BELL } from '../../config';
+import type { Rng } from '../../sim/rng';
 import type { Pulse } from './pulse';
 
 /** 断面の分割数（点は +1 個） */
 export const PROFILE_SEGMENTS = 32;
+/** 縁弁の数。縁弁の真ん中は角度 k·π/4、切れ込みはその間 */
+export const LOBES = 8;
+const LOBE_ANGLE = (Math.PI * 2) / LOBES;
 
-/** 緩んだときの断面の傾き（水平から下向きへのラジアン）。上は平たく、縁で急に曲がる */
+/** 緩んだときの断面の傾き（水平から下向きへのラジアン）。上は平たく、縁で少し下がる */
 function relaxedAngle(s: number): number {
   const [a, b] = BELL.relaxedCurve;
   return a * s + b * s ** 4;
@@ -18,10 +24,20 @@ function bendWeight(s: number): number {
   return s ** BELL.bendPower;
 }
 
-/** 縁のしなりが効く範囲 */
+function smooth(t: number): number {
+  const x = Math.min(Math.max(t, 0), 1);
+  return x * x * (3 - 2 * x);
+}
+
+/** 縁弁のしなりが効く度合い。縁に近いほど柔らかい */
 function flexWeight(s: number): number {
-  const t = Math.min(Math.max((s - 0.62) / 0.38, 0), 1);
-  return t * t * (3 - 2 * t);
+  const t = smooth((s - BELL.flexStart) / (1 - BELL.flexStart));
+  return t * t;
+}
+
+/** 内側への折れが効く度合い。縁のごく近くだけ */
+function foldWeight(s: number): number {
+  return smooth((s - 0.8) / 0.2);
 }
 
 /** 緩んだ形で縁の半径が 1 になる断面の長さ */
@@ -32,72 +48,190 @@ function arcLength(): number {
   return 1 / x;
 }
 
-export class BellShape {
-  /** 断面の点 (r, y) の並び。傘の半径 = 1 の単位、頂点が y = BELL.apexY */
-  readonly points = new Float32Array((PROFILE_SEGMENTS + 1) * 2);
-  private readonly length = arcLength();
-  private flex = 0;
-  private flexVel = 0;
-  private prevMargin = 0;
+/**
+ * 角度 θ での、隣り合う2枚の縁弁とその混ぜ具合。
+ * 縁弁の真ん中あたりはその縁弁だけ、切れ込みのあたりで隣へなめらかに移る（bell.ts と同じ式）
+ */
+export function lobeBlend(theta: number): [number, number, number] {
+  const u = theta / LOBE_ANGLE;
+  const k = Math.floor(u);
+  const t = u - k;
+  const l0 = ((k % LOBES) + LOBES) % LOBES;
+  const l1 = (l0 + 1) % LOBES;
+  const w = smooth((t - 0.32) / 0.36);
+  return [l0, l1, w];
+}
 
-  constructor() {
+/**
+ * 縁弁の形による半径の減り（花びらの丸みと、切れ込み）。s が縁に近いほど効く。θ はラジアン。
+ * bell.ts の scallop() と同じ式
+ */
+export function scallop(theta: number, s: number): number {
+  const u = theta / LOBE_ANGLE;
+  const d = Math.abs(u - Math.round(u));
+  const w = smooth((s - 0.8) / 0.2);
+  const round = BELL.lobeRound * (2 * d) ** 3;
+  const cut = BELL.notchDepth * Math.exp(-(((0.5 - d) / BELL.notchWidth) ** 2));
+  return 1 - (round + cut) * w;
+}
+
+interface Lobe {
+  flex: number;
+  vel: number;
+  /** しなりの速さと、縮みへの反応のばらつき */
+  freq: number;
+  gain: number;
+  /** ゆっくりした揺れ（2つの周期の重ね合わせ） */
+  w1: number;
+  w2: number;
+  ph1: number;
+  ph2: number;
+  /** 内側への折れ（今の値、目標、切り替えまでの時間） */
+  fold: number;
+  foldTarget: number;
+  foldTimer: number;
+}
+
+export class BellShape {
+  /** 縁弁ごとの断面の点 (r, y) の並び（縁弁ごとに PROFILE_SEGMENTS+1 個）。傘の半径 = 1、頂点が y = BELL.apexY */
+  readonly points = new Float32Array(LOBES * (PROFILE_SEGMENTS + 1) * 2);
+  private readonly length = arcLength();
+  private readonly lobes: Lobe[] = [];
+  private readonly accel = new Float64Array(LOBES);
+  private readonly base = new Float64Array(PROFILE_SEGMENTS);
+  private prevMargin = 0;
+  private time = 0;
+
+  constructor(private readonly rng: Rng) {
+    const [pMin, pMax] = BELL.lobeSwayPeriod;
+    const [iMin, iMax] = BELL.foldInterval;
+    for (let k = 0; k < LOBES; k++) {
+      const spread = BELL.flexSpread;
+      this.lobes.push({
+        flex: 0,
+        vel: 0,
+        freq: BELL.flexFreq * (1 + spread * (rng.next() * 2 - 1)),
+        gain: BELL.flexGain * (1 + spread * (rng.next() * 2 - 1)),
+        w1: (Math.PI * 2) / rng.range(pMin, pMax),
+        w2: (Math.PI * 2) / rng.range(pMin, pMax),
+        ph1: rng.range(0, Math.PI * 2),
+        ph2: rng.range(0, Math.PI * 2),
+        fold: 0,
+        foldTarget: 0,
+        foldTimer: rng.range(iMin * 0.2, iMax),
+      });
+    }
     this.integrate(() => 0);
   }
 
-  /** 縁のしなりを進めて、断面を作り直す */
+  /** 縁弁のしなりと折れを進めて、断面を作り直す */
   update(dt: number, pulse: Pulse): void {
     const lag = BELL.propagation;
     if (dt > 0) {
+      this.time += dt;
       // 縁が速く縮むほど、薄い縁は置いていかれて外へ反り、追いついて内へ行き過ぎる
       const m = pulse.value(lag);
       const rate = (m - this.prevMargin) / dt;
       this.prevMargin = m;
-      const w = BELL.flexFreq * Math.PI * 2;
-      const acc = -w * w * this.flex - 2 * BELL.flexDamping * w * this.flexVel - BELL.flexGain * w * w * rate;
-      this.flexVel += acc * dt;
-      this.flex += this.flexVel * dt;
+      const L = this.lobes;
+      for (let k = 0; k < LOBES; k++) {
+        const b = L[k]!;
+        const w = b.freq * Math.PI * 2;
+        // 緩んでいる間もゆっくり揺れる
+        const sway = BELL.lobeSway * (0.6 * Math.sin(this.time * b.w1 + b.ph1) + 0.4 * Math.sin(this.time * b.w2 + b.ph2));
+        const left = L[(k + LOBES - 1) % LOBES]!.flex;
+        const right = L[(k + 1) % LOBES]!.flex;
+        this.accel[k] =
+          -w * w * (b.flex - sway) - 2 * BELL.flexDamping * w * b.vel - b.gain * w * w * rate + BELL.lobeCoupling * (left + right - 2 * b.flex);
+      }
+      for (let k = 0; k < LOBES; k++) {
+        const b = L[k]!;
+        b.vel += this.accel[k]! * dt;
+        b.flex += b.vel * dt;
+        this.stepFold(b, dt);
+      }
     }
     this.integrate((s) => pulse.value(lag * s));
+  }
+
+  /** ときどき内側へ折れて、しばらくすると戻る */
+  private stepFold(b: Lobe, dt: number): void {
+    b.foldTimer -= dt;
+    if (b.foldTimer <= 0) {
+      if (b.foldTarget === 0) {
+        b.foldTarget = this.rng.range(BELL.foldAngle[0], BELL.foldAngle[1]);
+        b.foldTimer = this.rng.range(BELL.foldDuration[0], BELL.foldDuration[1]);
+      } else {
+        b.foldTarget = 0;
+        b.foldTimer = this.rng.range(BELL.foldInterval[0], BELL.foldInterval[1]);
+      }
+    }
+    b.fold += (b.foldTarget - b.fold) * (1 - Math.exp(-dt / 0.6));
   }
 
   private integrate(contraction: (s: number) => number): void {
     const n = PROFILE_SEGMENTS;
     const ds = this.length / n;
     const p = this.points;
-    let r = 0;
-    let y = BELL.apexY;
-    p[0] = 0;
-    p[1] = y;
+    const stride = (n + 1) * 2;
+    const base = this.base;
     for (let i = 0; i < n; i++) {
       const s = (i + 0.5) / n;
-      const th = relaxedAngle(s) + BELL.contractBend * bendWeight(s) * contraction(s) + this.flex * flexWeight(s);
-      r += ds * Math.cos(th);
-      y -= ds * Math.sin(th);
-      p[(i + 1) * 2] = r;
-      p[(i + 1) * 2 + 1] = y;
+      base[i] = relaxedAngle(s) + BELL.contractBend * bendWeight(s) * contraction(s);
+    }
+    for (let k = 0; k < LOBES; k++) {
+      const b = this.lobes[k];
+      const flex = b ? b.flex : 0;
+      const fold = b ? b.fold : 0;
+      const o = k * stride;
+      let r = 0;
+      let y = BELL.apexY;
+      p[o] = 0;
+      p[o + 1] = y;
+      for (let i = 0; i < n; i++) {
+        const s = (i + 0.5) / n;
+        const th = base[i]! + flex * flexWeight(s) + fold * foldWeight(s);
+        r += ds * Math.cos(th);
+        y -= ds * Math.sin(th);
+        p[o + (i + 1) * 2] = r;
+        p[o + (i + 1) * 2 + 1] = y;
+      }
     }
   }
 
-  /** 縁の位置 (r, y) */
-  margin(): [number, number] {
-    const k = PROFILE_SEGMENTS * 2;
-    return [this.points[k]!, this.points[k + 1]!];
+  private lobePoint(lobe: number, i: number): [number, number] {
+    const o = lobe * (PROFILE_SEGMENTS + 1) * 2 + i * 2;
+    return [this.points[o]!, this.points[o + 1]!];
   }
 
-  /** 縁での断面の向き（外へ、下へ） */
-  marginTangent(): [number, number] {
-    const k = PROFILE_SEGMENTS * 2;
-    const dr = this.points[k]! - this.points[k - 2]!;
-    const dy = this.points[k + 1]! - this.points[k - 1]!;
+  /** 角度 θ での縁の位置 (r, y)（切れ込みを含む）と、断面の向き（外へ、下へ） */
+  marginAt(theta: number, out: { r: number; y: number; tr: number; ty: number }): void {
+    const [l0, l1, w] = lobeBlend(theta);
+    const n = PROFILE_SEGMENTS;
+    const [r0, y0] = this.lobePoint(l0, n);
+    const [r1, y1] = this.lobePoint(l1, n);
+    const [q0, z0] = this.lobePoint(l0, n - 1);
+    const [q1, z1] = this.lobePoint(l1, n - 1);
+    const r = r0 + (r1 - r0) * w;
+    const y = y0 + (y1 - y0) * w;
+    const dr = r - (q0 + (q1 - q0) * w);
+    const dy = y - (z0 + (z1 - z0) * w);
     const l = Math.hypot(dr, dy) || 1;
-    return [dr / l, dy / l];
+    out.r = r * scallop(theta, 1);
+    out.y = y;
+    out.tr = dr / l;
+    out.ty = dy / l;
   }
-}
 
-/** 8つの切れ込み（感覚器）による縁の半径の減り。θ はラジアン */
-export function notch(theta: number, s: number): number {
-  const k = theta / (Math.PI / 4) - 0.5;
-  const d = (k - Math.round(k)) * (Math.PI / 4);
-  const w = Math.min(Math.max((s - 0.86) / 0.14, 0), 1);
-  return 1 - BELL.notchDepth * Math.exp(-(d * d) / 0.0035) * w * w;
+  /** 縁の平均の位置 (r, y)。傘の開き具合を見るのに使う */
+  margin(): [number, number] {
+    let r = 0;
+    let y = 0;
+    for (let k = 0; k < LOBES; k++) {
+      const [a, b] = this.lobePoint(k, PROFILE_SEGMENTS);
+      r += a / LOBES;
+      y += b / LOBES;
+    }
+    return [r, y];
+  }
 }

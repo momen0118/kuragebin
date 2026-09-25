@@ -45,6 +45,10 @@ export class Swimmer {
   private modeTarget = 0;
   /** 瓶の中のごくゆるい流れ（向きがゆっくり変わる） */
   private currentPhase: number;
+  /** ときどき大きく傾く：次に傾くまでの時間、傾いている残りの時間、傾く向き */
+  private leanTimer: number;
+  private leanLeft = 0;
+  private readonly leanDir = new Vector3(0, 1, 0);
 
   constructor(
     private readonly rng: Rng,
@@ -64,6 +68,30 @@ export class Swimmer {
     this.modeTarget = this.pickTarget('drift');
     this.rollVel = rng.range(-1, 1) * SWIM.rollSpeed;
     this.currentPhase = rng.range(0, Math.PI * 2);
+    this.leanTimer = rng.range(SWIM.leanInterval[0] * 0.3, SWIM.leanInterval[1] * 0.6);
+  }
+
+  /** 大きく傾いている最中か */
+  get leaning(): boolean {
+    return this.leanLeft > 0;
+  }
+
+  /**
+   * 大きく傾きはじめる。手前へ傾くことが多く、斜め上や真上から四つ葉が見える。
+   * 手前の壁に近いときは、瓶の真ん中のほうへ傾く
+   */
+  private startLean(): void {
+    const tilt = this.rng.range(SWIM.leanTilt[0], SWIM.leanTilt[1]);
+    let az: number;
+    if (this.rng.next() < SWIM.leanTowardViewer && this.pos.z < this.bounds.radius * 0.4) {
+      az = this.rng.range(-0.6, 0.6);
+    } else {
+      const toCenter = Math.atan2(-this.pos.x, -this.pos.z);
+      az = Math.hypot(this.pos.x, this.pos.z) > this.bounds.radius * 0.4 ? toCenter + this.rng.range(-0.8, 0.8) : this.rng.range(-Math.PI, Math.PI);
+    }
+    this.leanDir.set(Math.sin(tilt) * Math.sin(az), Math.cos(tilt), Math.sin(tilt) * Math.cos(az));
+    this.leanLeft = this.rng.range(SWIM.leanDuration[0], SWIM.leanDuration[1]);
+    this.leanTimer = this.rng.range(SWIM.leanInterval[0], SWIM.leanInterval[1]);
   }
 
   /** つつかれた点から離れる。strength は 0〜1 */
@@ -108,8 +136,17 @@ export class Swimmer {
     const rate = pulse.rate();
     const push = Math.max(rate, 0);
 
-    // 推進：縮む速さに応じて傘の向きへ
-    const thrust = this.mode === 'drift' ? SWIM.thrust * SWIM.driftThrust : SWIM.thrust;
+    // ときどき大きく傾く
+    if (this.leanLeft > 0) this.leanLeft -= dt;
+    else {
+      this.leanTimer -= dt;
+      if (this.leanTimer <= 0) this.startLean();
+    }
+    const leaning = this.leanLeft > 0;
+
+    // 推進：縮む速さに応じて傘の向きへ。大きく傾いている間は、その場で漂うように弱く
+    let thrust = this.mode === 'drift' ? SWIM.thrust * SWIM.driftThrust : SWIM.thrust;
+    if (leaning) thrust *= SWIM.leanThrust;
     this.vel.addScaledVector(this.axis, thrust * push * dt);
     // 沈む力と水の抵抗
     this.vel.y -= SWIM.sink * dt;
@@ -129,7 +166,7 @@ export class Swimmer {
 
     // 先読みした位置で壁・底・水面を避ける
     const ahead = tmpA.copy(this.pos).addScaledVector(this.axis, SWIM.lookAhead).addScaledVector(this.vel, SWIM.lookAheadTime);
-    const desired = tmpB.copy(this.wander);
+    const desired = tmpB.copy(leaning ? this.leanDir : this.wander);
     const m = SWIM.wallMargin;
     const mv = SWIM.floorMargin;
     const rAhead = Math.hypot(ahead.x, ahead.z);
@@ -146,9 +183,9 @@ export class Swimmer {
     if (dBottom < mv) desired.y += Math.min((mv - dBottom) / mv, 1.5) ** 2 * SWIM.avoidFloor;
     if (desired.lengthSq() < 1e-6) desired.copy(UP);
     desired.normalize();
-    // 傾きすぎたら起き上がろうとする
+    // 傾きすぎたら起き上がろうとする（自分から大きく傾いている間は起き上がらない）
     const lean = 1 - this.axis.y;
-    desired.addScaledVector(UP, SWIM.righting * lean).normalize();
+    if (!leaning) desired.addScaledVector(UP, SWIM.righting * lean).normalize();
     if (desired.y < SWIM.minAxisY) {
       desired.y = SWIM.minAxisY;
       desired.normalize();
