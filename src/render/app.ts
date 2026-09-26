@@ -13,13 +13,15 @@ import {
   PerspectiveCamera,
   Ray,
   Scene,
+  Vector2,
   Vector3,
+  Vector4,
   WebGLRenderer,
   type Object3D,
   type Texture,
   type WebGLRenderTarget,
 } from 'three';
-import { BELL, HANDLING, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, CUP, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SWIPE, WATER, type PhotoName } from '../config';
 import { createRng } from '../sim/rng';
 import type { JarState } from '../sim/state';
 import { Bloom } from './bloom';
@@ -27,10 +29,13 @@ import { coverTransform, solvePhotoCamera, type PhotoCamera } from './camera';
 import { createComposite } from './composite';
 import { FullscreenPass } from './fullscreen';
 import { Creatures } from './creatures';
+import { Cup } from './cup';
 import { createJar, type Jar } from './jar';
+import { apparentNdc } from './lensMap';
 import { lightAt, type LightState } from './lighting';
 import { Bubble, createSnow, type Snow } from './particles';
 import { Room } from './room';
+import { Scoop } from './scoop';
 import { createTable, type TableJars } from './table';
 import { chooseTargetType, createTarget } from './targets';
 import { createSharedUniforms, type SharedUniforms } from './uniforms';
@@ -51,14 +56,15 @@ in vec2 vUv;
 void main() { gl_FragColor = vec4(texture(tSrc, vUv).rgb, 1.0); }
 `;
 
-/** つまんでいる個体。depth は指の動きを受ける奥行き（瓶の中心が原点）、offset は指から傘の中心まで */
-interface Held {
-  id: number;
-  jar: number;
-  depth: number;
-  offset: Vector3;
-  /** 瓶の真ん中へ引き戻している残りの時間（秒）。0 なら指についてくる */
-  returning: number;
+/** 札の線を付ける所（CSS px）。App.noteAnchor */
+export interface NoteAnchor {
+  x: number;
+  y: number;
+  r: number;
+  swimmer: boolean;
+  left: number;
+  right: number;
+  top: number;
 }
 
 export class App {
@@ -110,8 +116,16 @@ export class App {
   private readonly tmpV = new Vector3();
   private readonly tmpV2 = new Vector3();
   private readonly tmpM = new Matrix4();
+  private readonly tmpN = new Vector2();
   private readonly ray = new Ray();
-  private held: Held | null = null;
+  /** カップで運んでいる個体（どの瓶にも描かない） */
+  private readonly carried = new Set<number>();
+  /** 水ごとすくって運ぶカップと、その流れ。カップは瓶の中身とは別に描く */
+  private readonly cup: Cup;
+  private readonly cupScene = new Scene();
+  private readonly scoop: Scoop;
+  /** 瓶ごとの水面の波紋（x, z, 始まった時刻, 強さ） */
+  private readonly ripples: Vector4[][];
   /** 確認用：中間の画像をそのまま出す（'bg' | 'contents' | 'glow' | 'room'） */
   debugView: string | null = null;
   /** 確認用：部品ごとに表示を切り替える */
@@ -148,7 +162,29 @@ export class App {
 
     const rng = createRng(RENDER.seed);
     this.jar = createJar(this.shared, RIM_WARM.color);
-    this.jars = Array.from({ length: SIM.jarCount }, () => new Creatures(this.shared, GLOW_LAYER));
+    this.jars = Array.from({ length: SIM.jarCount }, () => new Creatures(this.shared, GLOW_LAYER, this.carried));
+    this.ripples = this.jars.map(() => [0, 1, 2, 3].map(() => new Vector4()));
+    this.cup = new Cup(this.shared);
+    this.cupScene.add(this.cup.group);
+    const app = this;
+    this.scoop = new Scoop(
+      {
+        get spacing() {
+          return app.spacing;
+        },
+        get view() {
+          return app.view;
+        },
+        // 画面の横幅の半分（瓶の奥行きで）からカップの半径と余白を引いた分
+        get hoverRange() {
+          return app.spacing - JAR.radius - SWIPE.gap - CUP.radiusTop - CUP.spout - 0.03;
+        },
+        ripple: (jar, x, z, strength) => this.addRipple(jar, x, z, strength),
+        adopt: (jar, id, jelly) => this.jars[jar]?.adopt(id, jelly),
+        cameraPosition: (jar, out) => out.setFromMatrixPosition(this.placeJarCamera(jar).matrixWorld),
+      },
+      this.cup,
+    );
     this.bubbles = this.jars.map(() => new Bubble(this.shared, rng));
     this.agitations = this.jars.map(() => 0);
 
@@ -300,6 +336,7 @@ export class App {
     const cam = this.placeJarCamera(i);
     this.shared.uViewProj.value.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     this.shared.uAgitation.value = this.agitations[i]!;
+    this.shared.uRipples.value = this.ripples[i]!;
     this.snow.shift.value = i;
     this.jars.forEach((c, k) => (c.group.visible = k === i && !c.hidden));
     this.bubbles.forEach((b, k) => (b.points.visible = k === i && b.isActive));
@@ -392,13 +429,26 @@ export class App {
     return this.jars[i]!.pick(ndcX, ndcY, this.placeJarCamera(i), minNdc, swimmersOnly);
   }
 
-  /** 表示中の瓶の個体の、札を出す位置（CSS px）。いなければ null */
-  anchorOnScreen(id: number, cssWidth: number, cssHeight: number): [number, number] | null {
+  /**
+   * 表示中の瓶の個体に札の線を付ける所（CSS px）。水とガラスのレンズ越しに見えている位置で、
+   * x, y は傘の中心（ポリプは触手の冠）、r は見かけの半径。left・right・top は瓶の左右の縁と上端。いなければ null
+   */
+  noteAnchor(id: number, cssWidth: number, cssHeight: number): NoteAnchor | null {
     const i = this.jarIndex;
-    const p = this.jars[i]!.anchorOf(id, this.tmpV);
-    if (!p) return null;
-    p.project(this.placeJarCamera(i));
-    return [((p.x + 1) / 2) * cssWidth, ((1 - p.y) / 2) * cssHeight];
+    const body = this.jars[i]!.bodyOf(id, this.tmpV);
+    if (!body) return null;
+    const cam = this.placeJarCamera(i);
+    const toCss = (n: Vector2): [number, number] => [((n.x + 1) / 2) * cssWidth, ((1 - n.y) / 2) * cssHeight];
+    const [x, y] = toCss(apparentNdc(cam, body.center, this.tmpN));
+    // 見かけの半径：カメラの横向きに半径だけずらした点がどこに見えるか
+    const side = this.tmpV2.setFromMatrixColumn(cam.matrixWorld, 0).multiplyScalar(body.radius).add(body.center);
+    const [sx, sy] = toCss(apparentNdc(cam, side, this.tmpN));
+    const r = Math.hypot(sx - x, sy - y);
+    // 瓶の輪郭：胴の左右の縁（真ん中の高さ）と、口の縁の上端（奥の縁がいちばん上に見える）
+    const [left] = toCss(this.tmpN.set(this.tmpV.set(-JAR.radius, JAR.height * 0.5, 0).project(cam).x, 0));
+    const [right] = toCss(this.tmpN.set(this.tmpV.set(JAR.radius, JAR.height * 0.5, 0).project(cam).x, 0));
+    const top = toCss(this.tmpN.set(0, this.tmpV.set(0, JAR.height, -JAR.neckRadius).project(cam).y))[1];
+    return { x, y, r, swimmer: body.swimmer, left, right, top };
   }
 
   /**
@@ -437,64 +487,50 @@ export class App {
     return out.copy(o).addScaledVector(d, Math.max(t, 0));
   }
 
-  /** 表示中の瓶の泳ぐ個体をつまむ（長押し）。つまめたら true */
-  grab(id: number, ndcX: number, ndcY: number): boolean {
-    this.releaseHeld();
+  /** 瓶 jar の水面に波紋を立てる（いちばん古いものと入れ替える） */
+  private addRipple(jar: number, x: number, z: number, strength: number): void {
+    const list = this.ripples[jar];
+    if (!list) return;
+    let slot = list[0]!;
+    for (const r of list) if (r.w <= 0 || r.z < slot.z) slot = r;
+    slot.set(x, z, this.time, strength);
+  }
+
+  /** カップを使っているところか（すくう〜去るまで）。その間は新しくすくえない */
+  get scoopBusy(): boolean {
+    return this.scoop.busy;
+  }
+
+  /** カップの中の個体（注ぎ終えたら null） */
+  get scoopId(): number | null {
+    return this.scoop.carriedId;
+  }
+
+  /** 長押し：表示中の瓶の泳ぐ個体 id を、カップで水ごとすくいはじめる。はじめられたら true */
+  scoopStart(id: number): boolean {
+    if (this.scoop.busy || !this.atRest) return false;
     const i = this.jarIndex;
-    const pos = this.jars[i]!.positionOf(id);
-    if (!pos) return false;
-    const finger = this.pointAtDepth(i, ndcX, ndcY, pos.z, this.tmpV);
-    this.held = { id, jar: i, depth: pos.z, offset: pos.clone().sub(finger), returning: 0 };
-    this.jars[i]!.hold(id, pos);
-    this.jars[i]!.startle(id, HANDLING.grabStartle);
+    const jelly = this.jars[i]!.lift(id);
+    if (!jelly) return false;
+    this.scoop.begin(i, id, jelly);
     return true;
   }
 
-  /** つまんでいる個体の番号 */
-  get heldId(): number | null {
-    return this.held?.id ?? null;
+  /** 指の位置（ndc）。運んでいる間、カップが少し遅れてついてくる（横だけ） */
+  scoopFollow(ndcX: number, ndcY: number): void {
+    if (!this.scoop.busy) return;
+    const f = this.scoop.frameJar;
+    this.scoop.follow(this.pointAtDepth(f, ndcX, ndcY, 0, this.tmpV).x);
   }
 
-  /** つまんでいる個体を、指の位置（ndc）へ引く。個体は水の中を少し遅れてついてくる */
-  dragHeld(ndcX: number, ndcY: number): void {
-    const h = this.held;
-    if (!h || h.returning > 0) return;
-    const target = this.pointAtDepth(h.jar, ndcX, ndcY, h.depth, this.tmpV).add(h.offset);
-    if (!this.jars[h.jar]!.hold(h.id, target)) this.held = null;
+  /** 隣の瓶 to へ運んで注ぐ。onStart は運びはじめたとき（画面を隣の瓶へ動かす） */
+  scoopCross(to: number, onStart: () => void): void {
+    this.scoop.cross(to, onStart);
   }
 
-  /** 放す */
-  releaseHeld(): void {
-    const h = this.held;
-    if (!h) return;
-    this.jars[h.jar]!.hold(h.id, null);
-    this.held = null;
-  }
-
-  /** 移せなかった：瓶の真ん中のほうへ引き戻してから放す */
-  returnHeld(): void {
-    const h = this.held;
-    if (!h) return;
-    const pos = this.jars[h.jar]!.positionOf(h.id);
-    if (!pos) {
-      this.held = null;
-      return;
-    }
-    this.jars[h.jar]!.hold(h.id, this.tmpV.set(pos.x * 0.3, pos.y, pos.z * 0.3));
-    h.returning = HANDLING.returnSeconds;
-  }
-
-  /**
-   * つまんでいる個体を瓶 to へ渡す。移ってきた個体は水面の近くの side 側（-1 で左、1 で右）から、
-   * 注ぎ入れたようにゆっくり沈んでくる。渡せたら true
-   */
-  transferHeld(to: number, side: number): boolean {
-    const h = this.held;
-    const target = this.jars[to];
-    this.held = null;
-    if (!h || !target || !this.jars[h.jar]!.giveTo(h.id, target)) return false;
-    target.pourIn(h.id, side);
-    return true;
+  /** 今の瓶へ注ぎ戻す（delay 秒待ってから） */
+  scoopRelease(delay = 0): void {
+    this.scoop.release(delay);
   }
 
   /** 描かずに動きだけを進める（確認用の早回しにも使う） */
@@ -510,11 +546,6 @@ export class App {
       this.roomDirty = this.wideDirty = true;
     }
     this.fade = Math.min(1, this.fade + d / RENDER.fadeInSeconds);
-    const h = this.held;
-    if (h && h.returning > 0) {
-      h.returning -= d;
-      if (h.returning <= 0) this.releaseHeld();
-    }
     this.shared.uTime.value = this.time;
     // 動かすのは見えている瓶だけ。ほかの瓶の個体は止めておく（状態はシミュレーションで進む）
     for (const i of this.visibleJars()) {
@@ -530,6 +561,16 @@ export class App {
       }
       this.agitations[i] = Math.min(1, this.agitations[i]! * Math.exp(-d / WATER.agitationDecay) + WATER.agitationGain * stir * d);
     }
+    this.scoop.update(d);
+  }
+
+  /** カップを瓶 jar のカメラで描く。mode 1 は瓶の中の部分だけ、2 は外の部分だけ（shaders/clip.ts） */
+  private renderCup(jar: number, mode: number): void {
+    const cam = this.useJar(jar);
+    this.cup.prepare(cam);
+    this.shared.uClipMode.value = mode;
+    this.renderer.render(this.cupScene, cam);
+    this.shared.uClipMode.value = 0;
   }
 
   frame(dt: number): void {
@@ -570,13 +611,19 @@ export class App {
     this.camera.layers.set(0);
     r.setRenderTarget(this.bgRT);
     r.render(this.bgScene, this.camera);
+    // カップ（と中の海月・注ぐ水）の、瓶の口より上にある部分は背景に重ねる
+    if (this.scoop.busy) this.renderCup(this.scoop.frameJar, 2);
 
     // 2. 中身：透明な画像に描く（瓶底は背景の天板を映す）。見えている瓶ごとに、その瓶の位置へずらしたカメラで
     this.jar.floorBg.value = this.bgRT.texture;
     r.setRenderTarget(this.contentRT);
     r.setClearColor(0x000000, 0);
     r.clear(true, false, false);
-    for (const i of vis) r.render(this.contentScene, this.useJar(i));
+    for (const i of vis) {
+      r.render(this.contentScene, this.useJar(i));
+      // カップの、瓶の口より下にある部分は瓶の中身として（手前のガラス越しに曲がって見える）
+      if (this.scoop.busy && i === this.scoop.frameJar) this.renderCup(i, 1);
+    }
 
     // 3. 光る部分だけを描いてブルームにする（ミズクラゲは光らないので、光る種がいるときだけ）
     const glowing = vis.some((i) => this.jars[i]!.glowing);

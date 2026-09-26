@@ -19,6 +19,7 @@ import { LOBES } from './profile';
 import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
+import { CLIP_GLSL } from '../shaders/clip';
 import type { BellLook } from './bell';
 import { frag } from '../shaders/glsl';
 
@@ -59,6 +60,7 @@ void main() {
 
 const FRAG = /* glsl */ `
 ${LAMP_GLSL}
+${CLIP_GLSL}
 uniform float uGlowPass;
 uniform float uBrightness;
 uniform vec3 uKey, uAmbient;
@@ -69,6 +71,7 @@ in float vSeed;
 in float vThin;
 in vec3 vWorldPos;
 void main() {
+  clipToJar(vWorldPos);
   float across = exp(-vSide * vSide * 2.5);
   float along = (1.0 - smoothstep(0.4, 1.0, vT)) * (0.5 + 0.5 * smoothstep(0.0, 0.1, vT));
   float a = across * along * vThin * (0.45 + 0.55 * vSeed) * uBrightness;
@@ -145,6 +148,7 @@ export function createStrandMesh(
         uWidth: { value: widthPx },
         uBrightness: { value: brightness },
         uGlowPass: shared.uGlowPass,
+        uClipMode: shared.uClipMode,
         uKey: shared.uKey,
         uAmbient: shared.uAmbient,
         uBody: look.uBody,
@@ -260,6 +264,21 @@ export class Tentacles {
     this.alive.fill(0);
   }
 
+  /** 瓶の壁と底の中に収める（カップで運ばれている間は false） */
+  confined = true;
+
+  /** まとめて動かす（瓶から瓶へ座標を移すとき、カップの水ごと運ばれるとき）。形と動きはそのまま */
+  translate(dx: number, dy = 0, dz = 0): void {
+    for (let i = 0; i < this.x.length; i += 3) {
+      this.x[i]! += dx;
+      this.px[i]! += dx;
+      this.x[i + 1]! += dy;
+      this.px[i + 1]! += dy;
+      this.x[i + 2]! += dz;
+      this.px[i + 2]! += dz;
+    }
+  }
+
   /**
    * 大きさと生えそろい具合（エフィラが育つにつれて）。radius は傘の半径、sprout は 0〜1。
    * 腕の間の触手から先に、根元から少しずつ伸びる
@@ -372,8 +391,8 @@ export class Tentacles {
           }
         }
       }
-      // 瓶の壁と底からははみ出さない
-      for (let j = 1; j < m; j++) {
+      // 瓶の壁と底からははみ出さない（カップで運ばれている間は瓶の外にいるので見ない）
+      for (let j = 1; this.confined && j < m; j++) {
         const k = base + j * 3;
         const r = Math.sqrt(x[k]! * x[k]! + x[k + 2]! * x[k + 2]!);
         const lim = INNER_R - 0.006;

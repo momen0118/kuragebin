@@ -41,6 +41,8 @@ export class Creatures {
     private readonly shared: SharedUniforms,
     /** 光る種の発光パスに入れる（泳ぐ個体だけ） */
     private readonly glowLayer: number,
+    /** カップで運んでいる個体（どの瓶にも描かない。すべての瓶で共有） */
+    private readonly carried: Set<number> = new Set(),
   ) {}
 
   /** 確認用：ポリプ・ストロビラ・エフィラを実物大で描く */
@@ -57,6 +59,8 @@ export class Creatures {
     const seen = new Set<number>();
     for (const c of jar.creatures) {
       seen.add(c.id);
+      // カップで運んでいる間は、どの瓶にも作らない（注いだときに瓶へ戻す）
+      if (this.carried.has(c.id)) continue;
       let v = this.views.get(c.id);
       const kind = isSwimmer(c.stage) ? 'swimmer' : 'polyp';
       if (v && v.kind !== kind) {
@@ -250,57 +254,35 @@ export class Creatures {
     return best;
   }
 
-  /** 札を出す位置（ワールド）：泳ぐ個体は傘のすぐ上、瓶底の個体は触手の冠の上 */
-  anchorOf(id: number, out: Vector3): Vector3 | null {
+  /**
+   * 札の線を引き出す所（ワールド）：泳ぐ個体は傘の中心と半径、瓶底の個体は触手の冠のあたりと、その大きさ
+   */
+  bodyOf(id: number, out: Vector3): { center: Vector3; radius: number; swimmer: boolean } | null {
     const v = this.views.get(id);
     if (!v) return null;
-    if (v.kind === 'polyp') return v.polyp.top(out);
+    if (v.kind === 'polyp') {
+      v.polyp.top(out);
+      return { center: out, radius: v.polyp.size * 0.6, swimmer: false };
+    }
     if (v.waiting) return null;
-    return out.copy(v.jelly.swimmer.pos).setY(v.jelly.swimmer.pos.y + v.jelly.radius * 0.55);
+    return { center: out.copy(v.jelly.swimmer.pos), radius: v.jelly.radius, swimmer: true };
   }
 
-  /** 泳ぐ個体をつまむ・引く・放す（target が null で放す） */
-  hold(id: number, target: Vector3 | null): boolean {
+  /** 泳ぐ個体をカップへ移す（この瓶では描かない）。移せたらその個体 */
+  lift(id: number): Jellyfish | null {
     const v = this.views.get(id);
-    if (v?.kind !== 'swimmer' || v.waiting) return false;
-    v.jelly.swimmer.hold(target);
-    return true;
-  }
-
-  /** 泳ぐ個体をきゅっと縮ませる（つままれたとき）。strength はつついたときを 1 として */
-  startle(id: number, strength: number): void {
-    const v = this.views.get(id);
-    if (v?.kind === 'swimmer' && !v.waiting) v.jelly.pulse.startle(strength);
-  }
-
-  /** 泳ぐ個体の今の位置（ワールド、瓶の中心が原点） */
-  positionOf(id: number): Vector3 | null {
-    const v = this.views.get(id);
-    return v?.kind === 'swimmer' ? v.jelly.swimmer.pos : null;
-  }
-
-  /** 泳ぐ個体の描画を隣の瓶へ渡す（動きはそのまま引き継ぐ）。渡したら true */
-  giveTo(id: number, other: Creatures): boolean {
-    const v = this.views.get(id);
-    if (v?.kind !== 'swimmer' || v.waiting) return false;
-    v.jelly.swimmer.hold(null);
+    if (v?.kind !== 'swimmer' || v.waiting) return null;
     this.views.delete(id);
     this.group.remove(v.jelly.group);
-    other.views.set(id, v);
-    other.group.add(v.jelly.group);
-    return true;
+    this.carried.add(id);
+    return v.jelly;
   }
 
-  /**
-   * 移ってきた個体を、水面の近くの side 側（-1 で左、1 で右）から入れる。
-   * 瓶から瓶へ移すときは上から注ぎ入れるので、水面の近くからゆっくり沈んでくる
-   */
-  pourIn(id: number, side: number): void {
-    const v = this.views.get(id);
-    if (v?.kind !== 'swimmer') return;
-    const j = v.jelly;
-    const b = j.swimmer.range;
-    j.place(new Vector3(side * b.radius * 0.55, b.top - 0.02, 0.02), new Vector3(0, 1, 0), new Vector3(0, -0.02, 0));
+  /** カップから注がれた個体を、この瓶の個体にする（動きはそのまま） */
+  adopt(id: number, jelly: Jellyfish): void {
+    this.carried.delete(id);
+    this.views.set(id, { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false });
+    this.group.add(jelly.group);
   }
 
   /** 確認用：個体の位置（泳ぐ個体は傘の中心、瓶底の個体は足もと。ワールド） */

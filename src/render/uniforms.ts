@@ -1,5 +1,5 @@
 // 複数のシェーダで共有する uniform。値を一度書き換えれば全部に効く
-import { Matrix4, Vector2, Vector3, type Texture } from 'three';
+import { Matrix4, Vector2, Vector3, Vector4, type Texture } from 'three';
 import { createLampUniforms } from './lamp';
 
 export function createSharedUniforms() {
@@ -28,6 +28,13 @@ export function createSharedUniforms() {
     tRoom: { value: null as Texture | null },
     /** 光る部分だけを描くパスのとき 1 */
     uGlowPass: { value: 0 },
+    /** 瓶の口を境に描く所を分ける（shaders/clip.ts）。0 は分けない、1 は瓶の中だけ、2 は瓶の外だけ */
+    uClipMode: { value: 0 },
+    /**
+     * 水面の波紋（描いている瓶の分）。1つずつ (x, z, 始まった時刻, 強さ)。強さ 0 は無し。
+     * カップを沈めたとき・引き上げたとき・注いだときに立つ
+     */
+    uRipples: { value: [new Vector4(), new Vector4(), new Vector4(), new Vector4()] },
   };
 }
 

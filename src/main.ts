@@ -122,7 +122,7 @@ async function main(): Promise<void> {
       if (!c) return null;
       return { name: c.name, stage: c.stage, day: Math.floor(Math.max(0, s.time - c.arrivedAt) / 86400) + 1 };
     },
-    anchor: (id) => app.anchorOnScreen(id, canvas.clientWidth, canvas.clientHeight),
+    anchor: (id) => app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight),
     rename: (id, name) => game.rename(id, name),
   });
 
@@ -230,7 +230,8 @@ async function main(): Promise<void> {
       slider.finish();
       app.setView(slider.position);
       const [x, y] = toNdc(p);
-      holdable = app.pickAt(x, y, fingerNdc(), true);
+      // カップを使っている間は、新しくすくわない
+      holdable = app.scoopBusy ? null : app.pickAt(x, y, fingerNdc(), true);
       return holdable !== null ? 'holdable' : 'plain';
     },
     tap: tapAt,
@@ -336,6 +337,8 @@ async function main(): Promise<void> {
         app.setPhotoDebug(only, overlay),
       setLamp: (on: boolean) => app.setLampOn(on),
     };
+    // 確認用：描画側の中身を直接見る
+    w.__kurageApp = app;
     w.__kurageReady = true;
     return;
   }

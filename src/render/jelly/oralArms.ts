@@ -17,6 +17,7 @@ import { BELL, JAR, JELLY_LOOK, ORAL_ARMS } from '../../config';
 import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
+import { CLIP_GLSL } from '../shaders/clip';
 import type { BellLook } from './bell';
 import type { RootFrame } from './tentacles';
 import common from '../shaders/common.glsl?raw';
@@ -45,6 +46,7 @@ void main() {
 const FRAG = /* glsl */ `
 ${common}
 ${LAMP_GLSL}
+${CLIP_GLSL}
 uniform float uGlowPass;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
@@ -55,6 +57,7 @@ in vec3 vNormal;
 in float vU;
 in float vS;
 void main() {
+  clipToJar(vWorldPos);
   vec3 N = normalize(vNormal);
   vec3 V = normalize(cameraPosition - vWorldPos);
   float NdV = abs(dot(N, V));
@@ -167,6 +170,7 @@ export class OralArms {
         uniforms: {
           ...lampUniforms(shared),
           uGlowPass: shared.uGlowPass,
+        uClipMode: shared.uClipMode,
           uKey: shared.uKey,
           uKeyDir: shared.uKeyDir,
           uAmbient: shared.uAmbient,
@@ -185,6 +189,21 @@ export class OralArms {
   /** 根元から伸ばしなおす（個体を別の場所へ置きなおしたとき） */
   reset(): void {
     this.initialized = false;
+  }
+
+  /** 瓶の壁と底の中に収める（カップで運ばれている間は false） */
+  confined = true;
+
+  /** まとめて動かす（瓶から瓶へ座標を移すとき、カップの水ごと運ばれるとき）。形と動きはそのまま */
+  translate(dx: number, dy = 0, dz = 0): void {
+    for (let i = 0; i < this.x.length; i += 3) {
+      this.x[i]! += dx;
+      this.px[i]! += dx;
+      this.x[i + 1]! += dy;
+      this.px[i + 1]! += dy;
+      this.x[i + 2]! += dz;
+      this.px[i + 2]! += dz;
+    }
   }
 
   /** 大きさと長さの割合（エフィラが育つにつれて）。radius は傘の半径 */
@@ -280,7 +299,8 @@ export class OralArms {
           }
         }
       }
-      for (let j = 1; j < m; j++) {
+      // 瓶の壁と底からははみ出さない（カップで運ばれている間は瓶の外にいるので見ない）
+      for (let j = 1; this.confined && j < m; j++) {
         const k = base + j * 3;
         const r = Math.sqrt(x[k]! * x[k]! + x[k + 2]! * x[k + 2]!);
         const lim = INNER_R - 0.012;
