@@ -161,6 +161,11 @@ uniform sampler2D tBloom;
 uniform float uBloomStrength;
 uniform vec2 uResolution;
 uniform vec2 uCoverScale, uCoverOffset;
+// 瓶の切り替えの視差で、部屋の写真が横にずれている量（写真の uv、奥の壁）
+uniform float uParallax;
+// 写真の外の左を窓の光にする度合い。見ている瓶は 1。すれ違って横へ離れた瓶は 0 で、写真を折り返して読む
+// （離れた瓶の縁が写真の外ばかり映して、白い板のように光らないように）
+uniform float uWindowSide;
 uniform mat4 uViewProj;
 uniform float uTime, uAgitation, uLensLight;
 uniform vec3 uKey, uKeyDir, uAmbient, uGlowPos, uGlowColor;
@@ -187,9 +192,10 @@ vec2 toScreen(vec3 p) {
  * 写真の外は、左（窓の側）は窓の光で明るく、右は暗い部屋
  */
 vec3 backdrop(vec2 s) {
-  vec2 p = s * uCoverScale + uCoverOffset;
-  vec3 wide = texture(tRoomWide, clamp(p, vec2(0.001), vec2(0.999))).rgb;
-  float left = smoothstep(0.02, 0.1, -p.x);
+  vec2 p = s * uCoverScale + uCoverOffset + vec2(uParallax, 0.0);
+  vec2 q = vec2(mix(abs(p.x), p.x, uWindowSide), p.y);
+  vec3 wide = texture(tRoomWide, clamp(q, vec2(0.001), vec2(0.999))).rgb;
+  float left = smoothstep(0.02, 0.1, -p.x) * uWindowSide;
   float right = smoothstep(0.0, 0.2, p.x - 1.0);
   wide = mix(wide, uKey * uWindowBand + uAmbient * 0.3, left);
   wide *= 1.0 - 0.75 * right;

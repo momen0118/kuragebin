@@ -84,6 +84,8 @@ export class Swimmer {
   private rising = 0;
   /** ほかに泳ぐ個体がいる（沈んでいく先を底の近くまで広げる） */
   private crowded = false;
+  /** 指でつままれているときの、引かれていく先（ワールド）。null ならつままれていない */
+  private held: Vector3 | null = null;
 
   constructor(
     private readonly rng: Rng,
@@ -145,6 +147,34 @@ export class Swimmer {
     this.mode = 'cruise';
     this.modeTimer = SWIM.cruiseMaxTime * 0.3;
     this.modeTarget = this.pickTarget('cruise');
+  }
+
+  /**
+   * 指でつまむ（長押し）。target へ水の中を引かれていく（少し遅れてついてくる）。null で放す。
+   * target は泳げる範囲の中に収める
+   */
+  hold(target: Vector3 | null): void {
+    if (!target) {
+      this.held = null;
+      return;
+    }
+    const b = this.bounds;
+    const t = (this.held ??= new Vector3()).copy(target);
+    const r = Math.hypot(t.x, t.z);
+    if (r > b.radius) {
+      t.x *= b.radius / r;
+      t.z *= b.radius / r;
+    }
+    t.y = Math.min(Math.max(t.y, b.bottom), b.top);
+  }
+
+  get isHeld(): boolean {
+    return this.held !== null;
+  }
+
+  /** 泳げる範囲（瓶の中心からの半径、下、上） */
+  get range(): Readonly<SwimBounds> {
+    return this.bounds;
   }
 
   /** 大きく傾いている最中か */
@@ -236,6 +266,12 @@ export class Swimmer {
     let thrust = (this.mode === 'drift' ? SWIM.thrust * SWIM.driftThrust : SWIM.thrust) * S.thrust;
     if (leaning) thrust *= SWIM.leanThrust;
     this.vel.addScaledVector(this.axis, thrust * push * dt);
+    // 指でつままれている：その先へ水の中を引かれていく
+    if (this.held) {
+      const pull = tmpA.copy(this.held).sub(this.pos);
+      this.vel.addScaledVector(pull, SWIM.holdSpring * dt);
+      this.vel.multiplyScalar(Math.exp(-SWIM.holdDamping * dt));
+    }
     // 沈む力と水の抵抗
     this.vel.y -= SWIM.sink * S.sink * dt;
     this.vel.multiplyScalar(Math.exp(-SWIM.drag * dt));

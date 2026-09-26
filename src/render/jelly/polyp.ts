@@ -339,6 +339,16 @@ export class Polyp {
     this.body[1]!.renderOrder = base + 0.2;
   }
 
+  /** 体のてっぺんのあたり（ワールド、触手の冠の上）。札を出す位置や、指で押せる所に使う */
+  top(out: Vector3): Vector3 {
+    return out.copy(this.up).multiplyScalar(this.height * 1.5).add(this.base);
+  }
+
+  /** 体の高さ（瓶の高さ単位） */
+  get size(): number {
+    return this.height;
+  }
+
   /** エフィラを放しているところか（離れるのを待つ皿がある） */
   get isReleasing(): boolean {
     return this.releasing !== null;

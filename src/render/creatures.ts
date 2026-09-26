@@ -1,7 +1,7 @@
-// 表示中の瓶の個体を描く。状態の個体（sim の Creature）に合わせて、泳ぐ個体（成体・エフィラ）と
+// 瓶1つの個体を描く。状態の個体（sim の Creature）に合わせて、泳ぐ個体（成体・エフィラ）と
 // 瓶底の個体（ポリプ・ストロビラ）を作ったり消したりし、毎フレーム動かす。
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
-import { Group, Vector3, type Camera, type Object3D } from 'three';
+import { Group, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
 import { EPHYRA, SWIM } from '../config';
 import { createRng } from '../sim/rng';
 import { isSwimmer, type Creature, type JarState } from '../sim/state';
@@ -30,6 +30,8 @@ const LAUNCH_SPEED = 0.02;
 
 export class Creatures {
   readonly group = new Group();
+  /** 確認用：個体を隠す（?hide=jelly） */
+  hidden = false;
   private readonly views = new Map<number, View>();
   private readonly neighbors: Neighbor[] = [];
   private realSize = false;
@@ -211,6 +213,94 @@ export class Creatures {
       if (v.kind === 'swimmer' ? !v.waiting && v.jelly.poke(point) : v.polyp.poke(point)) any = true;
     }
     return any;
+  }
+
+  /**
+   * 画面上の点（ndc）にいる個体の番号。泳ぐ個体は傘の見かけの大きさより少し広め、瓶底の個体は
+   * 指で押せる大きさ（minNdc、画面の高さに対する ndc の半径）まで広げる。swimmersOnly なら泳ぐ個体だけ
+   */
+  pick(ndcX: number, ndcY: number, cam: PerspectiveCamera, minNdc: number, swimmersOnly = false): number | null {
+    const aspect = cam.aspect;
+    let best: number | null = null;
+    let bestScore = Infinity;
+    const c = new Vector3();
+    const e = new Vector3();
+    for (const [id, v] of this.views) {
+      let r: number;
+      if (v.kind === 'swimmer') {
+        if (v.waiting) continue;
+        const p = v.jelly.swimmer.pos;
+        c.copy(p).project(cam);
+        e.set(p.x + v.jelly.radius, p.y, p.z).project(cam);
+        r = Math.max(Math.abs(e.x - c.x) * aspect * 1.4, minNdc);
+      } else {
+        if (swimmersOnly) continue;
+        v.polyp.top(c);
+        const h = v.polyp.size;
+        c.addScaledVector(v.polyp.base, 1).multiplyScalar(0.5).project(cam);
+        e.copy(v.polyp.base).setY(v.polyp.base.y + h).project(cam);
+        r = Math.max(Math.abs(e.y - c.y) * 1.5, minNdc);
+      }
+      const d = Math.hypot((ndcX - c.x) * aspect, ndcY - c.y);
+      if (d < r && d / r < bestScore) {
+        bestScore = d / r;
+        best = id;
+      }
+    }
+    return best;
+  }
+
+  /** 札を出す位置（ワールド）：泳ぐ個体は傘のすぐ上、瓶底の個体は触手の冠の上 */
+  anchorOf(id: number, out: Vector3): Vector3 | null {
+    const v = this.views.get(id);
+    if (!v) return null;
+    if (v.kind === 'polyp') return v.polyp.top(out);
+    if (v.waiting) return null;
+    return out.copy(v.jelly.swimmer.pos).setY(v.jelly.swimmer.pos.y + v.jelly.radius * 0.55);
+  }
+
+  /** 泳ぐ個体をつまむ・引く・放す（target が null で放す） */
+  hold(id: number, target: Vector3 | null): boolean {
+    const v = this.views.get(id);
+    if (v?.kind !== 'swimmer' || v.waiting) return false;
+    v.jelly.swimmer.hold(target);
+    return true;
+  }
+
+  /** 泳ぐ個体をきゅっと縮ませる（つままれたとき）。strength はつついたときを 1 として */
+  startle(id: number, strength: number): void {
+    const v = this.views.get(id);
+    if (v?.kind === 'swimmer' && !v.waiting) v.jelly.pulse.startle(strength);
+  }
+
+  /** 泳ぐ個体の今の位置（ワールド、瓶の中心が原点） */
+  positionOf(id: number): Vector3 | null {
+    const v = this.views.get(id);
+    return v?.kind === 'swimmer' ? v.jelly.swimmer.pos : null;
+  }
+
+  /** 泳ぐ個体の描画を隣の瓶へ渡す（動きはそのまま引き継ぐ）。渡したら true */
+  giveTo(id: number, other: Creatures): boolean {
+    const v = this.views.get(id);
+    if (v?.kind !== 'swimmer' || v.waiting) return false;
+    v.jelly.swimmer.hold(null);
+    this.views.delete(id);
+    this.group.remove(v.jelly.group);
+    other.views.set(id, v);
+    other.group.add(v.jelly.group);
+    return true;
+  }
+
+  /**
+   * 移ってきた個体を、水面の近くの side 側（-1 で左、1 で右）から入れる。
+   * 瓶から瓶へ移すときは上から注ぎ入れるので、水面の近くからゆっくり沈んでくる
+   */
+  pourIn(id: number, side: number): void {
+    const v = this.views.get(id);
+    if (v?.kind !== 'swimmer') return;
+    const j = v.jelly;
+    const b = j.swimmer.range;
+    j.place(new Vector3(side * b.radius * 0.55, b.top - 0.02, 0.02), new Vector3(0, 1, 0), new Vector3(0, -0.02, 0));
   }
 
   /** 確認用：個体の位置（泳ぐ個体は傘の中心、瓶底の個体は足もと。ワールド） */

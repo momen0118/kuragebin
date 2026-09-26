@@ -48,6 +48,8 @@ ${LAMP_GLSL}
 in vec4 aSeed;
 in vec4 aSeed2;
 uniform float uTime;
+// 瓶ごとに粒の並びをずらす（隣の瓶と同じ模様にならないように）
+uniform float uSnowShift;
 uniform vec2 uResolution;
 uniform vec3 uKey, uAmbient, uGlowPos, uGlowColor;
 out float vAlpha;
@@ -58,12 +60,12 @@ void main() {
   float size = mix(SIZE_MIN, SIZE_MAX, sizeT);
 
   float r = sqrt(aSeed.x) * (INNER_R - 0.014);
-  float th = aSeed.y * TAU + uTime * 0.01 * (aSeed.w - 0.5);
+  float th = aSeed.y * TAU + uTime * 0.01 * (aSeed.w - 0.5) + uSnowShift * 2.39996;
   vec3 p = vec3(r * cos(th), 0.0, r * sin(th));
   // 大きい粒ほど速く沈む
   float speed = mix(FALL_MIN, FALL_MAX, sqrt(sizeT)) * (0.7 + 0.6 * aSeed2.z);
   float range = TOP_Y - FLOOR_Y;
-  float y = mod(aSeed.z * range - uTime * speed, range);
+  float y = mod(aSeed.z * range + uSnowShift * 0.37 * range - uTime * speed, range);
   p.y = FLOOR_Y + y;
   p.x += 0.005 * sin(uTime * 0.37 + aSeed2.w * 40.0);
   p.z += 0.005 * cos(uTime * 0.29 + aSeed.x * 50.0);
@@ -156,7 +158,13 @@ function premul(m: ShaderMaterial): ShaderMaterial {
   return m;
 }
 
-export function createSnow(shared: SharedUniforms, rng: Rng): Points {
+export interface Snow {
+  points: Points;
+  /** 瓶ごとの粒の並びのずらし（描く前に瓶の番号を入れる） */
+  shift: { value: number };
+}
+
+export function createSnow(shared: SharedUniforms, rng: Rng): Snow {
   const n = WATER.snowCount;
   const seeds = new Float32Array(n * 4);
   for (let i = 0; i < seeds.length; i++) seeds[i] = rng.next();
@@ -167,6 +175,7 @@ export function createSnow(shared: SharedUniforms, rng: Rng): Points {
   geo.setAttribute('position', new Float32BufferAttribute(new Float32Array(n * 3), 3));
   geo.setAttribute('aSeed', new Float32BufferAttribute(seeds, 4));
   geo.setAttribute('aSeed2', new Float32BufferAttribute(seeds2, 4));
+  const shift = { value: 0 };
   const pts = new Points(
     geo,
     premul(
@@ -182,13 +191,14 @@ export function createSnow(shared: SharedUniforms, rng: Rng): Points {
           uAmbient: shared.uAmbient,
           uGlowPos: shared.uGlowPos,
           uGlowColor: shared.uGlowColor,
+          uSnowShift: shift,
         },
       }),
     ),
   );
   pts.frustumCulled = false;
   pts.renderOrder = 20;
-  return pts;
+  return { points: pts, shift };
 }
 
 /** 泡。一度に一つだけ、間をあけて瓶底から上がる */
@@ -228,6 +238,11 @@ export class Bubble {
     this.points.renderOrder = 55;
     this.points.visible = false;
     this.timeToNext = rng.range(WATER.bubbleIntervalMin * 0.3, WATER.bubbleIntervalMax * 0.6);
+  }
+
+  /** 上がっている最中か */
+  get isActive(): boolean {
+    return this.active;
   }
 
   update(dt: number): void {

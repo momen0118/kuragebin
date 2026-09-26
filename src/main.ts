@@ -1,5 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
+import { HANDLING, SIM } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -7,8 +8,12 @@ import { hourOf, lightAt, sunOf } from './render/lighting';
 import { Clock } from './sim/clock';
 import { fillAdults, removeCreature, setDiscs, setProgress, setStage, spawnCreature } from './sim/edit';
 import type { GameState, Stage } from './sim/state';
+import { Carry } from './ui/carry';
+import { JarDots } from './ui/dots';
+import { Gestures, type Point } from './ui/gestures';
+import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
-import { onTap } from './ui/tap';
+import { CreatureTag } from './ui/tag';
 import { registerServiceWorker } from './pwa/register';
 
 const params = new URLSearchParams(location.search);
@@ -93,11 +98,41 @@ async function main(): Promise<void> {
   });
   const [game] = await Promise.all([gameReady, app.load(import.meta.env.BASE_URL)]);
 
-  // 表示中の瓶の個体を描く（瓶の切り替えは 3-2）
-  const shownJar = 0;
-  const showJar = (s: GameState): void => app.setJar(s.jars[shownJar]!);
-  showJar(game.state);
-  game.onChange(showJar);
+  // 3つの瓶。前回見ていた瓶から始め、スワイプで落ち着いた瓶を覚えておく
+  const slider = new JarSlider(SIM.jarCount, game.state.settings.jar, () => app.jarStepPx);
+  app.setView(slider.position);
+  const dots = new JarDots(SIM.jarCount);
+  dots.set(slider.position);
+  let refreshPanel = (): void => {};
+  slider.onSettle = (i) => {
+    if (game.state.settings.jar !== i) game.updateSettings({ jar: i });
+    refreshPanel();
+  };
+  /** 読み込んだ状態などに合わせて、すぐにその瓶にする */
+  const jumpToSavedJar = (): void => {
+    slider.set(game.state.settings.jar);
+    app.setView(slider.position);
+  };
+
+  // 個体の札（タップで出る）。名前を付けられる
+  const tag = new CreatureTag({
+    info: (id) => {
+      const s = game.state;
+      const c = s.jars[slider.index]?.creatures.find((x) => x.id === id);
+      if (!c) return null;
+      return { name: c.name, stage: c.stage, day: Math.floor(Math.max(0, s.time - c.arrivedAt) / 86400) + 1 };
+    },
+    anchor: (id) => app.anchorOnScreen(id, canvas.clientWidth, canvas.clientHeight),
+    rename: (id, name) => game.rename(id, name),
+  });
+
+  // 瓶ごとの個体を描く（描いて動かすのは見えている瓶だけ）
+  const showJars = (s: GameState): void => {
+    app.setJars(s.jars);
+    tag.refresh();
+  };
+  showJars(game.state);
+  game.onChange(showJars);
 
   // 夜のデスクライトのオン・オフ（初期はオン、保存される）。アイコンは夜の間だけ出す
   app.setLampOn(game.state.settings.lamp);
@@ -141,40 +176,88 @@ async function main(): Promise<void> {
             game.reset();
             app.setLampOn(game.state.settings.lamp);
             lampToggle.set(game.state.settings.lamp);
+            jumpToSavedJar();
           },
           onExport: () => game.exportJson(),
           onImport: (text) => {
             game.importJson(text);
             app.setLampOn(game.state.settings.lamp);
             lampToggle.set(game.state.settings.lamp);
+            jumpToSavedJar();
           },
-          onSpawn: (stage) => game.edit((s, rules) => void spawnCreature(s, shownJar, stage, rules)),
+          onSpawn: (stage) => game.edit((s, rules) => void spawnCreature(s, slider.index, stage, rules)),
           onStage: (id, stage) => game.edit((s, rules) => setStage(s, id, stage, rules)),
           onProgress: (id, p) => game.edit((s) => setProgress(s, id, p)),
           onDiscs: (id, n) => game.edit((s, rules) => setDiscs(s, id, n, rules)),
           onRemove: (id) => game.edit((s, rules) => removeCreature(s, id, rules)),
-          onFill: (n) => game.edit((s, rules) => fillAdults(s, shownJar, n, rules)),
+          onFill: (n) => game.edit((s, rules) => fillAdults(s, slider.index, n, rules)),
           onCap: (n) => game.setRules({ maxSwimmers: n }),
-          onRealSize: (on) => {
-            app.creatures.setRealSize(on);
-            showJar(game.state);
-          },
+          onRealSize: (on) => setRealSize(on),
         })
       : null;
+  /** 確認用：ポリプ・ストロビラ・エフィラを実物大で描く（すべての瓶） */
+  const setRealSize = (on: boolean): void => {
+    for (const c of app.jars) c.setRealSize(on);
+    showJars(game.state);
+  };
   if (panel) {
-    const show = (): void => {
+    refreshPanel = (): void => {
       panel.showState(game.state, game.info, clock.speed, clock.drift);
-      panel.showCreatures(game.state.jars[shownJar]!, game.lifeRules.maxSwimmers);
+      panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers);
     };
-    game.onChange(show);
-    show();
+    game.onChange(refreshPanel);
+    refreshPanel();
   }
   applyLight();
 
-  // 瓶をつつく（海月の上のタップは、フェーズ3で札を出すために空けておく）
-  onTap(canvas, (x, y) => {
-    app.tap(x, y);
+  // 瓶への指の操作：タップ（札、つつく）、横のスワイプ（瓶の切り替え）、長押し（つまんで隣の瓶へ運ぶ）
+  const toNdc = (p: Point): [number, number] => [(p.x / canvas.clientWidth) * 2 - 1, 1 - (p.y / canvas.clientHeight) * 2];
+  /** 指で押せる大きさ（ndc、画面の高さの半分を 1 とした半径） */
+  const fingerNdc = (): number => HANDLING.pickRadiusPx / (canvas.clientHeight / 2);
+  const carry = new Carry(app, game, slider, toNdc, () => canvas.clientWidth);
+  /** 海月やポリプの上なら札を出し、瓶の空いたところならガラスをつつく */
+  const tapAt = (p: Point): void => {
+    const [x, y] = toNdc(p);
+    const id = app.pickAt(x, y, fingerNdc());
+    if (id !== null) tag.show(id);
+    else app.poke(x, y);
+  };
+  /** 長押しでつまめる個体（指を置いたときに、その下にいた泳ぐ個体） */
+  let holdable: number | null = null;
+  new Gestures(canvas, {
+    press: (p) => {
+      if (slider.moving) return 'swipe';
+      slider.finish();
+      app.setView(slider.position);
+      const [x, y] = toNdc(p);
+      holdable = app.pickAt(x, y, fingerNdc(), true);
+      return holdable !== null ? 'holdable' : 'plain';
+    },
+    tap: tapAt,
+    swipeStart: () => {
+      tag.hide();
+      slider.grab();
+    },
+    swipeMove: (dx) => slider.drag(dx),
+    swipeEnd: (v) => slider.release(v),
+    holdStart: (p) => {
+      if (holdable === null) return false;
+      tag.hide();
+      return carry.start(holdable, p);
+    },
+    holdMove: (p) => carry.move(p),
+    holdEnd: () => carry.end(),
   });
+
+  /** 1フレーム：瓶の並びを動かし、描き、点と札を合わせる（draw が false なら描かずに動きだけ） */
+  const tick = (dt: number, draw = true): void => {
+    slider.update(dt);
+    app.setView(slider.position);
+    if (draw) app.frame(dt);
+    else app.simulate(dt);
+    dots.set(slider.position);
+    tag.update(dt);
+  };
 
   canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
   canvas.addEventListener('webglcontextrestored', () => location.reload());
@@ -183,28 +266,49 @@ async function main(): Promise<void> {
     const w = window as unknown as Record<string, unknown>;
     const edit = (fn: Parameters<typeof game.edit>[0]): void => game.edit(fn);
     w.__kurage = {
-      frame: (dt: number) => app.frame(dt),
+      frame: (dt: number) => tick(dt),
       simulate: (seconds: number) => {
         for (let t = 0; t < seconds; t += 1 / 60) app.simulate(1 / 60);
+      },
+      // 瓶の並び・札も含めて seconds 秒ぶん動かし、最後に1回だけ描く（指の操作の途中を撮る）
+      play: (seconds: number) => {
+        for (let t = 0; t < seconds; t += 1 / 60) tick(1 / 60, false);
+        tick(0);
       },
       jelly: () => app.jellyScreenPosition(canvas.clientWidth, canvas.clientHeight),
       // 個体を出す・変える（見た目の確認用）。spawn は番号を返す
       spawn: (stage: Stage, progress = 0, spot?: [number, number]) => {
         let id = 0;
         edit((s, rules) => {
-          const c = spawnCreature(s, shownJar, stage, rules);
+          const c = spawnCreature(s, slider.index, stage, rules);
           if (spot && c.spot) c.spot = spot;
           id = c.id;
           setProgress(s, id, progress);
         });
         return id;
       },
+      spawnIn: (jar: number, stage: Stage, progress = 0) => {
+        let id = 0;
+        edit((s, rules) => {
+          id = spawnCreature(s, jar, stage, rules).id;
+          setProgress(s, id, progress);
+        });
+        return id;
+      },
+      fillIn: (jar: number, n: number) => edit((s, rules) => fillAdults(s, jar, n, rules)),
+      // 瓶の並びの上の位置（0 が1番の瓶。スワイプの途中は小数）で止める。settle() で近いほうの瓶へ落ち着く
+      view: (v: number) => {
+        slider.pin(v);
+        app.setView(slider.position);
+      },
+      settle: () => slider.release(0),
+      jarIndex: () => slider.index,
       setStage: (id: number, stage: Stage) => edit((s, rules) => setStage(s, id, stage, rules)),
       setProgress: (id: number, p: number) => edit((s) => setProgress(s, id, p)),
       setDiscs: (id: number, n: number) => edit((s, rules) => setDiscs(s, id, n, rules)),
       remove: (id: number) => edit((s, rules) => removeCreature(s, id, rules)),
-      fill: (n: number) => edit((s, rules) => fillAdults(s, shownJar, n, rules)),
-      clear: () => edit((s) => (s.jars[shownJar]!.creatures = [])),
+      fill: (n: number) => edit((s, rules) => fillAdults(s, slider.index, n, rules)),
+      clear: () => edit((s) => (s.jars[slider.index]!.creatures = [])),
       edit: (fn: (s: GameState) => void) => edit(fn),
       state: () => game.state,
       advance: (seconds: number) => {
@@ -220,11 +324,10 @@ async function main(): Promise<void> {
       },
       place: (id: number, pos: [number, number, number], up: [number, number, number] = [0, 1, 0]) =>
         app.creatures.placeForDebug(id, new Vector3(...pos), new Vector3(...up)),
-      realSize: (on: boolean) => {
-        app.creatures.setRealSize(on);
-        showJar(game.state);
-      },
-      tap: (x: number, y: number) => app.tap(x, y),
+      realSize: (on: boolean) => setRealSize(on),
+      // 画面の上の位置（CSS px）をタップしたのと同じ（札、つつく）
+      tap: (x: number, y: number) => tapAt({ x, y }),
+      tagged: () => tag.shownId,
       setHour: (h: number) => {
         hourOverride = h;
         applyLight();
@@ -251,7 +354,7 @@ async function main(): Promise<void> {
       applyLight();
       layout(canvas, app);
     }
-    app.frame(dt);
+    tick(dt);
     panel?.tick(dt);
     raf = requestAnimationFrame(loop);
   };

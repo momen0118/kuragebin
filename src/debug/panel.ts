@@ -4,6 +4,7 @@
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
 import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
+import { STAGE_LABELS } from '../ui/labels';
 
 export interface DebugPanelOptions {
   /** 時刻の上書き。null なら端末の時計に従う */
@@ -43,12 +44,7 @@ const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
   ['sakura', '桜'],
 ];
 
-const STAGE_NAMES: Record<Stage, string> = {
-  polyp: 'ポリプ',
-  strobila: 'ストロビラ',
-  ephyra: 'エフィラ',
-  adult: '成体',
-};
+const STAGE_NAMES = STAGE_LABELS;
 
 const UNITS: ReadonlyArray<[number, string]> = [
   [60, '分'],
