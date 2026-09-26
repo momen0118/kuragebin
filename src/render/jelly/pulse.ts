@@ -13,6 +13,8 @@ interface Cycle {
   amp: number;
   /** 縮み始めたときの p（前の周期の揺り戻しが残っている） */
   p0: number;
+  /** 緩んで戻る p（ふだんはゆるいお椀、ときどき平たい皿） */
+  floor: number;
 }
 
 const CONTRACT_K = 5;
@@ -39,7 +41,7 @@ function cycleValue(c: Cycle, time: number): number {
   const tau = time - c.start;
   if (tau < 0) return c.p0;
   if (tau < c.tc) return c.p0 + (c.amp - c.p0) * contractCurve(tau / c.tc);
-  return c.amp * relaxCurve((tau - c.tc) / c.tr);
+  return c.floor + (c.amp - c.floor) * relaxCurve((tau - c.tc) / c.tr);
 }
 
 export class Pulse {
@@ -54,7 +56,7 @@ export class Pulse {
   constructor(private readonly rng: Rng, private readonly tempo = 1) {
     this.tempoPhase = rng.range(0, Math.PI * 2);
     // 起動直後は緩んだ状態から少し待って最初の拍動に入る
-    this.cycles.push(this.makeCycle(rng.range(0.3, 1.2), 0));
+    this.cycles.push(this.makeCycle(rng.range(0.3, 1.2), this.params.restLevel));
   }
 
   /** 拍動の調子を変える（エフィラが育つにつれて成体の拍動へ） */
@@ -78,6 +80,8 @@ export class Pulse {
       if (r < P.pauseChance) rest += this.rng.range(P.pauseMin, P.pauseMax);
       else if (r < P.pauseChance + P.doubleChance) rest *= 0.15;
     }
+    // ふだんはゆるいお椀まで緩み、ときどき平たい皿まで深く緩む
+    const floor = this.rng.next() < P.deepChance ? 0 : P.restLevel;
     return {
       start,
       tc: P.contract * k * (1 + j * 0.5 * this.rng.gauss()),
@@ -85,6 +89,7 @@ export class Pulse {
       rest,
       amp: amp * this.style.amp,
       p0,
+      floor,
     };
   }
 
@@ -99,6 +104,7 @@ export class Pulse {
       rest: this.rng.range(this.params.restMin, this.params.restMax),
       amp,
       p0,
+      floor: this.params.restLevel,
     });
     if (this.cycles.length > 4) this.cycles.shift();
   }
@@ -145,12 +151,17 @@ export class Pulse {
   }
 
   /**
-   * 推進に使う縮む速さ（1/秒）。縮みの深さで割るので、1回の縮みで押し出す量は深さによらず同じ。
-   * 形は大きく変わっても、進む距離はゆったりのまま
+   * 推進の強さ（1/秒）。1回の縮みで押し出す量（時間で積んだもの）は、縮みの深さによらず 1。
+   * 形は大きく変わっても、進む距離はゆったりのまま。
+   * 成体は縮んでいる間じゅうなだらかに押し（山は真ん中で丸い）、エフィラは縮む速さに合わせて縮みはじめに強く押す
    */
   thrustRate(): number {
     const c = this.cycleAt(this.time);
-    return Math.max(this.rate(), 0) / Math.max(c.amp, 0.3);
+    const k = this.params.thrustSmooth;
+    const sharp = k < 1 ? Math.max(this.rate(), 0) / Math.max(c.amp - c.p0, 0.3) : 0;
+    const tau = this.time - c.start;
+    const smooth = k > 0 && tau >= 0 && tau < c.tc ? ((Math.PI / 2) * Math.sin((Math.PI * tau) / c.tc)) / c.tc : 0;
+    return sharp + (smooth - sharp) * k;
   }
 
   /** 今の周期の中で縮んでいる最中か */

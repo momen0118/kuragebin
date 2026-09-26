@@ -74,6 +74,10 @@ export const ADULT_FORM: JellyForm = {
 export interface PulseParams {
   contract: number;
   relax: number;
+  /** 緩んで戻る深さと、皿まで深く緩む確率、推進のなだらかさ（config の PULSE） */
+  restLevel: number;
+  deepChance: number;
+  thrustSmooth: number;
   restMin: number;
   restMax: number;
   jitter: number;
@@ -92,6 +96,9 @@ export interface PulseParams {
 export const ADULT_PULSE: PulseParams = {
   contract: PULSE.contract,
   relax: PULSE.relax,
+  restLevel: PULSE.restLevel,
+  deepChance: PULSE.deepChance,
+  thrustSmooth: PULSE.thrustSmooth,
   restMin: PULSE.restMin,
   restMax: PULSE.restMax,
   jitter: PULSE.jitter,
@@ -116,6 +123,10 @@ export function pulseParams(jerk: number): PulseParams {
   return {
     contract: mix(a.contract, e.contract, jerk),
     relax: mix(a.relax, e.relax, jerk),
+    // エフィラは平たく開ききってから、縮みはじめに強く押す（ぎこちない泳ぎ。今までどおり）
+    restLevel: mix(a.restLevel, 0, jerk),
+    deepChance: a.deepChance,
+    thrustSmooth: mix(a.thrustSmooth, 0, jerk),
     restMin: mix(a.restMin, e.restMin, jerk),
     restMax: mix(a.restMax, e.restMax, jerk),
     jitter: mix(a.jitter, e.jitter, jerk),

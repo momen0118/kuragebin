@@ -1,7 +1,7 @@
-// 表示中の瓶の個体を描く。状態の個体（sim の Creature）に合わせて、泳ぐ個体（成体・エフィラ）と
+// 瓶1つの個体を描く。状態の個体（sim の Creature）に合わせて、泳ぐ個体（成体・エフィラ）と
 // 瓶底の個体（ポリプ・ストロビラ）を作ったり消したりし、毎フレーム動かす。
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
-import { Group, Vector3, type Camera, type Object3D } from 'three';
+import { Group, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
 import { EPHYRA, SWIM } from '../config';
 import { createRng } from '../sim/rng';
 import { isSwimmer, type Creature, type JarState } from '../sim/state';
@@ -30,6 +30,8 @@ const LAUNCH_SPEED = 0.02;
 
 export class Creatures {
   readonly group = new Group();
+  /** 確認用：個体を隠す（?hide=jelly） */
+  hidden = false;
   private readonly views = new Map<number, View>();
   private readonly neighbors: Neighbor[] = [];
   private realSize = false;
@@ -39,6 +41,8 @@ export class Creatures {
     private readonly shared: SharedUniforms,
     /** 光る種の発光パスに入れる（泳ぐ個体だけ） */
     private readonly glowLayer: number,
+    /** カップで運んでいる個体（どの瓶にも描かない。すべての瓶で共有） */
+    private readonly carried: Set<number> = new Set(),
   ) {}
 
   /** 確認用：ポリプ・ストロビラ・エフィラを実物大で描く */
@@ -55,6 +59,8 @@ export class Creatures {
     const seen = new Set<number>();
     for (const c of jar.creatures) {
       seen.add(c.id);
+      // カップで運んでいる間は、どの瓶にも作らない（注いだときに瓶へ戻す）
+      if (this.carried.has(c.id)) continue;
       let v = this.views.get(c.id);
       const kind = isSwimmer(c.stage) ? 'swimmer' : 'polyp';
       if (v && v.kind !== kind) {
@@ -211,6 +217,72 @@ export class Creatures {
       if (v.kind === 'swimmer' ? !v.waiting && v.jelly.poke(point) : v.polyp.poke(point)) any = true;
     }
     return any;
+  }
+
+  /**
+   * 画面上の点（ndc）にいる個体の番号。泳ぐ個体は傘の見かけの大きさより少し広め、瓶底の個体は
+   * 指で押せる大きさ（minNdc、画面の高さに対する ndc の半径）まで広げる。swimmersOnly なら泳ぐ個体だけ
+   */
+  pick(ndcX: number, ndcY: number, cam: PerspectiveCamera, minNdc: number, swimmersOnly = false): number | null {
+    const aspect = cam.aspect;
+    let best: number | null = null;
+    let bestScore = Infinity;
+    const c = new Vector3();
+    const e = new Vector3();
+    for (const [id, v] of this.views) {
+      let r: number;
+      if (v.kind === 'swimmer') {
+        if (v.waiting) continue;
+        const p = v.jelly.swimmer.pos;
+        c.copy(p).project(cam);
+        e.set(p.x + v.jelly.radius, p.y, p.z).project(cam);
+        r = Math.max(Math.abs(e.x - c.x) * aspect * 1.4, minNdc);
+      } else {
+        if (swimmersOnly) continue;
+        v.polyp.top(c);
+        const h = v.polyp.size;
+        c.addScaledVector(v.polyp.base, 1).multiplyScalar(0.5).project(cam);
+        e.copy(v.polyp.base).setY(v.polyp.base.y + h).project(cam);
+        r = Math.max(Math.abs(e.y - c.y) * 1.5, minNdc);
+      }
+      const d = Math.hypot((ndcX - c.x) * aspect, ndcY - c.y);
+      if (d < r && d / r < bestScore) {
+        bestScore = d / r;
+        best = id;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * 札の線を引き出す所（ワールド）：泳ぐ個体は傘の中心と半径、瓶底の個体は触手の冠のあたりと、その大きさ
+   */
+  bodyOf(id: number, out: Vector3): { center: Vector3; radius: number; swimmer: boolean } | null {
+    const v = this.views.get(id);
+    if (!v) return null;
+    if (v.kind === 'polyp') {
+      v.polyp.top(out);
+      return { center: out, radius: v.polyp.size * 0.6, swimmer: false };
+    }
+    if (v.waiting) return null;
+    return { center: out.copy(v.jelly.swimmer.pos), radius: v.jelly.radius, swimmer: true };
+  }
+
+  /** 泳ぐ個体をカップへ移す（この瓶では描かない）。移せたらその個体 */
+  lift(id: number): Jellyfish | null {
+    const v = this.views.get(id);
+    if (v?.kind !== 'swimmer' || v.waiting) return null;
+    this.views.delete(id);
+    this.group.remove(v.jelly.group);
+    this.carried.add(id);
+    return v.jelly;
+  }
+
+  /** カップから注がれた個体を、この瓶の個体にする（動きはそのまま） */
+  adopt(id: number, jelly: Jellyfish): void {
+    this.carried.delete(id);
+    this.views.set(id, { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false });
+    this.group.add(jelly.group);
   }
 
   /** 確認用：個体の位置（泳ぐ個体は傘の中心、瓶底の個体は足もと。ワールド） */

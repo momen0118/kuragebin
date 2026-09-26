@@ -91,6 +91,8 @@ export interface Settings {
   motion: boolean;
   /** 画質（フェーズ4） */
   quality: 'high' | 'medium' | 'low';
+  /** 開いたときに出す瓶（前回見ていた瓶、0 から） */
+  jar: number;
 }
 
 export interface GameState {
@@ -116,6 +118,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sound: false,
   motion: true,
   quality: 'high',
+  jar: 0,
 };
 
 /** 段階ごとの長さの範囲（秒） */

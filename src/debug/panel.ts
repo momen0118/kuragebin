@@ -4,6 +4,7 @@
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
 import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
+import { STAGE_LABELS } from '../ui/labels';
 
 export interface DebugPanelOptions {
   /** 時刻の上書き。null なら端末の時計に従う */
@@ -43,12 +44,7 @@ const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
   ['sakura', '桜'],
 ];
 
-const STAGE_NAMES: Record<Stage, string> = {
-  polyp: 'ポリプ',
-  strobila: 'ストロビラ',
-  ephyra: 'エフィラ',
-  adult: '成体',
-};
+const STAGE_NAMES = STAGE_LABELS;
 
 const UNITS: ReadonlyArray<[number, string]> = [
   [60, '分'],
@@ -145,8 +141,9 @@ export class DebugPanel {
         </div>
         <input class="progress" type="range" min="0" max="1" step="0.001" value="0" aria-label="進み">
         <div class="row buttons">
-          <button type="button" data-fill="4">成体4匹</button>
-          <button type="button" data-fill="6">成体6匹</button>
+          <button type="button" data-fill="4">成体4</button>
+          <button type="button" data-fill="5">5</button>
+          <button type="button" data-fill="6">6</button>
           <label>上限 <select class="cap">${[3, 4, 5, 6, 8].map((n) => `<option value="${n}">${n}</option>`).join('')}</select></label>
         </div>
         <label class="row"><input class="real" type="checkbox"> 実物大（ポリプ・エフィラ）</label>

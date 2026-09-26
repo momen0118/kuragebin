@@ -2,6 +2,7 @@
 // 起動時と画面に戻ったときに、閉じていた分を固定刻みで一気に進める（sim/advance.ts）。
 // 保存は設定を変えたとき、開いている間は一定の間隔で、画面を離れる直前に。
 import { LIFE, SIM, type LifeRules } from './config';
+import { canMove, moveCreature, renameCreature, type MoveResult } from './sim/actions';
 import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
 import { createInitialState, type GameState, type Settings } from './sim/state';
@@ -96,6 +97,31 @@ export class Game {
 
   updateSettings(patch: Partial<Settings>): void {
     this.current = { ...this.current, settings: { ...this.current.settings, ...patch } };
+    this.emit();
+    void this.save();
+  }
+
+  /** 個体を瓶 toJar へ移せるか（'moved' なら移せる） */
+  canMove(id: number, toJar: number): MoveResult {
+    return canMove(this.current, id, toJar, this.rules);
+  }
+
+  /** 個体を瓶 toJar へ移す（泳ぐ個体だけ。移し先が上限なら移さない） */
+  moveCreature(id: number, toJar: number): MoveResult {
+    const next = structuredClone(this.current);
+    const result = moveCreature(next, id, toJar, this.rules);
+    if (result !== 'moved') return result;
+    this.current = next;
+    this.emit();
+    void this.save();
+    return result;
+  }
+
+  /** 名前を付ける（null や空なら名無しに戻す） */
+  rename(id: number, name: string | null): void {
+    const next = structuredClone(this.current);
+    if (!renameCreature(next, id, name)) return;
+    this.current = next;
     this.emit();
     void this.save();
   }

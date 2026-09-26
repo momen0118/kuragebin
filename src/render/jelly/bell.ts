@@ -23,6 +23,7 @@ import { BELL, EPHYRA, JELLY_LOOK } from '../../config';
 import { LOBES, PROFILE_SEGMENTS } from './profile';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
+import { CLIP_GLSL } from '../shaders/clip';
 import common from '../shaders/common.glsl?raw';
 import { frag } from '../shaders/glsl';
 
@@ -156,6 +157,8 @@ const FRAG = /* glsl */ `
 ${common}
 ${DEFINES}
 ${LAMP_GLSL}
+${CLIP_GLSL}
+uniform float uOpacity;
 uniform float uGlowPass, uLayer, uContract;
 // 放射管の枝分かれと環状管、四つ葉の濃さ（エフィラが育つにつれて 0 → 1）。
 // uYoung はエフィラの若さ（1 で放されたばかり）：小さな体は少し濃く、胃から腕へ伸びる管が見える
@@ -205,6 +208,7 @@ float gonads(float s, float th) {
 }
 
 void main() {
+  clipToJar(vWorldPos);
   vec3 N = normalize(vWorldNormal);
   vec3 V = normalize(cameraPosition - vWorldPos);
   float facing = dot(N, V);
@@ -277,7 +281,7 @@ void main() {
     gl_FragColor = vec4(glow, 0.0);
     return;
   }
-  gl_FragColor = vec4(col + glow, alpha);
+  gl_FragColor = vec4(col + glow, alpha) * uOpacity;
 }
 `;
 
@@ -310,6 +314,8 @@ function grid(rings: number, segments: number, bias: number): BufferGeometry {
 }
 
 export interface BellLook {
+  /** 濃さ（1 がふだん。カップに移すとき、瓶の中の姿をふっと消す） */
+  uOpacity: { value: number };
   uBody: { value: Vector3 };
   uGlow: { value: Vector3 };
   uGonad: { value: Vector3 };
@@ -376,6 +382,7 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
         uSMax: { value: sMax },
         uInset: { value: inset },
         uGlowPass: shared.uGlowPass,
+        uClipMode: shared.uClipMode,
         uKey: shared.uKey,
         uKeyDir: shared.uKeyDir,
         uAmbient: shared.uAmbient,
@@ -384,6 +391,7 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
         uBody: look.uBody,
         uGlow: look.uGlow,
         uGonad: look.uGonad,
+        uOpacity: look.uOpacity,
         uGonadTint: { value: new Vector3(...JELLY_LOOK.gonad) },
       },
     });

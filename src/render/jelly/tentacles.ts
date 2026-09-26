@@ -19,6 +19,7 @@ import { LOBES } from './profile';
 import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
+import { CLIP_GLSL } from '../shaders/clip';
 import type { BellLook } from './bell';
 import { frag } from '../shaders/glsl';
 
@@ -59,6 +60,8 @@ void main() {
 
 const FRAG = /* glsl */ `
 ${LAMP_GLSL}
+${CLIP_GLSL}
+uniform float uOpacity;
 uniform float uGlowPass;
 uniform float uBrightness;
 uniform vec3 uKey, uAmbient;
@@ -69,6 +72,7 @@ in float vSeed;
 in float vThin;
 in vec3 vWorldPos;
 void main() {
+  clipToJar(vWorldPos);
   float across = exp(-vSide * vSide * 2.5);
   float along = (1.0 - smoothstep(0.4, 1.0, vT)) * (0.5 + 0.5 * smoothstep(0.0, 0.1, vT));
   float a = across * along * vThin * (0.45 + 0.55 * vSeed) * uBrightness;
@@ -81,7 +85,7 @@ void main() {
   vec3 light = uAmbient * 0.9 + uKey * 0.3 + uLampColor * lampSpot(vWorldPos) * 0.3;
   // 夜はデスクライトの光が細い糸で散って、ほのかに見える
   vec3 col = uBody * light * a * 0.6 + glow + uBody * uLampColor * lampSpot(vWorldPos) * scatter * ${JELLY_LOOK.lampScatter.toFixed(3)};
-  gl_FragColor = vec4(col, a * 0.15);
+  gl_FragColor = vec4(col, a * 0.15) * uOpacity;
 }
 `;
 
@@ -91,7 +95,7 @@ void main() {
  */
 export function createStrandMesh(
   shared: SharedUniforms,
-  look: Pick<BellLook, 'uBody' | 'uGlow'>,
+  look: Pick<BellLook, 'uBody' | 'uGlow' | 'uOpacity'>,
   n: number,
   m: number,
   seeds: Float32Array,
@@ -145,10 +149,12 @@ export function createStrandMesh(
         uWidth: { value: widthPx },
         uBrightness: { value: brightness },
         uGlowPass: shared.uGlowPass,
+        uClipMode: shared.uClipMode,
         uKey: shared.uKey,
         uAmbient: shared.uAmbient,
         uBody: look.uBody,
         uGlow: look.uGlow,
+        uOpacity: look.uOpacity,
       },
     }),
   );
@@ -258,6 +264,21 @@ export class Tentacles {
   /** 根元から伸ばしなおす（個体を別の場所へ置きなおしたとき） */
   reset(): void {
     this.alive.fill(0);
+  }
+
+  /** 瓶の壁と底の中に収める（カップで運ばれている間は false） */
+  confined = true;
+
+  /** まとめて動かす（瓶から瓶へ座標を移すとき、カップの水ごと運ばれるとき）。形と動きはそのまま */
+  translate(dx: number, dy = 0, dz = 0): void {
+    for (let i = 0; i < this.x.length; i += 3) {
+      this.x[i]! += dx;
+      this.px[i]! += dx;
+      this.x[i + 1]! += dy;
+      this.px[i + 1]! += dy;
+      this.x[i + 2]! += dz;
+      this.px[i + 2]! += dz;
+    }
   }
 
   /**
@@ -372,8 +393,8 @@ export class Tentacles {
           }
         }
       }
-      // 瓶の壁と底からははみ出さない
-      for (let j = 1; j < m; j++) {
+      // 瓶の壁と底からははみ出さない（カップで運ばれている間は瓶の外にいるので見ない）
+      for (let j = 1; this.confined && j < m; j++) {
         const k = base + j * 3;
         const r = Math.sqrt(x[k]! * x[k]! + x[k + 2]! * x[k + 2]!);
         const lim = INNER_R - 0.006;

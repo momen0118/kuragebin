@@ -20,15 +20,20 @@ uniform mat4 uViewProj;
 uniform vec3 uCamPos;
 uniform float uTableBackZ;
 uniform float uTableLeftX;
+/** 天板に立っている瓶の横の位置（ワールド x）と数（すれ違う間は2つ） */
+uniform float uJarX[2];
+uniform int uJarCount;
 in vec2 vUv;
 
-// 天板（艶のあるウォルナット）への瓶の映り込み。瓶の中身が背景を変えた分だけを足す
-vec3 tableReflection(vec2 uv) {
+// 天板（艶のあるウォルナット）への瓶の映り込み。瓶の中身が背景を変えた分だけを足す。jarX は瓶の横の位置
+vec3 tableReflection(vec2 uv, float jarX) {
   vec4 wp = uInvViewProj * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
   vec3 dir = normalize(wp.xyz / wp.w - uCamPos);
   if (dir.y > -1e-3) return vec3(0.0);
-  vec3 P = uCamPos + dir * (-uCamPos.y / dir.y);
-  if (P.z < uTableBackZ || P.x < uTableLeftX) return vec3(0.0);
+  vec3 Pw = uCamPos + dir * (-uCamPos.y / dir.y);
+  if (Pw.z < uTableBackZ || Pw.x < uTableLeftX) return vec3(0.0);
+  vec3 J = vec3(jarX, 0.0, 0.0);
+  vec3 P = Pw - J;
   vec3 R = vec3(dir.x, -dir.y, dir.z);
   float a = R.x * R.x + R.z * R.z;
   float b = 2.0 * (P.x * R.x + P.z * R.z);
@@ -39,7 +44,7 @@ vec3 tableReflection(vec2 uv) {
   if (s <= 0.0) return vec3(0.0);
   vec3 Q = P + R * s;
   if (Q.y > JAR_H) return vec3(0.0);
-  vec4 clip = uViewProj * vec4(Q, 1.0);
+  vec4 clip = uViewProj * vec4(Q + J, 1.0);
   vec2 q = clip.xy / clip.w * 0.5 + 0.5;
   // 離れるほどぼやける
   float spread = 0.0015 + Q.y * 0.012;
@@ -60,7 +65,12 @@ vec3 tableReflection(vec2 uv) {
 void main() {
   vec3 c = texture(tBg, vUv).rgb;
   c += texture(tBloom, vUv).rgb * uBloomStrength;
-  c = max(c + tableReflection(vUv), 0.0);
+  vec3 refl = vec3(0.0);
+  for (int i = 0; i < 2; i++) {
+    if (i >= uJarCount) break;
+    refl += tableReflection(vUv, uJarX[i]);
+  }
+  c = max(c + refl, 0.0);
   gl_FragColor = vec4(outputTransform(c, gl_FragCoord.xy), 1.0);
 }
 `;
@@ -76,6 +86,8 @@ export function createComposite(tableBackZ: number, tableLeftX: number) {
     uCamPos: { value: new Vector3() },
     uTableBackZ: { value: tableBackZ },
     uTableLeftX: { value: tableLeftX },
+    uJarX: { value: [0, 0] },
+    uJarCount: { value: 1 },
     uFade: { value: 1 },
   });
 }

@@ -154,6 +154,9 @@ export interface Jar {
     /** 画面の uv → 写真の uv */
     uCoverScale: { value: Vector2 };
     uCoverOffset: { value: Vector2 };
+    /** 瓶の切り替えの視差で、部屋の写真がずれている量（写真の uv） */
+    uParallax: { value: number };
+    uWindowSide: { value: number };
     tContents: { value: Texture | null };
     tBloom: { value: Texture | null };
     uBloomStrength: { value: number };
@@ -246,6 +249,7 @@ export function createJar(shared: SharedUniforms, rimWarmColor: readonly [number
           ...lampUniforms(shared),
           uTime: shared.uTime,
           uAgitation: shared.uAgitation,
+          uRipples: shared.uRipples,
           uKey: shared.uKey,
           uAmbient: shared.uAmbient,
           uGlowPos: shared.uGlowPos,
@@ -261,6 +265,8 @@ export function createJar(shared: SharedUniforms, rimWarmColor: readonly [number
     tRoomWide: { value: null as Texture | null },
     uCoverScale: { value: new Vector2(1, 1) },
     uCoverOffset: { value: new Vector2(0, 0) },
+    uParallax: { value: 0 },
+    uWindowSide: { value: 1 },
     tContents: { value: null as Texture | null },
     tBloom: { value: null as Texture | null },
     uBloomStrength: { value: 0 },
@@ -282,6 +288,7 @@ export function createJar(shared: SharedUniforms, rimWarmColor: readonly [number
         uViewProj: shared.uViewProj,
         uTime: shared.uTime,
         uAgitation: shared.uAgitation,
+        uRipples: shared.uRipples,
         uLensLight: shared.uLensLight,
         uKey: shared.uKey,
         uKeyDir: shared.uKeyDir,
