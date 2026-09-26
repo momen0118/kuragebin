@@ -10,11 +10,12 @@ const tmpA = new Vector3();
 const tmpB = new Vector3();
 const tmpQ = new Quaternion();
 
-/** 傘の中心が動ける範囲 */
+/** 傘の中心が動ける範囲。low は漂って沈んでいく先の下限（ひとりのときの泳ぎ方を決める） */
 export interface SwimBounds {
   radius: number;
   bottom: number;
   top: number;
+  low: number;
 }
 
 /** ほかの泳ぐ個体（近づきすぎたらよける） */
@@ -47,6 +48,7 @@ export function swimBounds(bellRadius: number = BELL.radius): SwimBounds {
     radius: inner - bellRadius - SWIM.sidePadding,
     bottom: JAR.bottomThickness + SWIM.bottomPadding * low,
     top: JAR.waterLevel - bellRadius * BELL.apexY - SWIM.topPadding,
+    low: JAR.bottomThickness + SWIM.driftPadding * low,
   };
 }
 
@@ -80,6 +82,8 @@ export class Swimmer {
   private wasContracting = false;
   /** 瓶底から離れたばかり（秒）。泳げる範囲の下にいても押し上げず、自分で泳いで上がる */
   private rising = 0;
+  /** ほかに泳ぐ個体がいる（沈んでいく先を底の近くまで広げる） */
+  private crowded = false;
 
   constructor(
     private readonly rng: Rng,
@@ -182,7 +186,9 @@ export class Swimmer {
   private pickTarget(mode: 'cruise' | 'drift'): number {
     const b = this.bounds;
     const [lo, hi] = mode === 'drift' ? SWIM.driftTargetLow : SWIM.cruiseTargetHigh;
-    return b.bottom + (b.top - b.bottom) * this.rng.range(lo, hi);
+    // ほかの個体がいるときは、底の近くまで沈んでいく（瓶の下のほうも使う）
+    const low = this.crowded ? b.bottom : b.low;
+    return low + (b.top - low) * this.rng.range(lo, hi);
   }
 
   /** 瓶の中の行きたい場所（水平）を決めなおす */
@@ -205,6 +211,7 @@ export class Swimmer {
 
   update(dt: number, pulse: Pulse, others: readonly Neighbor[] = []): void {
     const S = this.scale;
+    this.crowded = others.some((o) => o.pos !== this.pos);
     // エフィラは縮むたびに少し転がる（ぎこちない）
     const contracting = pulse.contracting;
     if (contracting && !this.wasContracting && S.tumble > 0) {
