@@ -34,6 +34,9 @@ export class Creatures {
   hidden = false;
   private readonly views = new Map<number, View>();
   private readonly neighbors: Neighbor[] = [];
+  /** 水の中のカップ（泳ぐ個体がよける）。沈めている間だけ */
+  private readonly obstacle: Neighbor = { pos: new Vector3(), radius: 0, obstacle: true };
+  private obstructed = false;
   private realSize = false;
   private readonly tmp = new Vector3();
 
@@ -59,7 +62,7 @@ export class Creatures {
     const seen = new Set<number>();
     for (const c of jar.creatures) {
       seen.add(c.id);
-      // カップで運んでいる間は、どの瓶にも作らない（注いだときに瓶へ戻す）
+      // カップで運んでいる間は、どの瓶にも作らない（カップから出ていったら瓶の個体にする）
       if (this.carried.has(c.id)) continue;
       let v = this.views.get(c.id);
       const kind = isSwimmer(c.stage) ? 'swimmer' : 'polyp';
@@ -185,6 +188,13 @@ export class Creatures {
     return this.swimmers.some((j) => j.glowing);
   }
 
+  /** 水の中のカップ（真ん中と大きさ）。泳ぐ個体はほかの個体と同じようによける。null でなくなる */
+  setObstacle(center: Vector3 | null, radius = 0): void {
+    this.obstructed = center !== null;
+    if (center) this.obstacle.pos.copy(center);
+    this.obstacle.radius = radius;
+  }
+
   /** 動かし、奥のものから先に描くよう順番を決める */
   update(dt: number, camera: Camera): void {
     const cam = camera.getWorldPosition(this.tmp);
@@ -198,6 +208,7 @@ export class Creatures {
         this.neighbors.push(v.neighbor);
       }
     }
+    if (this.obstructed) this.neighbors.push(this.obstacle);
     for (const v of swim) {
       v.jelly.neighbors = this.neighbors;
       v.jelly.update(dt);
@@ -278,7 +289,7 @@ export class Creatures {
     return v.jelly;
   }
 
-  /** カップから注がれた個体を、この瓶の個体にする（動きはそのまま） */
+  /** カップから出ていった個体を、この瓶の個体にする（動きはそのまま） */
   adopt(id: number, jelly: Jellyfish): void {
     this.carried.delete(id);
     this.views.set(id, { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false });

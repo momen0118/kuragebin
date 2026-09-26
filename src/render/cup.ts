@@ -1,6 +1,6 @@
-// カップ。薄い透明なプラスチックの計量カップ（飾りのない形）で、海月を水ごと運んで隣の瓶へ注ぐ。
+// カップ。薄い透明なプラスチックの計量カップ（飾りのない形）で、海月を水ごと運んで、瓶の水の中で放す。
 // 形はカップの底の真ん中が原点、上が +y、注ぎ口は +x の側。姿勢（位置と向き）は描画側が毎フレーム決める。
-// 描くもの：奥の壁（内側。水の入った所は、背景が水で曲がって見える）、水面、手前の壁、注ぐ水の筋。
+// 描くもの：奥の壁（内側。水の入った所は、背景が水で曲がって見える）、水面、手前の壁。
 // 瓶の口より下の部分は瓶の中身として、上の部分は背景に重ねて描く（shaders/clip.ts）。
 import {
   BackSide,
@@ -282,53 +282,6 @@ void main() {
 }
 `;
 
-const STREAM_VERT = /* glsl */ `
-in float across;
-in float alongS;
-in float strength;
-out vec3 vWorldPos;
-out float vAcross;
-out float vAlongS;
-out float vStrength;
-void main() {
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  vWorldPos = wp.xyz;
-  vAcross = across;
-  vAlongS = alongS;
-  vStrength = strength;
-  gl_Position = projectionMatrix * viewMatrix * wp;
-}
-`;
-
-/** 注ぐ水の筋。縁ほど明るい細い帯で、中は透ける */
-const STREAM_FRAG = /* glsl */ `
-${common}
-${LAMP_GLSL}
-${CLIP_GLSL}
-${DEFS}
-${LIGHT}
-uniform float uAlpha;
-uniform float uTime;
-in vec3 vWorldPos;
-in float vAcross;
-in float vAlongS;
-in float vStrength;
-void main() {
-  clipToJar(vWorldPos);
-  if (inJarWater(vWorldPos)) discard;
-  float x = abs(vAcross);
-  float edge = smoothstep(0.35, 0.9, x) * (1.0 - smoothstep(0.9, 1.0, x));
-  float core = 1.0 - smoothstep(0.0, 1.0, x);
-  // 流れに沿って、細かい揺らぎがゆっくり下へ流れる
-  float flow = 0.75 + 0.25 * sin(vAlongS * 90.0 - uTime * 14.0 + vAcross * 2.0);
-  vec3 lampC = uLampColor * lampSpot(vWorldPos);
-  vec3 light = uAmbient * 0.9 + uKey * 0.45 + lampC * 0.9;
-  vec3 col = light * (edge * 0.9 + core * 0.15) * flow;
-  float a = (edge * 0.55 + core * 0.12) * vStrength;
-  gl_FragColor = vec4(col * vStrength * uAlpha, a * uAlpha);
-}
-`;
-
 function premultiplied(m: ShaderMaterial): ShaderMaterial {
   m.transparent = true;
   m.depthTest = false;
@@ -338,9 +291,6 @@ function premultiplied(m: ShaderMaterial): ShaderMaterial {
   m.blendDst = OneMinusSrcAlphaFactor;
   return m;
 }
-
-/** 注ぐ水の筋の分かれ目の数 */
-const STREAM_N = 28;
 
 /** カップの中の容積に一様に散らした点（水の量から水面の高さを出すのに使う） */
 function volumeSamples(n: number): Float32Array {
@@ -366,13 +316,11 @@ function volumeSamples(n: number): Float32Array {
 }
 
 export class Cup {
-  /** カップの壁と水面・水の筋をまとめたもの（瓶1つの座標で描く） */
+  /** カップの壁と水面をまとめたもの（瓶1つの座標で描く） */
   readonly group = new Group();
   /** カップ本体（姿勢はここに入れる） */
   private readonly body = new Group();
   private readonly waterMesh: Mesh;
-  private readonly streamMesh: Mesh;
-  private readonly streamGeo: BufferGeometry;
   private readonly uniforms;
   private readonly samples = volumeSamples(1600);
   private readonly heights = new Float32Array(1600);
@@ -387,7 +335,6 @@ export class Cup {
       uKeyDir: shared.uKeyDir,
       uAmbient: shared.uAmbient,
       uClipMode: shared.uClipMode,
-      uTime: shared.uTime,
       tRoom: shared.tRoom,
       uResolution: shared.uResolution,
       uAlpha: { value: 1 },
@@ -426,41 +373,8 @@ export class Cup {
       ),
     );
     this.waterMesh.renderOrder = 21;
-
-    const verts = (STREAM_N + 1) * 2;
-    this.streamGeo = new BufferGeometry();
-    this.streamGeo.setAttribute('position', new Float32BufferAttribute(new Float32Array(verts * 3), 3));
-    this.streamGeo.setAttribute('across', new Float32BufferAttribute(new Float32Array(verts), 1));
-    this.streamGeo.setAttribute('alongS', new Float32BufferAttribute(new Float32Array(verts), 1));
-    this.streamGeo.setAttribute('strength', new Float32BufferAttribute(new Float32Array(verts), 1));
-    const sidx: number[] = [];
-    for (let i = 0; i < STREAM_N; i++) {
-      const a = i * 2;
-      sidx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-    }
-    this.streamGeo.setIndex(sidx);
-    const across = this.streamGeo.getAttribute('across') as Float32BufferAttribute;
-    for (let i = 0; i <= STREAM_N; i++) {
-      across.setX(i * 2, -1);
-      across.setX(i * 2 + 1, 1);
-    }
-    this.streamMesh = new Mesh(
-      this.streamGeo,
-      premultiplied(
-        new ShaderMaterial({
-          glslVersion: GLSL3,
-          vertexShader: STREAM_VERT,
-          fragmentShader: frag(STREAM_FRAG),
-          side: DoubleSide,
-          uniforms: this.uniforms,
-        }),
-      ),
-    );
-    this.streamMesh.renderOrder = 81;
-    this.streamMesh.frustumCulled = false;
-    this.streamMesh.visible = false;
     this.waterMesh.frustumCulled = false;
-    this.group.add(this.body, this.waterMesh, this.streamMesh);
+    this.group.add(this.body, this.waterMesh);
     this.group.visible = false;
   }
 
@@ -510,7 +424,7 @@ export class Cup {
     return { level, max };
   }
 
-  /** 水面の高さ（ワールド）。-10 なら水なし。瓶の水に沈んでいる間は瓶の水面に合わせる */
+  /** 水面の高さ（ワールド）。-10 なら水面なし（水がない、または口まで瓶の水に浸かっている） */
   setWater(level: number): void {
     this.uniforms.uWaterY.value = level;
     const m = this.waterMesh;
@@ -529,11 +443,6 @@ export class Cup {
     m.updateMatrixWorld(true);
   }
 
-  /** 注ぎ口の先（ワールド） */
-  lip(out: Vector3): Vector3 {
-    return this.toWorld(SPOUT_LIP, out);
-  }
-
   /** カップの軸の両端を画面へ（背景が水で曲がって見える所を決める）。描く前に、そのカメラで呼ぶ */
   prepare(cam: PerspectiveCamera): void {
     const res = this.uniforms.uResolution.value;
@@ -543,45 +452,6 @@ export class Cup {
     };
     toPx(this.toWorld(this.tmpV.set(0, 0, 0), this.tmpV), this.uniforms.uAxisA.value);
     toPx(this.toWorld(this.tmpV.set(0, H, 0), this.tmpV), this.uniforms.uAxisB.value);
-  }
-
-  /**
-   * 注ぐ水の筋。points は注ぎ口から水面までの線（ワールド）、widths は太さ、strength は濃さ。
-   * camPos は描くカメラの位置（帯をカメラへ向ける）。points が空なら消す
-   */
-  setStream(points: readonly Vector3[], widths: readonly number[], strength: readonly number[], camPos: Vector3): void {
-    if (points.length < 2) {
-      this.streamMesh.visible = false;
-      return;
-    }
-    this.streamMesh.visible = true;
-    const pos = this.streamGeo.getAttribute('position') as Float32BufferAttribute;
-    const al = this.streamGeo.getAttribute('alongS') as Float32BufferAttribute;
-    const st = this.streamGeo.getAttribute('strength') as Float32BufferAttribute;
-    const last = points.length - 1;
-    const tan = new Vector3();
-    const view = new Vector3();
-    const side = new Vector3();
-    for (let i = 0; i <= STREAM_N; i++) {
-      const u = (i / STREAM_N) * last;
-      const k = Math.min(Math.floor(u), last - 1);
-      const f = u - k;
-      const p = new Vector3().lerpVectors(points[k]!, points[k + 1]!, f);
-      tan.subVectors(points[k + 1]!, points[k]!).normalize();
-      view.subVectors(camPos, p).normalize();
-      side.crossVectors(tan, view).normalize();
-      const w = (widths[k]! * (1 - f) + widths[k + 1]! * f) * 0.5;
-      const s = strength[k]! * (1 - f) + strength[k + 1]! * f;
-      pos.setXYZ(i * 2, p.x - side.x * w, p.y - side.y * w, p.z - side.z * w);
-      pos.setXYZ(i * 2 + 1, p.x + side.x * w, p.y + side.y * w, p.z + side.z * w);
-      al.setX(i * 2, i / STREAM_N);
-      al.setX(i * 2 + 1, i / STREAM_N);
-      st.setX(i * 2, s);
-      st.setX(i * 2 + 1, s);
-    }
-    pos.needsUpdate = true;
-    al.needsUpdate = true;
-    st.needsUpdate = true;
   }
 
   dispose(): void {

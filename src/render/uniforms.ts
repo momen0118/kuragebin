@@ -32,7 +32,7 @@ export function createSharedUniforms() {
     uClipMode: { value: 0 },
     /**
      * 水面の波紋（描いている瓶の分）。1つずつ (x, z, 始まった時刻, 強さ)。強さ 0 は無し。
-     * カップを沈めたとき・引き上げたとき・注いだときに立つ
+     * カップが水面を通るときに立つ
      */
     uRipples: { value: [new Vector4(), new Vector4(), new Vector4(), new Vector4()] },
   };

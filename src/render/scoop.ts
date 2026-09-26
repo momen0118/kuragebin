@@ -1,15 +1,14 @@
-// カップで水ごと移す流れ（描画側）。海月はデリケートなので、どの動きもゆっくり丁寧に。
+// カップで水ごと移す流れ（描画側）。海月はデリケートなので、どの動きもゆっくり丁寧に。海月は一度も空気に触れさせない。
 // 上がる：長押しすると、瓶の中の海月がふっと見えなくなり、すでに水ごと海月が入ったカップが瓶の口からゆっくり上がってくる。
 // 運ぶ：瓶の口のすぐ上で、指に少し遅れて横についてくる。海月はカップの水の中で揺れに合わせて小さく揺れる。
-//   端で待つと画面が隣の瓶へ移り、カップも一緒に隣の瓶の上へ（ここでは注がない）。
-// 注ぐ：指を離したとき、今いる瓶の口の上でゆっくり傾ける。水の筋が落ち、海月は水と一緒にするっと滑り出て、
-//   水面から静かに入り、そのままゆっくり沈んでいく。
+//   端で待つと画面が隣の瓶へ移り、カップも一緒に隣の瓶の上へ（ここでは放さない）。
+// 放す：指を離したとき、今いる瓶の口からカップを水の中へゆっくり沈める（水面を通るとき小さな波紋）。すっかり浸かったら
+//   水の中でゆっくり傾け、海月がカップの縁から自分の拍動で出ていくのを待つ。出たら、空のカップがゆっくり上がって口から出て消える。
 // 位置はいつも、どれか1つの瓶（frame）の座標（その瓶の中心が原点）。隣の瓶へ運ぶ途中で、行き先の瓶の座標へ移す。
 import { Quaternion, Vector3 } from 'three';
 import { CUP, JAR, SCOOP } from '../config';
 import { SPOUT_LIP, type Cup } from './cup';
 import type { Jellyfish } from './jelly/jellyfish';
-import { swimBounds } from './jelly/swim';
 
 export interface ScoopHost {
   /** 隣の瓶との間（ワールド） */
@@ -18,26 +17,42 @@ export interface ScoopHost {
   readonly view: number;
   /** 運んでいる間にカップの真ん中が動ける横の範囲（瓶の座標、画面からはみ出さない） */
   readonly hoverRange: number;
-  /** 瓶 jar の水面に波紋を立てる（瓶の座標） */
-  ripple(jar: number, x: number, z: number, strength: number): void;
-  /** 注がれた個体を瓶 jar の個体にする（泳ぎはじめる） */
+  /** 瓶 jar の水面に波紋を立てる（瓶の座標）。輪は半径 radius から広がりはじめる */
+  ripple(jar: number, x: number, z: number, strength: number, radius: number): void;
+  /** 水の中のカップを、瓶 jar の泳ぐ個体によけさせる（真ん中と半径、瓶の座標）。null でやめる */
+  obstruct(jar: number, center: Vector3 | null, radius: number): void;
+  /** 放した個体を瓶 jar の個体にする（泳ぎつづける） */
   adopt(jar: number, id: number, jelly: Jellyfish): void;
-  /** 瓶 jar を描くカメラの位置（瓶の座標）。注ぐ水の筋をカメラへ向ける */
-  cameraPosition(jar: number, out: Vector3): Vector3;
 }
 
-type Phase = 'idle' | 'rise' | 'hover' | 'cross' | 'toPour' | 'pour' | 'settle' | 'leave';
+type Phase = 'idle' | 'rise' | 'hover' | 'cross' | 'lower' | 'tilt' | 'wait' | 'leave';
 
 const UP = new Vector3(0, 1, 0);
 const Z = new Vector3(0, 0, 1);
 const RIM = JAR.height;
 const WATER = JAR.waterLevel;
 const HOVER_Y = RIM + SCOOP.hoverClear;
+const H = CUP.height;
+/** カップの真ん中（カップの中の座標）。水の中で傾けるときは、ここを中心に回す */
+const MID = new Vector3(0, H / 2, 0);
+
+/** カップのいちばん外側をなぞる点（口の縁・注ぎ口・底の縁、カップの中の座標）。傾けたときの上端・下端を求める */
+const OUTLINE: readonly Vector3[] = (() => {
+  const pts: Vector3[] = [SPOUT_LIP.clone()];
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    pts.push(new Vector3((CUP.radiusTop + 0.004) * Math.cos(a), H + 0.0015, (CUP.radiusTop + 0.004) * Math.sin(a)));
+    pts.push(new Vector3(CUP.radiusBottom * Math.cos(a), 0, CUP.radiusBottom * Math.sin(a)));
+  }
+  return pts;
+})();
 
 const ease = (t: number): number => {
   const x = Math.min(Math.max(t, 0), 1);
   return x * x * (3 - 2 * x);
 };
+
+const clampSlack = (x: number): number => Math.min(Math.max(x, -SCOOP.mouthSlack), SCOOP.mouthSlack);
 
 export class Scoop {
   private phase: Phase = 'idle';
@@ -48,19 +63,23 @@ export class Scoop {
   private jelly: Jellyfish | null = null;
   /** カップの底の真ん中（瓶の座標） */
   private readonly pos = new Vector3();
+  /** 水の中にあるとき：カップの真ん中（瓶の座標） */
+  private readonly center = new Vector3();
   private readonly from = new Vector3();
   private readonly to = new Vector3();
-  /** 注ぎ口の向き（0 で +x、π で -x）と、その変わり方 */
+  /** 注ぎ口の向き（上から見た角度。0 で +x、π で -x）と、その変わり方 */
   private yaw = 0;
   private yawFrom = 0;
   private yawTo = 0;
-  /** 注ぐ傾き（注ぎ口が下がる向き）と、運ぶときの揺れの傾き */
+  /** 水の中で傾ける角度（注ぎ口の側へ）と、運ぶときの揺れの傾き */
   private tilt = 0;
   private sway = 0;
   private velX = 0;
   private alpha = 0;
   /** 中の水の量（容積に対する割合） */
   private fill: number = CUP.fill;
+  /** 口まで瓶の水に浸かっている（カップの水は瓶の水とひとつで、水面はない） */
+  private flooded = false;
   /** 指の横の位置（見ている所から測ったワールドの x。瓶の並びが動いても、画面の上では同じ所） */
   private fingerX = 0;
   private pendingCross: { to: number; onStart: () => void } | null = null;
@@ -69,30 +88,26 @@ export class Scoop {
   private crossTo = 0;
   private switched = false;
   private crossX = 0;
-  /** 注ぐ：注ぐ瓶、注ぎ口の向き（1 で +x）、注ぎ口の x */
-  private pourJar = 0;
-  private facing = 1;
-  private lipX = 0;
+  /** 放す：放す瓶、沈めたカップの真ん中（水平の位置）と、去るときの位置 */
+  private releaseJar = 0;
+  private readonly sink = new Vector3();
+  private readonly away = new Vector3();
   /** 上がるとき：瓶の中の姿を消して、カップの中へ移したか */
   private jellyMoved = false;
-  /** 海月：カップから滑り出た、水に入った。滑り出てからの時間と、滑り出はじめた位置 */
-  private jellyOut = false;
-  private entered = false;
-  private slideT = 0;
-  private readonly slideFrom = new Vector3();
-  /** 注ぐ水の筋：流れはじめてからの時間、止まった時刻（-1 なら流れている）、勢い */
-  private flowing = false;
-  private flowT = 0;
-  private stopT = -1;
-  private strength = 0;
-  private rippleTimer = 0;
+  /** 海月：泳いで出ていくところか、泳ぎはじめてからの時間、出ていってからの時間（まだなら -1） */
+  private exiting = false;
+  private exitT = 0;
+  private outT = -1;
+  /** 水面を通ったかを見る：前のフレームのカップの下端 */
+  private lowPrev = 0;
   private readonly q = new Quaternion();
   private readonly qa = new Quaternion();
   private readonly qb = new Quaternion();
+  private readonly qc = new Quaternion();
+  private readonly tiltAxis = new Vector3();
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
-  private readonly lip = new Vector3();
-  private readonly cam = new Vector3();
+  private readonly mid = new Vector3();
 
   constructor(
     private readonly host: ScoopHost,
@@ -109,14 +124,14 @@ export class Scoop {
     return this.jar;
   }
 
-  /** いま指を離したら注ぐ瓶（隣へ移る途中なら行き先） */
+  /** いま指を離したら放す瓶（隣へ移る途中なら行き先） */
   get destination(): number {
     if (this.pendingCross) return this.pendingCross.to;
     if (this.phase === 'cross') return this.crossTo;
     return this.jar;
   }
 
-  /** カップの中の個体（注ぎ終えたら null） */
+  /** カップの中の個体（出ていったら null） */
   get carriedId(): number | null {
     return this.jelly ? this.id : null;
   }
@@ -129,10 +144,9 @@ export class Scoop {
     this.pendingCross = null;
     this.pendingRelease = null;
     this.jellyMoved = false;
-    this.jellyOut = false;
-    this.flowing = false;
-    this.stopT = -1;
-    this.strength = 0;
+    this.exiting = false;
+    this.outT = -1;
+    this.flooded = false;
     this.fill = CUP.fill;
     this.tilt = 0;
     this.sway = 0;
@@ -145,10 +159,11 @@ export class Scoop {
     jelly.carry(jelly.swimmer.pos, 0.15);
     this.cup.group.add(jelly.group);
     // 口の中（水面のすぐ上）から、口のすぐ上まで上がる
-    const x = Math.min(Math.max(jelly.swimmer.pos.x, -SCOOP.mouthSlack), SCOOP.mouthSlack);
+    const x = clampSlack(jelly.swimmer.pos.x);
     this.from.set(x, WATER + 0.015, 0);
     this.to.set(x, HOVER_Y, 0);
     this.pos.copy(this.from);
+    this.lowPrev = this.pos.y;
     this.fingerX = x + (jar - this.host.view) * this.host.spacing;
     this.enter('rise');
   }
@@ -158,13 +173,13 @@ export class Scoop {
     this.fingerX = x;
   }
 
-  /** 隣の瓶 to の上へ移る（注がない）。onStart は移りはじめたとき（画面を隣の瓶へ動かす） */
+  /** 隣の瓶 to の上へ移る（放さない）。onStart は移りはじめたとき（画面を隣の瓶へ動かす） */
   cross(to: number, onStart: () => void): void {
     if (!this.jelly) return;
     this.pendingCross = { to, onStart };
   }
 
-  /** 指を離した：今いる瓶（移る途中なら行き先）の口の上で注ぐ（delay 秒待ってから） */
+  /** 指を離した：今いる瓶（移る途中なら行き先）の水へ沈めて放す（delay 秒待ってから） */
   release(delay = 0): void {
     if (!this.jelly) return;
     this.pendingRelease = delay;
@@ -175,34 +190,41 @@ export class Scoop {
     this.t = 0;
   }
 
-  /** カップの向き：注ぎ口の向き、運ぶ揺れ、注ぐ傾き */
+  /** カップの向き：注ぎ口の向き、水の中で傾ける角度（注ぎ口の側が下がる）、運ぶ揺れ */
   private orientation(out: Quaternion): Quaternion {
     this.qa.setFromAxisAngle(UP, this.yaw);
-    this.qb.setFromAxisAngle(Z, -this.tilt * Math.cos(this.yaw) + this.sway);
-    return out.copy(this.qb).multiply(this.qa);
+    // 注ぎ口の向き (cos, 0, -sin) へ軸を倒す
+    this.qb.setFromAxisAngle(this.tiltAxis.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), this.tilt);
+    this.qc.setFromAxisAngle(Z, this.sway);
+    return out.copy(this.qc).multiply(this.qb).multiply(this.qa);
   }
 
-  /** 向き q のとき、カップの底が瓶の口より上にあるための、注ぎ口の高さ */
-  private lipHeight(q: Quaternion): number {
-    const lipY = this.tmp.copy(SPOUT_LIP).applyQuaternion(q).y;
-    let depth = 0;
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2;
-      const y = this.tmp2.set(CUP.radiusBottom * Math.cos(a), 0, CUP.radiusBottom * Math.sin(a)).applyQuaternion(q).y;
-      depth = Math.max(depth, lipY - y);
+  /** 向き q のカップの、真ん中から測った上端と下端の高さ */
+  private extent(q: Quaternion): { top: number; bottom: number } {
+    let top = -Infinity;
+    let bottom = Infinity;
+    for (const p of OUTLINE) {
+      const y = this.tmp.copy(p).sub(MID).applyQuaternion(q).y;
+      top = Math.max(top, y);
+      bottom = Math.min(bottom, y);
     }
-    return Math.max(RIM + 0.03, RIM + 0.015 + depth);
+    return { top, bottom };
   }
 
-  /** 注ぎ口を (x, 高さ, 0) に置いたときのカップの底の位置 */
-  private bottomFromLip(q: Quaternion, x: number, out: Vector3): Vector3 {
-    const y = this.lipHeight(q);
-    return out.set(x, y, 0).sub(this.tmp.copy(SPOUT_LIP).applyQuaternion(q));
+  /** 水の中のカップ：真ん中を水平の位置 at に、いちばん上が水面の少し下にくる高さに（今の向きで） */
+  private placeSunk(at: Vector3): void {
+    this.orientation(this.q);
+    this.center.set(at.x, WATER - SCOOP.submergeDepth - this.extent(this.q).top, at.z);
   }
 
   /** カップの中で海月を置く所（ワールド） */
   private jellyHome(out: Vector3): Vector3 {
-    return this.cup.toWorld(this.tmp2.set(0, CUP.height * SCOOP.jellyHeight, 0), out);
+    return this.cup.toWorld(this.tmp2.set(0, H * SCOOP.jellyHeight, 0), out);
+  }
+
+  /** カップの軸（底から口への向き、ワールド） */
+  private cupAxis(out: Vector3): Vector3 {
+    return out.copy(UP).applyQuaternion(this.q);
   }
 
   /** 瓶の座標を移す（隣の瓶へ移る途中） */
@@ -240,56 +262,43 @@ export class Scoop {
         }
         break;
       }
-      case 'toPour': {
-        const e = ease(this.t / SCOOP.moveSeconds);
-        this.pos.lerpVectors(this.from, this.to, e);
-        this.yaw = this.yawFrom + (this.yawTo - this.yawFrom) * e;
-        this.sway *= Math.exp(-3 * dt);
-        if (this.t >= SCOOP.moveSeconds) {
-          this.yaw = this.yawTo;
-          this.sway = 0;
-          this.enter('pour');
-        }
+      case 'lower':
+        this.stepLower(dt);
         break;
-      }
-      case 'pour':
+      case 'tilt':
+        // 水の中でゆっくり傾ける。途中から、海月が自分で泳いで出ていく
         this.tilt = SCOOP.tiltMax * ease(this.t / SCOOP.tiltSeconds);
+        this.placeSunk(this.sink);
+        if (this.t >= SCOOP.tiltSeconds * SCOOP.exitAt) this.exiting = true;
+        if (this.t >= SCOOP.tiltSeconds) this.enter('wait');
         break;
-      case 'settle':
-        // 起こす（注ぎ口の所を支点に）
-        this.tilt = SCOOP.tiltMax * (1 - ease(this.t / SCOOP.settleSeconds));
-        break;
-      case 'leave': {
-        const e = ease(this.t / SCOOP.leaveSeconds);
-        this.pos.y = this.from.y + 0.15 * e;
-        this.alpha = 1 - e;
-        if (this.t >= SCOOP.leaveSeconds) {
-          this.phase = 'idle';
-          this.cup.setAlpha(0);
-          this.cup.setStream([], [], [], this.cam);
-          return;
+      case 'wait':
+        // 傾けたまま、海月が出ていくのを待つ
+        this.placeSunk(this.sink);
+        if (this.outT >= SCOOP.clearSeconds) {
+          // 海月が出ていった向きと反対へ少し離れてから上がる（口を通れる所に収める）
+          this.away.set(this.sink.x - Math.cos(this.yaw) * SCOOP.leaveShift, 0, this.sink.z + Math.sin(this.yaw) * SCOOP.leaveShift);
+          const r = Math.hypot(this.away.x, this.away.z);
+          if (r > SCOOP.mouthSlack) this.away.multiplyScalar(SCOOP.mouthSlack / r);
+          this.enter('leave');
         }
         break;
-      }
+      case 'leave':
+        if (this.stepLeave()) return;
+        break;
       default:
         break;
     }
 
-    // 注ぐ・起こす間は、注ぎ口を支点にしてカップの位置を決める
+    // 水の中にあるときは、真ん中からカップの位置を決める
     this.orientation(this.q);
-    if (this.phase === 'pour' || this.phase === 'settle') this.bottomFromLip(this.q, this.lipX, this.pos);
+    if (this.phase === 'tilt' || this.phase === 'wait' || this.phase === 'leave') {
+      this.pos.copy(this.center).sub(this.tmp.copy(MID).applyQuaternion(this.q));
+    }
     this.cup.setPose(this.pos, this.q);
     this.cup.setAlpha(this.alpha);
-    this.updateWater(dt);
+    this.updateWater();
     this.updateJelly(dt);
-    this.updateStream(dt);
-    if (this.phase === 'pour') {
-      const done = this.fill < 0.01 && !this.jelly && (!this.flowing || this.flowT - this.stopT > 0.6);
-      if (this.t >= SCOOP.tiltSeconds && (done || this.t > SCOOP.tiltSeconds + 4)) this.enter('settle');
-    } else if (this.phase === 'settle' && this.t >= SCOOP.settleSeconds) {
-      this.from.copy(this.pos);
-      this.enter('leave');
-    }
   }
 
   /** 上がる：瓶の中の姿がふっと消え、海月の入ったカップが口からゆっくり上がってくる */
@@ -346,151 +355,136 @@ export class Scoop {
       this.pendingRelease -= dt;
       if (this.pendingRelease <= 0) {
         this.pendingRelease = null;
-        this.startPour(this.pos.x < 0 ? 1 : -1);
+        this.startRelease();
       }
     }
   }
 
-  /** 今の瓶の口の上へ動いて注ぐ。facing は注ぎ口の向き（瓶の真ん中へ向ける） */
-  private startPour(facing: number): void {
-    this.pourJar = this.jar;
-    this.facing = facing;
-    this.lipX = -facing * SCOOP.pourOffset;
+  /**
+   * 放しはじめる：口を通れる所へ寄せながら、今の瓶の水の中へ沈める。
+   * 口（注ぎ口の側）は瓶の真ん中のほうへ、少し手前へも向け、そちらへ傾ける
+   */
+  private startRelease(): void {
+    this.releaseJar = this.jar;
+    const x = clampSlack(this.pos.x);
+    this.sink.set(x, 0, 0);
+    // 注ぎ口の向き：瓶の真ん中の側へ、手前へ tiltToward だけ回した向き。近いほうへ回す
+    const side = x > 0 ? -1 : 1;
+    const dx = side * Math.cos(SCOOP.tiltToward);
+    const dz = Math.sin(SCOOP.tiltToward);
     this.from.copy(this.pos);
     this.yawFrom = this.yaw;
-    this.yawTo = facing > 0 ? 0 : Math.PI;
+    let d = Math.atan2(-dz, dx) - this.yawFrom;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    this.yawTo = this.yawFrom + d;
+    // 沈めきった所（まっすぐのまま）：カップのいちばん上が水面の少し下
     const saveYaw = this.yaw;
     const saveSway = this.sway;
     this.yaw = this.yawTo;
     this.sway = 0;
-    this.bottomFromLip(this.orientation(this.q), this.lipX, this.to);
+    this.placeSunk(this.sink);
+    this.to.copy(this.center).sub(this.tmp.copy(MID).applyQuaternion(this.q));
     this.yaw = saveYaw;
     this.sway = saveSway;
-    this.enter('toPour');
+    this.exiting = false;
+    this.exitT = 0;
+    this.outT = -1;
+    this.enter('lower');
   }
 
-  /** カップの中の水：注ぐ間は、こぼれた分が注ぎ口から筋になり、水が減ると海月が滑り出る */
-  private updateWater(dt: number): void {
-    const w = this.cup.waterFor(this.fill);
-    if (this.phase === 'pour' || this.phase === 'settle') {
-      const out = Math.max(0, this.fill - w.max);
-      this.fill -= out;
-      const rate = out / Math.max(dt, 1e-4);
-      const target = Math.min(1, rate / (CUP.fill / SCOOP.pourFlowSeconds));
-      this.strength += (target - this.strength) * Math.min(1, 6 * dt);
-      if (!this.flowing && this.strength > 0.05) {
-        this.flowing = true;
-        this.flowT = 0;
-        this.stopT = -1;
-      }
-      if (this.flowing && this.stopT < 0 && this.fill < 0.005 && this.strength < 0.05) this.stopT = this.flowT;
-      if (!this.jellyOut && this.jelly && this.fill < CUP.fill * SCOOP.exitFill) this.startSlide();
+  /** 沈める：口の上で口を通れる所へ寄せ、まっすぐのままゆっくり水の中へ */
+  private stepLower(dt: number): void {
+    const ex = ease(this.t / SCOOP.alignSeconds);
+    const ey = ease((this.t - SCOOP.lowerDelay) / (SCOOP.lowerSeconds - SCOOP.lowerDelay));
+    this.pos.x = this.from.x + (this.to.x - this.from.x) * ex;
+    this.pos.z = this.from.z + (this.to.z - this.from.z) * ex;
+    this.pos.y = this.from.y + (this.to.y - this.from.y) * ey;
+    this.yaw = this.yawFrom + (this.yawTo - this.yawFrom) * ex;
+    this.sway *= Math.exp(-3 * dt);
+    if (this.t >= SCOOP.lowerSeconds) {
+      this.yaw = this.yawTo;
+      this.sway = 0;
+      this.enter('tilt');
     }
-    this.cup.setWater(this.fill > 0.004 ? this.cup.waterFor(this.fill).level : -10);
   }
 
-  private startSlide(): void {
-    if (!this.jelly || this.jellyOut) return;
-    this.jellyOut = true;
-    this.entered = false;
-    this.slideT = 0;
-    this.slideFrom.copy(this.jelly.swimmer.pos);
+  /** 去る：空のカップを起こしながら海月から少し離れ、ゆっくり上がって口から出て消える。終わったら true */
+  private stepLeave(): boolean {
+    const er = ease(this.t / SCOOP.rightSeconds);
+    const at = this.tmp2.lerpVectors(this.sink, this.away, er);
+    // まっすぐにしたときの沈めた高さ
+    this.tilt = 0;
+    this.placeSunk(at);
+    const upright = this.center.y;
+    this.tilt = SCOOP.tiltMax * (1 - er);
+    this.placeSunk(at);
+    // 起こしながら、沈めた高さから口の上まで上がる
+    const endY = HOVER_Y + H / 2 + SCOOP.leaveLift;
+    this.center.y += (endY - upright) * ease((this.t - SCOOP.leaveDelay) / SCOOP.liftSeconds);
+    const end = SCOOP.leaveDelay + SCOOP.liftSeconds;
+    this.alpha = 1 - ease((this.t - (end - SCOOP.leaveFadeSeconds)) / SCOOP.leaveFadeSeconds);
+    if (this.t >= end) {
+      this.phase = 'idle';
+      this.cup.setAlpha(0);
+      this.host.obstruct(this.jar, null, 0);
+      return true;
+    }
+    return false;
   }
 
-  /** 注ぐ水の筋の、注ぎ口から k（0〜1）の所（ワールド）。k = 1 で瓶の水面 */
-  private streamPoint(k: number, out: Vector3): Vector3 {
-    const lip = this.cup.lip(this.lip);
-    const g = SCOOP.streamGravity;
-    const tEnd = Math.sqrt((2 * Math.max(lip.y - WATER, 0.01)) / g);
-    const tt = tEnd * k;
-    return out.set(lip.x + this.facing * SCOOP.streamPush * tt, lip.y - 0.5 * g * tt * tt, lip.z);
+  /**
+   * カップの水：口まで瓶の水に浸かったら、瓶の水とひとつ（水面はない）。口が水面から出たら、水をいっぱいに入れたまま上がる。
+   * カップの下端と口が水面を通るときに、小さな波紋。水の中にある間は、瓶の泳ぐ個体がカップをよける
+   */
+  private updateWater(): void {
+    const mid = this.mid.copy(MID).applyQuaternion(this.q).add(this.pos);
+    const e = this.extent(this.q);
+    const top = mid.y + e.top;
+    const low = mid.y + e.bottom;
+    const jar = this.jar;
+    if (this.lowPrev > WATER && low <= WATER) this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleEnter, CUP.radiusBottom);
+    else if (this.lowPrev <= WATER && low > WATER) this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleLeave, CUP.radiusBottom);
+    this.lowPrev = low;
+    if (!this.flooded && top < WATER) {
+      this.flooded = true;
+      this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleSubmerge, CUP.radiusTop);
+    } else if (this.flooded && top > WATER) {
+      this.flooded = false;
+      this.fill = 0.97;
+      this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleEmerge, CUP.radiusTop);
+    }
+    this.cup.setWater(this.flooded ? -10 : this.cup.waterFor(this.fill).level);
+    const inJar = this.phase === 'lower' || this.phase === 'tilt' || this.phase === 'wait' || this.phase === 'leave';
+    this.host.obstruct(jar, inJar && low < RIM ? mid : null, SCOOP.obstacleRadius);
   }
 
-  /** 海月：カップの水の中について動き、注ぐときは水と一緒に滑り出て、水面から静かに入る */
+  /**
+   * 海月：カップの水の中について動き、水の中で傾けるときは傘もカップの軸へ向く。
+   * 放すときは、自分の拍動でカップの軸に沿って口から泳いで出ていき、出たら瓶の個体になる
+   */
   private updateJelly(dt: number): void {
+    if (this.outT >= 0) this.outT += dt;
     const jelly = this.jelly;
     if (!jelly) return;
     if (this.phase === 'rise' && !this.jellyMoved) {
       jelly.update(dt);
       return;
     }
-    if (!this.jellyOut) {
-      const home = this.jellyHome(this.tmp);
-      if (this.phase === 'pour' || this.phase === 'settle') {
-        // 水が減るにつれて、注ぎ口のほうへ寄っていく
-        const lip = this.cup.lip(this.lip);
-        const k = 1 - Math.min(1, this.fill / CUP.fill);
-        home.lerp(lip.setY(lip.y - 0.03), k * 0.7);
-      }
-      jelly.carry(home, 1);
-    } else {
-      // 注ぎ口から水の筋に沿って、ゆっくり滑り降り、水面から静かに入って泳げる所まで沈む
-      // （はじめと水面の近くはゆっくり）
-      this.slideT += dt;
-      const s = ease(this.slideT / SCOOP.slideSeconds);
-      const a = SCOOP.slideLip;
-      const b = 1 - SCOOP.slideSink;
-      const p = this.tmp;
-      if (s < a) p.lerpVectors(this.slideFrom, this.streamPoint(0, this.tmp2), s / a);
-      else if (s < b) this.streamPoint((s - a) / (b - a), p);
-      else {
-        const surface = this.streamPoint(1, this.tmp2);
-        const top = swimBounds(jelly.radius).top;
-        p.set(surface.x, surface.y + (Math.min(top, surface.y) - surface.y) * ((s - b) / (1 - b)), surface.z);
-      }
-      if (!this.entered && p.y <= WATER) {
-        this.entered = true;
-        this.host.ripple(this.pourJar, p.x, p.z, SCOOP.rippleJelly);
-      }
-      jelly.carry(p, 3);
-      if (this.slideT >= SCOOP.slideSeconds) {
-        jelly.letGo(this.tmp2.set(0, -SCOOP.entrySpeed, 0), 'drift');
-        this.jelly = null;
-        this.host.adopt(this.pourJar, this.id, jelly);
-        return;
-      }
+    if (!this.exiting) {
+      const tilting = this.phase === 'tilt' || this.phase === 'wait';
+      jelly.carry(this.jellyHome(this.tmp), 1, true, tilting ? this.cupAxis(this.tmp2) : null);
+      jelly.update(dt);
+      return;
     }
+    jelly.swimOut(this.pos, this.cupAxis(this.tmp2), SCOOP.exitPulseDelay);
     jelly.update(dt);
-  }
-
-  /** 注ぐ水の筋：注ぎ口から瓶の水面まで。流れはじめは先が伸び、止まると後ろから切れて落ちる */
-  private updateStream(dt: number): void {
-    if (!this.flowing) {
-      this.cup.setStream([], [], [], this.cam);
-      return;
-    }
-    this.flowT += dt;
-    const lip = this.cup.lip(this.lip);
-    const g = SCOOP.streamGravity;
-    const tEnd = Math.sqrt((2 * Math.max(lip.y - WATER, 0.01)) / g);
-    const head = Math.min(this.flowT / tEnd, 1);
-    const tail = this.stopT >= 0 ? Math.min((this.flowT - this.stopT) / tEnd, 1) : 0;
-    if (tail >= head - 1e-3) {
-      if (this.stopT >= 0) this.flowing = false;
-      this.cup.setStream([], [], [], this.cam);
-      return;
-    }
-    const n = 12;
-    const pts: Vector3[] = [];
-    const widths: number[] = [];
-    const str: number[] = [];
-    const s = Math.max(this.strength, this.stopT >= 0 ? 0.3 : 0);
-    for (let i = 0; i <= n; i++) {
-      const k = tail + ((head - tail) * i) / n;
-      pts.push(this.streamPoint(k, new Vector3()));
-      // 落ちるほど速くなって細くなる
-      widths.push((SCOOP.streamWidth * Math.sqrt(Math.max(s, 0.15))) / (1 + 1.2 * k));
-      str.push(Math.min(1, 0.35 + s));
-    }
-    this.cup.setStream(pts, widths, str, this.host.cameraPosition(this.jar, this.cam));
-    // 水面に当たっている間は、小さな波紋が続く
-    if (head >= 1 && this.stopT < 0) {
-      this.rippleTimer -= dt;
-      if (this.rippleTimer <= 0) {
-        this.rippleTimer = 0.15;
-        const hit = this.streamPoint(1, this.tmp2);
-        this.host.ripple(this.pourJar, hit.x, hit.z, SCOOP.rippleStream * Math.max(this.strength, 0.3));
-      }
+    this.exitT += dt;
+    if (jelly.swimmer.guideProgress >= H + jelly.radius * SCOOP.exitClear || this.exitT > SCOOP.exitMaxSeconds) {
+      jelly.letGo(jelly.swimmer.vel, 'drift');
+      this.jelly = null;
+      this.outT = 0;
+      this.host.adopt(this.releaseJar, this.id, jelly);
     }
   }
 }

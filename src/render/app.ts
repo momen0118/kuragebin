@@ -179,9 +179,9 @@ export class App {
         get hoverRange() {
           return app.spacing - JAR.radius - SWIPE.gap - CUP.radiusTop - CUP.spout - 0.03;
         },
-        ripple: (jar, x, z, strength) => this.addRipple(jar, x, z, strength),
+        ripple: (jar, x, z, strength, radius) => this.addRipple(jar, x, z, strength, radius),
+        obstruct: (jar, center, radius) => this.jars[jar]?.setObstacle(center, radius),
         adopt: (jar, id, jelly) => this.jars[jar]?.adopt(id, jelly),
-        cameraPosition: (jar, out) => out.setFromMatrixPosition(this.placeJarCamera(jar).matrixWorld),
       },
       this.cup,
     );
@@ -487,13 +487,13 @@ export class App {
     return out.copy(o).addScaledVector(d, Math.max(t, 0));
   }
 
-  /** 瓶 jar の水面に波紋を立てる（いちばん古いものと入れ替える） */
-  private addRipple(jar: number, x: number, z: number, strength: number): void {
+  /** 瓶 jar の水面に波紋を立てる（いちばん古いものと入れ替える）。輪は半径 radius から広がりはじめる */
+  private addRipple(jar: number, x: number, z: number, strength: number, radius = 0): void {
     const list = this.ripples[jar];
     if (!list) return;
     let slot = list[0]!;
     for (const r of list) if (r.w <= 0 || r.z < slot.z) slot = r;
-    slot.set(x, z, this.time, strength);
+    slot.set(x, z, this.time - radius / WATER.rippleSpeed, strength);
   }
 
   /** カップを使っているところか（上がる〜去るまで）。その間は新しく運べない */
@@ -506,7 +506,7 @@ export class App {
     return this.scoop.carriedId;
   }
 
-  /** いま指を離したらカップが注ぐ瓶（隣へ移る途中なら行き先）。カップを使っていなければ表示中の瓶 */
+  /** いま指を離したらカップが放す瓶（隣へ移る途中なら行き先）。カップを使っていなければ表示中の瓶 */
   get scoopDestination(): number {
     return this.scoop.busy ? this.scoop.destination : this.jarIndex;
   }
@@ -528,12 +528,12 @@ export class App {
     this.scoop.follow(this.pointAtDepth(f, ndcX, ndcY, 0, this.tmpV).x + this.jarX(f));
   }
 
-  /** カップを隣の瓶 to の上へ移す（注がない）。onStart は移りはじめたとき（画面を隣の瓶へ動かす） */
+  /** カップを隣の瓶 to の上へ移す（放さない）。onStart は移りはじめたとき（画面を隣の瓶へ動かす） */
   scoopCross(to: number, onStart: () => void): void {
     this.scoop.cross(to, onStart);
   }
 
-  /** 指を離した：カップが今いる瓶（移る途中なら行き先）の口の上で注ぐ */
+  /** 指を離した：カップが今いる瓶（移る途中なら行き先）の水の中で放す */
   scoopRelease(): void {
     this.scoop.release();
   }
@@ -616,7 +616,7 @@ export class App {
     this.camera.layers.set(0);
     r.setRenderTarget(this.bgRT);
     r.render(this.bgScene, this.camera);
-    // カップ（と中の海月・注ぐ水）の、瓶の口より上にある部分は背景に重ねる
+    // カップ（と中の海月）の、瓶の口より上にある部分は背景に重ねる
     if (this.scoop.busy) this.renderCup(this.scoop.frameJar, 2);
 
     // 2. 中身：透明な画像に描く（瓶底は背景の天板を映す）。見えている瓶ごとに、その瓶の位置へずらしたカメラで

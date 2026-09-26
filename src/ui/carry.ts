@@ -1,7 +1,7 @@
 // 泳ぐ個体を、カップに水ごと入れて運ぶ（長押しから）。指で動かすのはカップ。
-// 左右の端へ運んで少し置くと、画面が隣の瓶へ移り、カップも隣の瓶の上へ（ここでは注がない）。
-// 隣の瓶が上限なら、隣をのぞいて戻ってくる。指を離したとき、カップがいる瓶の口の上で注ぐ
-// （元の瓶の上なら注ぎ戻す）。状態を移すのは注ぐとき。
+// 左右の端へ運んで少し置くと、画面が隣の瓶へ移り、カップも隣の瓶の上へ（ここでは放さない）。
+// 隣の瓶が上限なら、隣をのぞいて戻ってくる。指を離したとき、カップがいる瓶の水の中で放す
+// （元の瓶の上なら元の瓶へ戻す）。状態を移すのは指を離したとき。
 import { HANDLING } from '../config';
 import type { Game } from '../game';
 import type { App } from '../render/app';
@@ -49,7 +49,7 @@ export class Carry {
     if (edge) this.timer = window.setTimeout(() => this.cross(edge), HANDLING.edgeDwellMs);
   }
 
-  /** 指を離した：カップがいる瓶の口の上で注ぐ。運びはじめた瓶と違えば、そこで状態を移す */
+  /** 指を離した：カップがいる瓶の水の中で放す。運びはじめた瓶と違えば、そこで状態を移す */
   end(): void {
     this.clearTimer();
     if (!this.active) return;
@@ -59,7 +59,7 @@ export class Carry {
     if (id === null) return;
     const dest = this.app.scoopDestination;
     if (dest !== this.source && this.game.moveCreature(id, dest) !== 'moved') {
-      // その間に移せなくなっていた（上限など）：元の瓶の上へ戻ってから注ぎ戻す
+      // その間に移せなくなっていた（上限など）：元の瓶の上へ戻ってから、元の瓶へ放す
       const src = this.source;
       this.app.scoopCross(src, () => this.slider.goTo(src));
     }

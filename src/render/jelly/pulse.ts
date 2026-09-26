@@ -109,6 +109,17 @@ export class Pulse {
     if (this.cycles.length > 4) this.cycles.shift();
   }
 
+  /**
+   * 次の拍動を早める：delay 秒後までに縮みはじめる。縮んでいる最中や緩みはじめなら、緩みが6割ほど進むまで待つ
+   * （カップから泳いで出ていくとき、待たせすぎないように）
+   */
+  soon(delay: number): void {
+    const c = this.cycles[this.cycles.length - 1]!;
+    const relaxEnd = c.start + c.tc + c.tr;
+    const next = Math.max(this.time + delay, c.start + c.tc + c.tr * 0.6);
+    if (relaxEnd + c.rest > next) c.rest = next - relaxEnd;
+  }
+
   /** 次の周期からの拍動の深さ・休み・テンポ（1 が標準） */
   setStyle(amp: number, rest: number, tempo: number): void {
     this.style.amp = amp;

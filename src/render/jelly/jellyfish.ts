@@ -136,7 +136,7 @@ export class Jellyfish {
     this.swimmer.setForm(f.radius, f.jerk);
   }
 
-  /** 位置と向きを決めなおす（ストロビラから離れたエフィラ、カップから注がれた個体）。触手と口腕は根元から伸ばしなおす */
+  /** 位置と向きを決めなおす（ストロビラから離れたエフィラ、確認用に置くとき）。触手と口腕は根元から伸ばしなおす */
   place(pos: Vector3, up: Vector3, vel: Vector3, mode: 'cruise' | 'drift' = 'cruise'): void {
     this.swimmer.place(pos, up, vel, mode);
     // 離れたばかりは腕を畳んでいて、ゆっくり開く
@@ -159,14 +159,24 @@ export class Jellyfish {
   }
 
   /**
-   * カップの水の中にいる（瓶の外）。泳がずに target へ水ごと運ばれ、遅れて小さく揺れる。
-   * stiff はついていく強さの倍率。null で瓶の中を泳ぐのに戻る（戻すときは place で置きなおす）
+   * カップの水の中にいる。泳がずに target へ水ごと運ばれ、遅れて小さく揺れる。
+   * stiff はついていく強さの倍率。up を渡すと、傘をその向き（水の中で傾けたカップの軸）へ合わせる。
+   * null で瓶の中を泳ぐのに戻る（戻すときは place で置きなおす）
    */
-  carry(target: Vector3 | null, stiff = 1, withWater = true): void {
-    this.swimmer.carry(target, stiff, withWater);
+  carry(target: Vector3 | null, stiff = 1, withWater = true, up: Vector3 | null = null): void {
+    this.swimmer.carry(target, stiff, withWater, up);
   }
 
-  /** カップから瓶の水に入った：姿勢も触手もそのままで泳ぎに戻る */
+  /**
+   * 水に沈めて傾けたカップから、自分の拍動で泳いで出ていく（カップの軸に沿って）。base はカップの底の真ん中、
+   * axis はカップの軸（ワールド）。はじめて呼んだときは、次の拍動を早める
+   */
+  swimOut(base: Vector3, axis: Vector3, pulseDelay: number): void {
+    if (!this.swimmer.isGuided) this.pulse.soon(pulseDelay);
+    this.swimmer.guide(base, axis);
+  }
+
+  /** カップから出た：姿勢も触手もそのままで泳ぎに戻る */
   letGo(vel: Vector3, mode: 'cruise' | 'drift'): void {
     this.swimmer.letGo(vel, mode);
   }
