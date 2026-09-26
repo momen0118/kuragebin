@@ -321,7 +321,7 @@ export class Polyp {
       return m;
     };
     this.body = [make(BackSide), make(FrontSide)];
-    const look = { uBody: tint, uGlow: { value: new Vector3() } };
+    const look = { uBody: tint, uGlow: { value: new Vector3() }, uOpacity: { value: 1 } };
     this.strands = createStrandMesh(shared, look, n, NODES, seeds, POLYP.tentacleWidthPx, POLYP.tentacleBrightness);
     this.group.add(this.body[0]!, this.strands, this.body[1]!);
     this.setRenderOrder(12);

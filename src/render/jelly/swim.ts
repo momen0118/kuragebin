@@ -190,6 +190,17 @@ export class Swimmer {
     return this.carried !== null;
   }
 
+  /** カップから瓶の水に入った：姿勢も動きもそのままで、泳ぎに戻る（drift ならゆっくり沈んでいく） */
+  letGo(vel: Vector3, mode: 'cruise' | 'drift'): void {
+    this.carried = null;
+    this.carryShift.set(0, 0, 0);
+    this.vel.copy(vel);
+    this.rising = 0;
+    this.mode = mode;
+    this.modeTimer = mode === 'cruise' ? SWIM.cruiseMaxTime * 0.3 : SWIM.driftMaxTime;
+    this.modeTarget = this.pickTarget(mode);
+  }
+
   /** 瓶から瓶へ座標を移す（x を dx だけずらす）。動きはそのまま */
   translate(dx: number): void {
     this.pos.x += dx;

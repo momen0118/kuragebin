@@ -230,7 +230,7 @@ async function main(): Promise<void> {
       slider.finish();
       app.setView(slider.position);
       const [x, y] = toNdc(p);
-      // カップを使っている間は、新しくすくわない
+      // カップを使っている間は、新しく運ばない
       holdable = app.scoopBusy ? null : app.pickAt(x, y, fingerNdc(), true);
       return holdable !== null ? 'holdable' : 'plain';
     },

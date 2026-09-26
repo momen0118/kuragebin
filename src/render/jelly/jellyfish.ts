@@ -59,6 +59,7 @@ export class Jellyfish {
     this.swimmer = new Swimmer(rng);
     this.shape = new BellShape(rng);
     this.look = {
+      uOpacity: { value: 1 },
       uBody: { value: new Vector3(...JELLY_LOOK.body) },
       uGlow: { value: new Vector3(...JELLY_LOOK.glow) },
       uGonad: { value: new Vector3(...JELLY_LOOK.gonad) },
@@ -165,6 +166,11 @@ export class Jellyfish {
     this.swimmer.carry(target, stiff, withWater);
   }
 
+  /** カップから瓶の水に入った：姿勢も触手もそのままで泳ぎに戻る */
+  letGo(vel: Vector3, mode: 'cruise' | 'drift'): void {
+    this.swimmer.letGo(vel, mode);
+  }
+
   /** 瓶から瓶へ座標を移す（x を dx だけずらす）。形と動きはそのまま */
   translate(dx: number): void {
     this.swimmer.translate(dx);
@@ -172,6 +178,11 @@ export class Jellyfish {
     this.arms.translate(dx);
     this.updateMatrix();
     this.sync();
+  }
+
+  /** 濃さ（1 がふだん）。カップに移すとき、瓶の中の姿をふっと消して、カップの中に現す */
+  setOpacity(a: number): void {
+    this.look.uOpacity.value = a;
   }
 
   /** 描く順番（奥の個体から先に描く）。base から少しずつ */

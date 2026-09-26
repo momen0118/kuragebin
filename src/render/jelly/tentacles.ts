@@ -61,6 +61,7 @@ void main() {
 const FRAG = /* glsl */ `
 ${LAMP_GLSL}
 ${CLIP_GLSL}
+uniform float uOpacity;
 uniform float uGlowPass;
 uniform float uBrightness;
 uniform vec3 uKey, uAmbient;
@@ -84,7 +85,7 @@ void main() {
   vec3 light = uAmbient * 0.9 + uKey * 0.3 + uLampColor * lampSpot(vWorldPos) * 0.3;
   // 夜はデスクライトの光が細い糸で散って、ほのかに見える
   vec3 col = uBody * light * a * 0.6 + glow + uBody * uLampColor * lampSpot(vWorldPos) * scatter * ${JELLY_LOOK.lampScatter.toFixed(3)};
-  gl_FragColor = vec4(col, a * 0.15);
+  gl_FragColor = vec4(col, a * 0.15) * uOpacity;
 }
 `;
 
@@ -94,7 +95,7 @@ void main() {
  */
 export function createStrandMesh(
   shared: SharedUniforms,
-  look: Pick<BellLook, 'uBody' | 'uGlow'>,
+  look: Pick<BellLook, 'uBody' | 'uGlow' | 'uOpacity'>,
   n: number,
   m: number,
   seeds: Float32Array,
@@ -153,6 +154,7 @@ export function createStrandMesh(
         uAmbient: shared.uAmbient,
         uBody: look.uBody,
         uGlow: look.uGlow,
+        uOpacity: look.uOpacity,
       },
     }),
   );

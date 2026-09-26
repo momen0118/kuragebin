@@ -47,6 +47,7 @@ const FRAG = /* glsl */ `
 ${common}
 ${LAMP_GLSL}
 ${CLIP_GLSL}
+uniform float uOpacity;
 uniform float uGlowPass;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
@@ -88,7 +89,7 @@ void main() {
   }
   // 夜はデスクライトの光がひだの縁で散る
   col += tint * uLampColor * lampSpot(vWorldPos) * scatter * ${JELLY_LOOK.lampScatter.toFixed(3)};
-  gl_FragColor = vec4(col + glow, density * 0.6 + refr);
+  gl_FragColor = vec4(col + glow, density * 0.6 + refr) * uOpacity;
 }
 `;
 
@@ -179,6 +180,7 @@ export class OralArms {
           uBody: look.uBody,
           uGlow: look.uGlow,
           uGonad: look.uGonad,
+          uOpacity: look.uOpacity,
         },
       }),
     );

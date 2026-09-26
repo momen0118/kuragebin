@@ -120,7 +120,7 @@ export class App {
   private readonly ray = new Ray();
   /** カップで運んでいる個体（どの瓶にも描かない） */
   private readonly carried = new Set<number>();
-  /** 水ごとすくって運ぶカップと、その流れ。カップは瓶の中身とは別に描く */
+  /** 海月を水ごと運ぶカップと、その流れ。カップは瓶の中身とは別に描く */
   private readonly cup: Cup;
   private readonly cupScene = new Scene();
   private readonly scoop: Scoop;
@@ -496,7 +496,7 @@ export class App {
     slot.set(x, z, this.time, strength);
   }
 
-  /** カップを使っているところか（すくう〜去るまで）。その間は新しくすくえない */
+  /** カップを使っているところか（上がる〜去るまで）。その間は新しく運べない */
   get scoopBusy(): boolean {
     return this.scoop.busy;
   }
@@ -506,7 +506,12 @@ export class App {
     return this.scoop.carriedId;
   }
 
-  /** 長押し：表示中の瓶の泳ぐ個体 id を、カップで水ごとすくいはじめる。はじめられたら true */
+  /** いま指を離したらカップが注ぐ瓶（隣へ移る途中なら行き先）。カップを使っていなければ表示中の瓶 */
+  get scoopDestination(): number {
+    return this.scoop.busy ? this.scoop.destination : this.jarIndex;
+  }
+
+  /** 長押し：表示中の瓶の泳ぐ個体 id を、水ごとカップに入れて瓶の口から上げる。はじめられたら true */
   scoopStart(id: number): boolean {
     if (this.scoop.busy || !this.atRest) return false;
     const i = this.jarIndex;
@@ -520,17 +525,17 @@ export class App {
   scoopFollow(ndcX: number, ndcY: number): void {
     if (!this.scoop.busy) return;
     const f = this.scoop.frameJar;
-    this.scoop.follow(this.pointAtDepth(f, ndcX, ndcY, 0, this.tmpV).x);
+    this.scoop.follow(this.pointAtDepth(f, ndcX, ndcY, 0, this.tmpV).x + this.jarX(f));
   }
 
-  /** 隣の瓶 to へ運んで注ぐ。onStart は運びはじめたとき（画面を隣の瓶へ動かす） */
+  /** カップを隣の瓶 to の上へ移す（注がない）。onStart は移りはじめたとき（画面を隣の瓶へ動かす） */
   scoopCross(to: number, onStart: () => void): void {
     this.scoop.cross(to, onStart);
   }
 
-  /** 今の瓶へ注ぎ戻す（delay 秒待ってから） */
-  scoopRelease(delay = 0): void {
-    this.scoop.release(delay);
+  /** 指を離した：カップが今いる瓶（移る途中なら行き先）の口の上で注ぐ */
+  scoopRelease(): void {
+    this.scoop.release();
   }
 
   /** 描かずに動きだけを進める（確認用の早回しにも使う） */

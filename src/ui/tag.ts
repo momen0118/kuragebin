@@ -101,7 +101,7 @@ export class CreatureTag {
     this.follow();
   }
 
-  /** すぐに消す（瓶を切り替える、個体をすくうとき） */
+  /** すぐに消す（瓶を切り替える、個体を運ぶとき） */
   hide(): void {
     if (this.input) this.finishEdit(true);
     this.id = null;
