@@ -2,9 +2,10 @@
 // 瓶底の個体（ポリプ・ストロビラ）を作ったり消したりし、毎フレーム動かす。
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
 import { Group, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
-import { EPHYRA, SWIM } from '../config';
+import { EPHYRA, FOOD, SWIM } from '../config';
 import { createRng } from '../sim/rng';
-import { isSwimmer, type Creature, type JarState } from '../sim/state';
+import { isSwimmer, type Creature, type JarState, type Stage } from '../sim/state';
+import type { Eater } from './food';
 import { Jellyfish } from './jelly/jellyfish';
 import { Polyp } from './jelly/polyp';
 import { swimBounds, type Neighbor } from './jelly/swim';
@@ -16,11 +17,16 @@ interface SwimmerView {
   neighbor: Neighbor;
   /** 皿から離れるのを待っている（まだ描かない） */
   waiting: boolean;
+  /** 状態の段階と育ち具合（見せ場で食べる粒の数を決める） */
+  stage: Stage;
+  growth: number;
 }
 
 interface PolypView {
   kind: 'polyp';
   polyp: Polyp;
+  stage: Stage;
+  growth: number;
 }
 
 type View = SwimmerView | PolypView;
@@ -39,6 +45,8 @@ export class Creatures {
   private obstructed = false;
   private realSize = false;
   private readonly tmp = new Vector3();
+  /** 見せ場で食べる個体（毎フレーム作り直さないよう使い回す） */
+  private readonly eaterList: Eater[] = [];
 
   constructor(
     private readonly shared: SharedUniforms,
@@ -57,8 +65,8 @@ export class Creatures {
     return this.realSize;
   }
 
-  /** 瓶の個体に合わせる。新しい個体は作り、いなくなった個体は消す */
-  sync(jar: JarState): void {
+  /** 瓶の個体に合わせる。新しい個体は作り、いなくなった個体は消す。time はゲーム内の今（胃の餌の薄れ方に使う） */
+  sync(jar: JarState, time: number): void {
     const seen = new Set<number>();
     for (const c of jar.creatures) {
       seen.add(c.id);
@@ -71,7 +79,7 @@ export class Creatures {
         v = undefined;
       }
       if (!v) v = this.create(c);
-      this.apply(v, c, jar);
+      this.apply(v, c, jar, time);
     }
     for (const id of [...this.views.keys()]) if (!seen.has(id)) this.remove(id);
   }
@@ -82,7 +90,14 @@ export class Creatures {
     if (isSwimmer(c.stage)) {
       const jelly = new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius());
       jelly.group.traverse((o) => o.layers.enable(this.glowLayer));
-      const view: SwimmerView = { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false };
+      const view: SwimmerView = {
+        kind: 'swimmer',
+        jelly,
+        neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius },
+        waiting: false,
+        stage: c.stage,
+        growth: this.growthOf(c),
+      };
       // 皿を放しているストロビラの子なら、その皿が離れるまで待ってから泳ぎ出す
       const parent = c.parent !== null ? this.views.get(c.parent) : undefined;
       if (c.stage === 'ephyra' && parent?.kind === 'polyp' && parent.polyp.isReleasing) {
@@ -101,7 +116,7 @@ export class Creatures {
       this.group.add(jelly.group);
     } else {
       const polyp = new Polyp(this.shared, rng, c.spot ?? [0, 0]);
-      v = { kind: 'polyp', polyp };
+      v = { kind: 'polyp', polyp, stage: c.stage, growth: 1 };
       this.group.add(polyp.group);
     }
     this.views.set(c.id, v);
@@ -135,11 +150,15 @@ export class Creatures {
     jelly.relocate(best);
   }
 
-  private apply(v: View, c: Creature, jar: JarState): void {
+  private apply(v: View, c: Creature, jar: JarState, time: number): void {
+    v.stage = c.stage;
+    v.growth = this.growthOf(c);
     if (v.kind === 'swimmer') {
-      v.jelly.setGrowth(this.growthOf(c), this.startRadius());
+      v.jelly.setGrowth(v.growth, this.startRadius());
       v.neighbor.radius = v.jelly.radius;
+      v.jelly.stomach.sync(c.meal, time);
     } else {
+      v.polyp.stomach.sync(c.meal, time);
       v.polyp.sync(
         {
           stage: c.stage === 'strobila' ? 'strobila' : 'polyp',
@@ -279,10 +298,52 @@ export class Creatures {
     return { center: out.copy(v.jelly.swimmer.pos), radius: v.jelly.radius, swimmer: true };
   }
 
+  /**
+   * 餌の見せ場を始める：餌 at を食べた個体の胃の色を空から始め、見せ場で食べる粒の数を決める。
+   * 粒の数の合計を返す（食べた量と、段階・育ち具合による）
+   */
+  beginMeal(at: number): number {
+    let total = 0;
+    for (const v of this.views.values()) {
+      const stomach = v.kind === 'swimmer' ? v.jelly.stomach : v.polyp.stomach;
+      const bites = Math.max(1, Math.round(stomach.amount * this.bitesFor(v)));
+      if (stomach.begin(at, bites)) total += bites;
+    }
+    return total;
+  }
+
+  /** 食べた量 1 のときに見せ場で食べる粒の数 */
+  private bitesFor(v: View): number {
+    if (v.stage === 'adult') return FOOD.bitesAdult;
+    if (v.stage === 'ephyra') return FOOD.bitesEphyra[0] + (FOOD.bitesEphyra[1] - FOOD.bitesEphyra[0]) * v.growth;
+    return FOOD.bitesPolyp;
+  }
+
+  /** 見せ場で食べる個体（瓶の全員。皿から離れるのを待っているエフィラは除く） */
+  eaters(): readonly Eater[] {
+    const out = this.eaterList;
+    out.length = 0;
+    for (const [id, v] of this.views) {
+      if (v.kind === 'swimmer') {
+        if (!v.waiting) out.push({ id, stomach: v.jelly.stomach, jelly: v.jelly, polyp: null });
+      } else {
+        out.push({ id, stomach: v.polyp.stomach, jelly: null, polyp: v.polyp });
+      }
+    }
+    return out;
+  }
+
+  /** 見せ場を終える。食べきっていない個体の胃の色を、食べた量の分に合わせる（immediate ならすぐ） */
+  finishMeal(immediate: boolean): void {
+    for (const v of this.views.values()) (v.kind === 'swimmer' ? v.jelly.stomach : v.polyp.stomach).end(immediate);
+  }
+
   /** 泳ぐ個体をカップへ移す（この瓶では描かない）。移せたらその個体 */
   lift(id: number): Jellyfish | null {
     const v = this.views.get(id);
     if (v?.kind !== 'swimmer' || v.waiting) return null;
+    // 餌の見せ場の途中なら、胃の色はすぐに食べた量の分にする
+    v.jelly.stomach.end(true);
     this.views.delete(id);
     this.group.remove(v.jelly.group);
     this.carried.add(id);
@@ -290,9 +351,9 @@ export class Creatures {
   }
 
   /** カップから出ていった個体を、この瓶の個体にする（動きはそのまま） */
-  adopt(id: number, jelly: Jellyfish): void {
+  adopt(id: number, jelly: Jellyfish, stage: Stage = 'adult', growth = 1): void {
     this.carried.delete(id);
-    this.views.set(id, { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false });
+    this.views.set(id, { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, stage, growth });
     this.group.add(jelly.group);
   }
 

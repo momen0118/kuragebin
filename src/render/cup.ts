@@ -155,7 +155,8 @@ const DEFS = /* glsl */ `
 #define WATER_TINT vec3(${CUP.waterTint.map((v) => v.toFixed(3)).join(', ')})
 `;
 
-const LIGHT = /* glsl */ `
+/** 薄いプラスチックの光（カップとスポイトで共有）。WATER_Y の define が要る */
+export const PLASTIC_LIGHT_GLSL = /* glsl */ `
 uniform vec3 uKey, uKeyDir, uAmbient;
 // 部屋の映り込みの代わり：部屋は暗く、窓（左）の方向だけが明るい
 vec3 envColor(vec3 R) {
@@ -194,7 +195,7 @@ ${common}
 ${LAMP_GLSL}
 ${CLIP_GLSL}
 ${DEFS}
-${LIGHT}
+${PLASTIC_LIGHT_GLSL}
 uniform sampler2D tRoom;
 uniform vec2 uResolution;
 uniform float uAlpha, uWaterY, uSide;
@@ -263,7 +264,7 @@ ${common}
 ${LAMP_GLSL}
 ${CLIP_GLSL}
 ${DEFS}
-${LIGHT}
+${PLASTIC_LIGHT_GLSL}
 uniform mat4 uCupInv;
 uniform float uAlpha;
 in vec3 vWorldPos;

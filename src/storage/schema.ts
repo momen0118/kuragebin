@@ -32,6 +32,21 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
       journal: [],
     };
   },
+  // 3：餌。個体ごとの最後に食べた餌と、瓶ごとの最後に餌をやった時刻
+  2: (d) => {
+    const jars = Array.isArray(d.jars) ? d.jars : [];
+    return {
+      ...d,
+      jars: jars.map((jar: unknown) => {
+        if (!isObject(jar) || !Array.isArray(jar.creatures)) return jar;
+        return {
+          fedWallTime: null,
+          ...jar,
+          creatures: jar.creatures.map((c: unknown) => (isObject(c) ? { meal: null, ...c } : c)),
+        };
+      }),
+    };
+  },
 };
 
 export class SchemaError extends Error {}
@@ -57,6 +72,10 @@ function isSpot(v: unknown): boolean {
   return v === null || (Array.isArray(v) && v.length === 2 && isNumber(v[0]) && isNumber(v[1]));
 }
 
+function isMeal(v: unknown): boolean {
+  return v === null || (isObject(v) && isNumber(v.at) && isNumber(v.amount));
+}
+
 function validate(d: Raw): GameState {
   const nums = ['rng', 'time', 'pending', 'lastTick', 'createdAt', 'nextId'] as const;
   for (const k of nums) if (!isNumber(d[k])) throw new SchemaError(`${k} が読めません`);
@@ -66,6 +85,7 @@ function validate(d: Raw): GameState {
   for (const jar of d.jars) {
     if (!isObject(jar) || !Array.isArray(jar.creatures)) throw new SchemaError('瓶が読めません');
     if (typeof jar.resting !== 'boolean') jar.resting = false;
+    if (!(jar.fedWallTime === null || isNumber(jar.fedWallTime))) jar.fedWallTime = null;
     for (const c of jar.creatures) {
       if (
         !isObject(c) ||
@@ -83,6 +103,8 @@ function validate(d: Raw): GameState {
       ) {
         throw new SchemaError('個体が読めません');
       }
+      // 餌は読めなければ食べていないことにする（胃の色と成長の早まりだけなので）
+      if (!isMeal(c.meal)) c.meal = null;
     }
   }
   // 日誌は読めない出来事だけを除く（出来事ひとつのために全部を捨てない）

@@ -41,6 +41,32 @@ describe('書き出し・読み込み', () => {
   });
 });
 
+describe('版2からのマイグレーション', () => {
+  test('3-2 までの保存データを、餌を食べていない状態として読める', () => {
+    const s = advance(createInitialState(T0), 2 * 86400);
+    const v2 = JSON.parse(JSON.stringify(s)) as Record<string, unknown> & { jars: Array<Record<string, unknown> & { creatures: Array<Record<string, unknown>> }> };
+    v2.schema = 2;
+    for (const jar of v2.jars) {
+      delete jar.fedWallTime;
+      for (const c of jar.creatures) delete c.meal;
+    }
+    const m = migrate(v2);
+    expect(m.schema).toBe(SCHEMA_VERSION);
+    expect(m.jars.every((j) => j.fedWallTime === null)).toBe(true);
+    expect(m.jars[0]!.creatures.every((c) => c.meal === null)).toBe(true);
+    expect(m).toEqual(s);
+  });
+
+  test('読めない餌の記録は、食べていないことにする', () => {
+    const s = JSON.parse(JSON.stringify(createInitialState(T0)));
+    s.jars[0].creatures[0].meal = { at: 'x' };
+    s.jars[0].fedWallTime = 'y';
+    const m = migrate(s);
+    expect(m.jars[0]!.creatures[0]!.meal).toBeNull();
+    expect(m.jars[0]!.fedWallTime).toBeNull();
+  });
+});
+
 describe('版1からのマイグレーション', () => {
   test('フェーズ2の保存データ（成体1匹）を、今の形で読める', () => {
     const v1 = {

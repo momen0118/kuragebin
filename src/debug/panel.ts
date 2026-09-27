@@ -1,6 +1,7 @@
 // デバッグパネル。URL に ?debug（または #debug）を付けたときだけ出す。
 // 時刻の上書き（光の確認用）、背景写真の切り替えと重ね表示（位置合わせの確認用）、FPS、
-// 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、状態の表示・リセット・書き出し・読み込み。
+// 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、餌（1日1回を無視してやる・記録を消す）、
+// 状態の表示・リセット・書き出し・読み込み。
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
 import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
@@ -35,6 +36,12 @@ export interface DebugPanelOptions {
   onCap(n: number): void;
   /** ポリプ・ストロビラ・エフィラを実物大で描く */
   onRealSize(on: boolean): void;
+  /** 表示中の瓶に餌をやる（1日1回を無視して） */
+  onFeed(): void;
+  /** 餌をやった記録を消す（すべての瓶。その日のうちにまたやれる） */
+  onFeedClear(): void;
+  /** 食べた餌を消す（胃の色と成長の早まりがなくなる） */
+  onMealsClear(): void;
 }
 
 const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
@@ -97,6 +104,7 @@ export class DebugPanel {
   private readonly discsSel: HTMLSelectElement;
   private readonly progressEl: HTMLInputElement;
   private readonly capSel: HTMLSelectElement;
+  private readonly feedEl: HTMLDivElement;
   /** 選んでいる個体と、進みのつまみを動かしている最中か */
   private selected: number | null = null;
   private pickNewest = false;
@@ -149,6 +157,15 @@ export class DebugPanel {
         <label class="row"><input class="real" type="checkbox"> 実物大（ポリプ・エフィラ）</label>
       </details>
       <details>
+        <summary>餌</summary>
+        <div class="feed sub"></div>
+        <div class="row buttons">
+          <button type="button" class="feed-now">やる（1日1回を無視）</button>
+          <button type="button" class="feed-clear">記録を消す</button>
+          <button type="button" class="meals-clear">胃を空に</button>
+        </div>
+      </details>
+      <details>
         <summary>状態</summary>
         <div class="state sub"></div>
         <div class="row buttons">
@@ -180,6 +197,10 @@ export class DebugPanel {
     this.discsSel = root.querySelector('.discs')!;
     this.progressEl = root.querySelector('.progress')!;
     this.capSel = root.querySelector('.cap')!;
+    this.feedEl = root.querySelector('.feed')!;
+    root.querySelector('.feed-now')!.addEventListener('click', () => this.opts.onFeed());
+    root.querySelector('.feed-clear')!.addEventListener('click', () => this.opts.onFeedClear());
+    root.querySelector('.meals-clear')!.addEventListener('click', () => this.opts.onMealsClear());
 
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-spawn]')) {
       b.addEventListener('click', () => {
@@ -313,7 +334,7 @@ export class DebugPanel {
     const rows = this.listEl.querySelectorAll<HTMLElement>('[data-id]');
     jar.creatures.forEach((c, i) => {
       const pct = rows[i]?.querySelector('.pct');
-      if (pct) pct.textContent = `${Math.round(c.progress * 100)}%`;
+      if (pct) pct.textContent = `${Math.round(c.progress * 100)}%` + (c.meal ? ` 餌${Math.round(c.meal.amount * 100)}` : '');
     });
     const c = jar.creatures.find((x) => x.id === this.selected);
     if (c) {
@@ -322,6 +343,11 @@ export class DebugPanel {
       if (c.stage === 'strobila') this.discsSel.value = String(c.discs);
       if (!this.dragging) this.progressEl.value = String(c.progress);
     }
+  }
+
+  /** 表示中の瓶の餌：その日にやったか、見せ場の様子 */
+  showFeed(text: string): void {
+    if (this.feedEl.textContent !== text) this.feedEl.textContent = text;
   }
 
   tick(dt: number): void {

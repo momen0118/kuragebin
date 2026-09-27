@@ -35,6 +35,23 @@ describe('Game', () => {
     expect(g.state.time).toBe(0);
   });
 
+  test('餌は1日1回。やった記録は保存される', async () => {
+    const store = memoryStore();
+    let wall = new Date(2026, 8, 27, 20, 0).getTime();
+    const g = await Game.start(new Clock(() => wall), store);
+    expect(g.canFeed(0)).toBe('fed');
+    expect(g.feed(0)).toBe('fed');
+    expect(g.feed(0)).toBe('already');
+    expect(g.feed(1)).toBe('empty');
+    await g.save();
+    const saved = (await store.load()) as ReturnType<typeof createInitialState>;
+    expect(saved.jars[0]!.fedWallTime).toBe(wall);
+    expect(saved.jars[0]!.creatures[0]!.meal).not.toBeNull();
+    // 次の日の朝4時を過ぎたら、またやれる
+    wall = new Date(2026, 8, 28, 4, 30).getTime();
+    expect(g.canFeed(0)).toBe('fed');
+  });
+
   test('新しい版の保存データは上書きしない', async () => {
     const store = memoryStore();
     const newer = { ...createInitialState(T0), schema: SCHEMA_VERSION + 1 };

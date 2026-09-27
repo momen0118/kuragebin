@@ -19,7 +19,7 @@ import {
   Vector3,
   type Side,
 } from 'three';
-import { BELL, EPHYRA, JELLY_LOOK } from '../../config';
+import { BELL, EPHYRA, JELLY_LOOK, STOMACH } from '../../config';
 import { LOBES, PROFILE_SEGMENTS } from './profile';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
@@ -44,6 +44,9 @@ const DEFINES = /* glsl */ `
 #define GONAD_S ${GONAD_S.toFixed(3)}
 #define LAMP_SCATTER ${JELLY_LOOK.lampScatter.toFixed(3)}
 #define LAPPET_W ${EPHYRA.lappetWidth.toFixed(4)}
+#define STOMACH_COLOR vec3(${STOMACH.color.map((v) => v.toFixed(3)).join(', ')})
+#define STOMACH_BELL ${STOMACH.bell.toFixed(4)}
+#define STOMACH_POUCH ${STOMACH.pouch.toFixed(4)}
 `;
 
 const VERT = /* glsl */ `
@@ -163,6 +166,8 @@ uniform float uGlowPass, uLayer, uContract;
 // 放射管の枝分かれと環状管、四つ葉の濃さ（エフィラが育つにつれて 0 → 1）。
 // uYoung はエフィラの若さ（1 で放されたばかり）：小さな体は少し濃く、胃から腕へ伸びる管が見える
 uniform float uCanals, uGonads, uYoung;
+// 胃の中の餌の濃さ（0 で空。食べた餌がうっすら橙色に透ける）
+uniform float uMeal;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
 // 生殖腺そのものの色（uGonad は発光の強さを掛けた色なので、昼はほぼ黒になる）
@@ -205,6 +210,25 @@ float gonads(float s, float th) {
     g += ring + fill;
   }
   return g * (1.0 - smoothstep(0.85, 1.0, s / GONAD_S));
+}
+
+// 胃の中の餌（成体）：四つ葉の内側（胃のふくろ）と、そのあいだの真ん中の胃
+float pouches(float s, float th) {
+  vec2 q = vec2(cos(th), sin(th)) * (s / GONAD_S);
+  float g = exp(-pow(length(q) / 0.26, 2.0)) * 0.6;
+  for (int k = 0; k < 4; k++) {
+    float ang = PI * 0.25 + float(k) * PI * 0.5;
+    vec2 c = 0.43 * vec2(cos(ang), sin(ang));
+    g += exp(-pow(length(q - c) / 0.2, 2.0));
+  }
+  return g * (1.0 - smoothstep(0.85, 1.0, s / GONAD_S));
+}
+
+// 胃の中の餌（エフィラ）：真ん中の胃と、8本の腕へ伸びる管の付け根。育つと真ん中だけになる（あとは四つ葉の層）
+float bellStomach(float s, float th) {
+  float core = exp(-pow(s / 0.17, 2.0));
+  float arms = pow(0.5 + 0.5 * cos(8.0 * th), 8.0) * smoothstep(0.08, 0.16, s) * (1.0 - smoothstep(0.26, 0.42, s));
+  return mix(core + arms * 0.7, exp(-pow(s / 0.2, 2.0)) * 0.6, uGonads);
 }
 
 void main() {
@@ -258,6 +282,16 @@ void main() {
   float refr = gonad ? 0.0 : rim * (inner ? 0.12 : 0.22);
   col += bg * refr;
   float alpha = density * 0.5 + refr;
+
+  // 食べた餌が胃にうっすら橙色に透ける（夜はデスクライトの光が少し散る）
+  float meal = 0.0;
+  if (uMeal > 0.001) {
+    if (gonad) meal = STOMACH_POUCH * pouches(s, th) * uGonads;
+    else if (inner) meal = STOMACH_BELL * bellStomach(s, th);
+    meal *= uMeal;
+  }
+  col += STOMACH_COLOR * (light * 1.6 + uLampColor * lampSpot(vWorldPos) * 0.35 * LAMP_SCATTER) * meal;
+  alpha += meal * 0.5;
 
   // 光を散らしやすい所：輪郭、縁の帯、放射管、生殖腺。
   // 夜はデスクライトの光がここで散って、闇の中に海月の形が浮かぶ（円錐の外では暗い）
@@ -337,6 +371,8 @@ export interface Bell {
     uCanals: { value: number };
     uGonads: { value: number };
     uYoung: { value: number };
+    /** 胃の中の餌の濃さ（0〜1） */
+    uMeal: { value: number };
   };
 }
 
@@ -356,6 +392,7 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
     uCanals: { value: 1 },
     uGonads: { value: 1 },
     uYoung: { value: 0 },
+    uMeal: { value: 0 },
   };
   const bellGeo = grid(BELL.ringSegments, BELL.radialSegments, 1.35);
   const gonadGeo = grid(14, 64, 1);
