@@ -1,7 +1,7 @@
 // 泳ぎ。収縮の瞬間に前へ進み、緩和中はゆっくり沈む。
 // 壁・底・水面が近づくと向きを緩やかに変え、ぶつからない。
 import { Quaternion, Vector2, Vector3 } from 'three';
-import { BELL, EPHYRA, JAR, POKE, SWIM } from '../../config';
+import { BELL, EPHYRA, JAR, POKE, SCOOP, SWIM } from '../../config';
 import type { Rng } from '../../sim/rng';
 import type { Pulse } from './pulse';
 
@@ -10,17 +10,19 @@ const tmpA = new Vector3();
 const tmpB = new Vector3();
 const tmpQ = new Quaternion();
 
-/** 傘の中心が動ける範囲 */
+/** 傘の中心が動ける範囲。low は漂って沈んでいく先の下限（ひとりのときの泳ぎ方を決める） */
 export interface SwimBounds {
   radius: number;
   bottom: number;
   top: number;
+  low: number;
 }
 
-/** ほかの泳ぐ個体（近づきすぎたらよける） */
+/** ほかの泳ぐ個体（近づきすぎたらよける）。obstacle は個体でないもの（水の中のカップ） */
 export interface Neighbor {
   pos: Vector3;
   radius: number;
+  obstacle?: boolean;
 }
 
 /** 大きさと、ぎこちなさ（エフィラ）で変わる泳ぎの強さ。成体は SWIM の値そのもの */
@@ -47,6 +49,7 @@ export function swimBounds(bellRadius: number = BELL.radius): SwimBounds {
     radius: inner - bellRadius - SWIM.sidePadding,
     bottom: JAR.bottomThickness + SWIM.bottomPadding * low,
     top: JAR.waterLevel - bellRadius * BELL.apexY - SWIM.topPadding,
+    low: JAR.bottomThickness + SWIM.driftPadding * low,
   };
 }
 
@@ -80,6 +83,26 @@ export class Swimmer {
   private wasContracting = false;
   /** 瓶底から離れたばかり（秒）。泳げる範囲の下にいても押し上げず、自分で泳いで上がる */
   private rising = 0;
+  /** ほかに泳ぐ個体がいる（沈んでいく先を底の近くまで広げる） */
+  private crowded = false;
+  /** カップの水の中にいるときの、ついていく先（ワールド）。null なら瓶の中を泳いでいる */
+  private carried: Vector3 | null = null;
+  /** カップの中での揺れの強さの倍率 */
+  private carryStiff = 1;
+  /** カップの中で傘を合わせる向き（水の中でカップを傾けるとき、カップの軸）。null ならまっすぐ上 */
+  private carryUp: Vector3 | null = null;
+  /** ついていく先の前の位置となめらかにした速さ、先からのずれ（揺れ）とその速さ */
+  private readonly carryPrev = new Vector3();
+  private readonly carryVel = new Vector3();
+  private readonly carryOff = new Vector3();
+  private readonly carryOffVel = new Vector3();
+  /** カップの水ごと動いた量（この刻みの分）。触手と口腕も水と一緒に動かす。水ごとでないときは 0 */
+  readonly carryShift = new Vector3();
+  private carryWithWater = true;
+  /** 水に沈めたカップから、自分の拍動で泳いで出ていく間の道筋：カップの底の真ん中と、カップの軸 */
+  private guided = false;
+  private readonly guideBase = new Vector3();
+  private readonly guideAxis = new Vector3(0, 1, 0);
 
   constructor(
     private readonly rng: Rng,
@@ -129,8 +152,12 @@ export class Swimmer {
     };
   }
 
-  /** 位置と向きを決めなおす（ストロビラから離れたエフィラ）。速さは vel */
-  place(pos: Vector3, up: Vector3, vel: Vector3): void {
+  /**
+   * 位置と向きを決めなおす。速さは vel。ストロビラから離れたエフィラは泳いで上がる（cruise）
+   */
+  place(pos: Vector3, up: Vector3, vel: Vector3, mode: 'cruise' | 'drift' = 'cruise'): void {
+    this.carried = null;
+    this.guided = false;
     this.rising = pos.y < this.bounds.bottom ? 8 : 0;
     this.pos.copy(pos);
     this.vel.copy(vel);
@@ -138,9 +165,161 @@ export class Swimmer {
     this.axis.copy(UP).applyQuaternion(this.quat);
     this.wander.copy(this.axis);
     this.angVel.set(0, 0, 0);
-    this.mode = 'cruise';
-    this.modeTimer = SWIM.cruiseMaxTime * 0.3;
-    this.modeTarget = this.pickTarget('cruise');
+    this.mode = mode;
+    this.modeTimer = mode === 'cruise' ? SWIM.cruiseMaxTime * 0.3 : SWIM.driftMaxTime;
+    this.modeTarget = this.pickTarget(mode);
+  }
+
+
+  /**
+   * カップの水の中にいる。泳がずに target へ水ごと運ばれ、遅れて小さく揺れる。
+   * stiff はついていく強さの倍率。up を渡すと、傘をその向きへ合わせる（水の中で傾けたカップの軸）。
+   * null で瓶の中を泳ぐのに戻る（戻すときは place で置きなおす）
+   */
+  carry(target: Vector3 | null, stiff = 1, withWater = true, up: Vector3 | null = null): void {
+    this.carryWithWater = withWater;
+    this.guided = false;
+    if (!target) {
+      this.carried = null;
+      this.carryUp = null;
+      this.carryShift.set(0, 0, 0);
+      return;
+    }
+    if (up) (this.carryUp ??= new Vector3()).copy(up).normalize();
+    else this.carryUp = null;
+    if (!this.carried) {
+      this.carried = new Vector3().copy(target);
+      this.carryPrev.copy(target);
+      this.carryVel.set(0, 0, 0);
+      this.carryOff.copy(this.pos).sub(target);
+      this.carryOffVel.copy(this.vel);
+    }
+    this.carried.copy(target);
+    this.carryStiff = stiff;
+  }
+
+  get isCarried(): boolean {
+    return this.carried !== null;
+  }
+
+  /**
+   * 水に沈めて傾けたカップから、自分の拍動で泳いで出ていく。カップの軸 axis に沿ってだけ進み（壁を抜けない）、
+   * 傘はカップの軸へ向く。base はカップの底の真ん中（ワールド）。カップが動いている間は毎フレーム呼びなおす
+   */
+  guide(base: Vector3, axis: Vector3): void {
+    if (!this.guided) {
+      this.guided = true;
+      this.carried = null;
+      this.carryUp = null;
+      this.carryShift.set(0, 0, 0);
+    }
+    this.guideBase.copy(base);
+    this.guideAxis.copy(axis).normalize();
+  }
+
+  /** カップから泳いで出ていくところか */
+  get isGuided(): boolean {
+    return this.guided;
+  }
+
+  /** 泳いで出ていく間、カップの底からカップの軸に沿って進んだ長さ */
+  get guideProgress(): number {
+    return tmpA.copy(this.pos).sub(this.guideBase).dot(this.guideAxis);
+  }
+
+  /** カップから出た：姿勢も動きもそのままで、瓶の中の泳ぎに戻る（drift ならゆっくり沈んでいく） */
+  letGo(vel: Vector3, mode: 'cruise' | 'drift'): void {
+    this.carried = null;
+    this.carryUp = null;
+    this.guided = false;
+    this.carryShift.set(0, 0, 0);
+    this.vel.copy(vel);
+    this.rising = 0;
+    this.mode = mode;
+    this.modeTimer = mode === 'cruise' ? SWIM.cruiseMaxTime * 0.3 : SWIM.driftMaxTime;
+    this.modeTarget = this.pickTarget(mode);
+  }
+
+  /** 瓶から瓶へ座標を移す（x を dx だけずらす）。動きはそのまま */
+  translate(dx: number): void {
+    this.pos.x += dx;
+    if (this.carried) {
+      this.carried.x += dx;
+      this.carryPrev.x += dx;
+    }
+  }
+
+  /**
+   * カップの中：カップの水ごと運ばれる。カップが動きを変えると、水の中で慣性で少し取り残されて揺れ、
+   * ずれた向きと反対へ少し傾く（ずれはカップの中に収まる大きさまで）。拍動は続くが、押し出しはしない
+   */
+  private stepCarried(dt: number): void {
+    const target = this.carried!;
+    const stiff = this.carryStiff;
+    // ついていく先の速さ（なめらかに）と、その変わり方（加速度）
+    if (this.carryWithWater) this.carryShift.copy(target).sub(this.carryPrev);
+    else this.carryShift.set(0, 0, 0);
+    const raw = tmpA.copy(target).sub(this.carryPrev).divideScalar(Math.max(dt, 1e-4));
+    this.carryPrev.copy(target);
+    const before = tmpB.copy(this.carryVel);
+    this.carryVel.lerp(raw, 1 - Math.exp(-25 * dt));
+    const acc = before.sub(this.carryVel).divideScalar(-Math.max(dt, 1e-4));
+    const k = SCOOP.jellySpring * stiff;
+    const c = SCOOP.jellyDamping * Math.sqrt(stiff);
+    const off = this.carryOff;
+    const ov = this.carryOffVel;
+    ov.x += (-k * off.x - c * ov.x - acc.x) * dt;
+    ov.y += (-k * off.y - c * ov.y - acc.y) * dt;
+    ov.z += (-k * off.z - c * ov.z - acc.z) * dt;
+    off.addScaledVector(ov, dt);
+    const max = SCOOP.jellySway / stiff;
+    const len = off.length();
+    if (len > max) {
+      off.multiplyScalar(max / len);
+      ov.multiplyScalar(0.5);
+    }
+    this.pos.copy(target).add(off);
+    this.vel.copy(this.carryVel).add(ov);
+    // ずれた向きと反対へ少し傾く。水の中で傾けたカップでは、傘もカップの軸へ向く（壁に沿って一緒に傾く）
+    const up = this.carryUp;
+    const desired = tmpA.copy(up ?? UP).add(tmpB.set(-off.x * SCOOP.jellyTilt, 0, -off.z * SCOOP.jellyTilt)).normalize();
+    if (up) this.turnToward(desired, SCOOP.jellyTurn, SCOOP.jellyTurnDamping, dt);
+    else this.turnToward(desired, SWIM.turnGain, SWIM.turnDamping, dt);
+  }
+
+  /** 傘の向きを desired へ、ばね（gain）と減衰で回す */
+  private turnToward(desired: Vector3, gain: number, damping: number, dt: number): void {
+    const torque = tmpB.crossVectors(this.axis, desired);
+    this.angVel.addScaledVector(torque, gain * dt);
+    this.angVel.multiplyScalar(Math.exp(-damping * dt));
+    const w = this.angVel.length();
+    if (w > 1e-6) {
+      tmpQ.setFromAxisAngle(tmpB.copy(this.angVel).divideScalar(w), w * dt);
+      this.quat.premultiply(tmpQ).normalize();
+    }
+    this.axis.copy(UP).applyQuaternion(this.quat);
+  }
+
+  /**
+   * 水に沈めたカップから泳いで出ていく：拍動のたびにカップの軸に沿ってふわっと進む（ふだんより強く押し、抵抗は小さく）。
+   * 軸から外れた分は戻し、カップの底のほうへは戻らない。沈む力はかけない
+   */
+  private stepGuided(dt: number, pulse: Pulse): void {
+    const S = this.scale;
+    pulse.setStyle(1, 0, 1);
+    const A = this.guideAxis;
+    const thrust = SWIM.thrust * Math.max(S.thrust, SCOOP.exitMinThrust) * SCOOP.exitThrust;
+    this.vel.addScaledVector(this.axis, thrust * pulse.thrustRate() * dt);
+    this.vel.multiplyScalar(Math.exp(-SCOOP.exitDrag * dt));
+    const along = Math.max(this.vel.dot(A), 0);
+    this.vel.copy(A).multiplyScalar(along);
+    this.pos.addScaledVector(this.vel, dt);
+    // 軸からのずれ（カップの壁のほう）を戻す
+    const rel = tmpA.copy(this.pos).sub(this.guideBase);
+    const s = rel.dot(A);
+    rel.addScaledVector(A, -s);
+    this.pos.addScaledVector(rel, -Math.min(1, 5 * dt));
+    this.turnToward(tmpA.copy(A), SCOOP.jellyTurn, SCOOP.jellyTurnDamping, dt);
   }
 
   /** 大きく傾いている最中か */
@@ -182,7 +361,9 @@ export class Swimmer {
   private pickTarget(mode: 'cruise' | 'drift'): number {
     const b = this.bounds;
     const [lo, hi] = mode === 'drift' ? SWIM.driftTargetLow : SWIM.cruiseTargetHigh;
-    return b.bottom + (b.top - b.bottom) * this.rng.range(lo, hi);
+    // ほかの個体がいるときは、底の近くまで沈んでいく（瓶の下のほうも使う）
+    const low = this.crowded ? b.bottom : b.low;
+    return low + (b.top - low) * this.rng.range(lo, hi);
   }
 
   /** 瓶の中の行きたい場所（水平）を決めなおす */
@@ -204,7 +385,16 @@ export class Swimmer {
   }
 
   update(dt: number, pulse: Pulse, others: readonly Neighbor[] = []): void {
+    if (this.carried) {
+      this.stepCarried(dt);
+      return;
+    }
+    if (this.guided) {
+      this.stepGuided(dt, pulse);
+      return;
+    }
     const S = this.scale;
+    this.crowded = others.some((o) => o.pos !== this.pos && !o.obstacle);
     // エフィラは縮むたびに少し転がる（ぎこちない）
     const contracting = pulse.contracting;
     if (contracting && !this.wasContracting && S.tumble > 0) {

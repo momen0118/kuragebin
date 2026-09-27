@@ -59,6 +59,7 @@ export class Jellyfish {
     this.swimmer = new Swimmer(rng);
     this.shape = new BellShape(rng);
     this.look = {
+      uOpacity: { value: 1 },
       uBody: { value: new Vector3(...JELLY_LOOK.body) },
       uGlow: { value: new Vector3(...JELLY_LOOK.glow) },
       uGonad: { value: new Vector3(...JELLY_LOOK.gonad) },
@@ -135,9 +136,9 @@ export class Jellyfish {
     this.swimmer.setForm(f.radius, f.jerk);
   }
 
-  /** 位置と向きを決めなおす（ストロビラから離れたばかりのエフィラ）。触手と口腕は根元から伸ばしなおす */
-  place(pos: Vector3, up: Vector3, vel: Vector3): void {
-    this.swimmer.place(pos, up, vel);
+  /** 位置と向きを決めなおす（ストロビラから離れたエフィラ、確認用に置くとき）。触手と口腕は根元から伸ばしなおす */
+  place(pos: Vector3, up: Vector3, vel: Vector3, mode: 'cruise' | 'drift' = 'cruise'): void {
+    this.swimmer.place(pos, up, vel, mode);
     // 離れたばかりは腕を畳んでいて、ゆっくり開く
     this.pulse.startle(0.8);
     this.tentacles.reset();
@@ -155,6 +156,43 @@ export class Jellyfish {
     this.updateMatrix();
     this.step(0);
     this.sync();
+  }
+
+  /**
+   * カップの水の中にいる。泳がずに target へ水ごと運ばれ、遅れて小さく揺れる。
+   * stiff はついていく強さの倍率。up を渡すと、傘をその向き（水の中で傾けたカップの軸）へ合わせる。
+   * null で瓶の中を泳ぐのに戻る（戻すときは place で置きなおす）
+   */
+  carry(target: Vector3 | null, stiff = 1, withWater = true, up: Vector3 | null = null): void {
+    this.swimmer.carry(target, stiff, withWater, up);
+  }
+
+  /**
+   * 水に沈めて傾けたカップから、自分の拍動で泳いで出ていく（カップの軸に沿って）。base はカップの底の真ん中、
+   * axis はカップの軸（ワールド）。はじめて呼んだときは、次の拍動を早める
+   */
+  swimOut(base: Vector3, axis: Vector3, pulseDelay: number): void {
+    if (!this.swimmer.isGuided) this.pulse.soon(pulseDelay);
+    this.swimmer.guide(base, axis);
+  }
+
+  /** カップから出た：姿勢も触手もそのままで泳ぎに戻る */
+  letGo(vel: Vector3, mode: 'cruise' | 'drift'): void {
+    this.swimmer.letGo(vel, mode);
+  }
+
+  /** 瓶から瓶へ座標を移す（x を dx だけずらす）。形と動きはそのまま */
+  translate(dx: number): void {
+    this.swimmer.translate(dx);
+    this.tentacles.translate(dx);
+    this.arms.translate(dx);
+    this.updateMatrix();
+    this.sync();
+  }
+
+  /** 濃さ（1 がふだん）。カップに移すとき、瓶の中の姿をふっと消して、カップの中に現す */
+  setOpacity(a: number): void {
+    this.look.uOpacity.value = a;
   }
 
   /** 描く順番（奥の個体から先に描く）。base から少しずつ */
@@ -216,6 +254,15 @@ export class Jellyfish {
     if (dt > 0) {
       this.pulse.update(dt);
       this.swimmer.update(dt, this.pulse, this.neighbors);
+      // カップの水ごと運ばれている：触手と口腕も水と一緒に動く（引きずられない）。瓶の壁の中に収めない
+      const carried = this.swimmer.isCarried;
+      this.tentacles.confined = !carried;
+      this.arms.confined = !carried;
+      const w = this.swimmer.carryShift;
+      if (carried && w.lengthSq() > 0) {
+        this.tentacles.translate(w.x, w.y, w.z);
+        this.arms.translate(w.x, w.y, w.z);
+      }
     }
     this.shape.update(dt, this.pulse);
     this.updateMatrix();

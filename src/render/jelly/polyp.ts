@@ -321,7 +321,7 @@ export class Polyp {
       return m;
     };
     this.body = [make(BackSide), make(FrontSide)];
-    const look = { uBody: tint, uGlow: { value: new Vector3() } };
+    const look = { uBody: tint, uGlow: { value: new Vector3() }, uOpacity: { value: 1 } };
     this.strands = createStrandMesh(shared, look, n, NODES, seeds, POLYP.tentacleWidthPx, POLYP.tentacleBrightness);
     this.group.add(this.body[0]!, this.strands, this.body[1]!);
     this.setRenderOrder(12);
@@ -337,6 +337,16 @@ export class Polyp {
     this.body[0]!.renderOrder = base;
     this.strands.renderOrder = base + 0.1;
     this.body[1]!.renderOrder = base + 0.2;
+  }
+
+  /** 体のてっぺんのあたり（ワールド、触手の冠の上）。札を出す位置や、指で押せる所に使う */
+  top(out: Vector3): Vector3 {
+    return out.copy(this.up).multiplyScalar(this.height * 1.5).add(this.base);
+  }
+
+  /** 体の高さ（瓶の高さ単位） */
+  get size(): number {
+    return this.height;
   }
 
   /** エフィラを放しているところか（離れるのを待つ皿がある） */

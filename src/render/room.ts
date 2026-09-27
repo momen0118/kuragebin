@@ -77,6 +77,14 @@ uniform int uPattern;
 uniform vec3 uCamPos;
 uniform float uPitch;
 uniform float uTableBackZ, uTableLeftX;
+/**
+ * 瓶を切り替えるときの視差：写真を横にずらす量（写真の uv）。x は壁、y は手前の天板。
+ * 見ている側が机に沿って横へずれたように、手前ほど大きく、奥の壁はほんの少し
+ */
+uniform vec2 uShift;
+/** 天板に立っている瓶の横の位置（ワールド x）と数。デスクライトの光だまりは瓶ごとに落ちる */
+uniform float uJarX[2];
+uniform int uJarCount;
 in vec2 vUv;
 
 // 写真の uv を通る視線が天板（y = 0）に当たる点。天板の外なら w = 0
@@ -120,8 +128,9 @@ vec3 photo(int i, vec2 uvRef, float b) {
   return b < 0.5 ? mix(a, m, b * 2.0) : mix(m, s, b * 2.0 - 1.0);
 }
 
-// 写真の uv の点の部屋の色：時刻の写真の重ね合わせ、明け方の青み、夜のデスクライトの光だまり
-vec3 roomAt(vec2 uv, float b) {
+// 写真の uv の点の部屋の色：時刻の写真の重ね合わせ、明け方の青み、夜のデスクライトの光だまり。
+// uv は写真を読む所（視差でずらしたあと）、geo はその画素が見ている天板の上の点を求める所（ずらす前）
+vec3 roomAt(vec2 uv, vec2 geo, float b) {
   vec3 c = vec3(0.0);
   if (uWeights.x > 0.0005) c += uWeights.x * photo(0, uv, b);
   if (uWeights.y > 0.0005) c += uWeights.y * photo(1, uv, b);
@@ -130,10 +139,16 @@ vec3 roomAt(vec2 uv, float b) {
   c *= mix(vec3(1.0), uDawnTint, uDawn);
   // 夜のデスクライト：天板に楕円の光だまり。昼の写真の天板（木目）を、ライトの色で照らす
   if (uLampLevel > 0.001) {
-    vec4 tp = tablePoint(uv);
+    vec4 tp = tablePoint(geo);
     if (tp.w > 0.0) {
-      float lit = lampSpot(tp.xyz) * saturate(lampDir(tp.xyz).y);
-      c += photo(0, uv, b) * uLampColor * lit * tp.w * ${LAMP.poolGain.toFixed(3)};
+      // ライトは瓶ごとにあり、光だまりは瓶と一緒に動く。すれ違う間は2つの光だまりが重なる
+      float lit = 0.0;
+      for (int i = 0; i < 2; i++) {
+        if (i >= uJarCount) break;
+        vec3 q = tp.xyz - vec3(uJarX[i], 0.0, 0.0);
+        lit += lampSpot(q) * saturate(lampDir(q).y);
+      }
+      c += photo(0, uv, b) * uLampColor * min(lit, 1.5) * tp.w * ${LAMP.poolGain.toFixed(3)};
     }
   }
   // 確認用：別の写真を半透明で重ねる
@@ -144,7 +159,7 @@ vec3 roomAt(vec2 uv, float b) {
 // 手前の天板。写真の下端（天板の手前の縁と、その下の暗い帯）の代わりに、縁より少し上から下は
 // 天板のいちばん下の帯を下へ引き伸ばす（手前ほど大きく写る）。下ほど横に強くぼかし、暗くして黒に溶かす。
 // t は引き伸ばしの始まりからの距離（写真px）
-vec3 foreground(float x, float t, float b0) {
+vec3 foreground(float x, float t, float b0, vec2 geo) {
   // 引き伸ばし：始まりでは写真そのまま、下へ行くほど帯の下端（縁の手前）へ寄って大きく写る
   float ys = FG_START + FG_BAND * (1.0 - exp(-t / FG_BAND));
   float k = saturate(t / FG_FADE);
@@ -157,7 +172,7 @@ vec3 foreground(float x, float t, float b0) {
   for (int i = -4; i <= 4; i++) {
     float o = float(i) * 0.5;
     float w = exp(-o * o * 0.5);
-    sum += roomAt(uv + vec2(o * sigma, 0.0), b) * w;
+    sum += roomAt(uv + vec2(o * sigma, 0.0), geo, b) * w;
     wsum += w;
   }
   // 下ほど暗く、黒に溶かす
@@ -165,8 +180,11 @@ vec3 foreground(float x, float t, float b0) {
 }
 
 void main() {
-  vec2 uv = vUv * uCoverScale + uCoverOffset;
-  float py = (1.0 - uv.y) * ${PHOTO.height.toFixed(1)};
+  vec2 geo = vUv * uCoverScale + uCoverOffset;
+  float py = (1.0 - geo.y) * ${PHOTO.height.toFixed(1)};
+  // 視差：奥の壁はほんの少し、天板は手前ほど大きくずれる
+  float near = smoothstep(${ROOM.parallaxFrom.toFixed(1)}, ${ROOM.parallaxTo.toFixed(1)}, py);
+  vec2 uv = geo + vec2(mix(uShift.x, uShift.y, near), 0.0);
   // 横長の画面：写真の左右の端ほどぼかし、暗くして黒に溶かす
   float edge = 1.0;
   float extra = 0.0;
@@ -177,9 +195,9 @@ void main() {
   }
   vec3 c;
   if (py > FG_START) {
-    c = foreground(uv.x, py - FG_START, min(1.0, blurAmount(FG_START) + extra));
+    c = foreground(uv.x, py - FG_START, min(1.0, blurAmount(FG_START) + extra), geo);
   } else {
-    c = roomAt(uv, min(1.0, blurAmount(py) + extra));
+    c = roomAt(uv, geo, min(1.0, blurAmount(py) + extra));
   }
   c *= edge * edge;
   // 確認用：屈折の写り方を見るための縦縞
@@ -215,6 +233,14 @@ function alignUniform(name: PhotoName): Vector4 {
   const a = PHOTO_ALIGN[name];
   // 写真px → UV（v は上向き）
   return new Vector4(a.offset[0] / PHOTO.width, -a.offset[1] / PHOTO.height, a.scale[0], a.scale[1]);
+}
+
+/** 瓶の切り替えで変わる部屋の描き方 */
+export interface RoomView {
+  /** 写真の横のずれ（写真の uv）：奥の壁、手前の天板 */
+  shift: readonly [number, number];
+  /** 天板に立っている瓶の横の位置（ワールド x） */
+  jars: readonly number[];
 }
 
 export class Room {
@@ -259,6 +285,9 @@ export class Room {
       uEdgeFade: { value: 0 },
       uOverlay: { value: -1 },
       uPattern: { value: 0 },
+      uShift: { value: new Vector2(0, 0) },
+      uJarX: { value: [0, 0] },
+      uJarCount: { value: 1 },
     });
   }
 
@@ -294,9 +323,22 @@ export class Room {
     return b;
   }
 
-  /** 画面に合わせて描く。aspect が null なら写真全体をそのまま描く（瓶のレンズが画面の外を映すため） */
-  render(renderer: WebGLRenderer, target: WebGLRenderTarget, light: LightState, aspect: number | null): void {
+  /**
+   * 画面に合わせて描く。aspect が null なら写真全体をそのまま描く（瓶のレンズが画面の外を映すため）。
+   * view は瓶の切り替えの視差（写真の uv のずれ：壁, 手前の天板）と、天板に立っている瓶の横の位置（ワールド x、2つまで）
+   */
+  render(
+    renderer: WebGLRenderer,
+    target: WebGLRenderTarget,
+    light: LightState,
+    aspect: number | null,
+    view: RoomView = { shift: [0, 0], jars: [0] },
+  ): void {
     const u = this.composite.uniforms;
+    u.uShift.value.set(view.shift[0], view.shift[1]);
+    u.uJarCount.value = Math.min(view.jars.length, 2);
+    u.uJarX.value[0] = view.jars[0] ?? 0;
+    u.uJarX.value[1] = view.jars[1] ?? 0;
     const cover = aspect === null ? { scale: [1, 1], offset: [0, 0] } : coverTransform(aspect);
     u.uCoverScale.value.set(cover.scale[0]!, cover.scale[1]!);
     u.uCoverOffset.value.set(cover.offset[0]!, cover.offset[1]!);

@@ -91,6 +91,8 @@ function validate(d: Raw): GameState {
   );
   // 設定は足りない項目を初期値で埋める（あとから設定が増えても読める）
   const settings = isObject(d.settings) ? d.settings : {};
-  d.settings = { ...DEFAULT_SETTINGS, ...settings };
+  const merged = { ...DEFAULT_SETTINGS, ...settings };
+  if (!isNumber(merged.jar) || merged.jar < 0 || merged.jar >= d.jars.length) merged.jar = 0;
+  d.settings = merged;
   return d as unknown as GameState;
 }

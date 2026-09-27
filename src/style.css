@@ -19,6 +19,7 @@ body {
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
   font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
 }
@@ -234,6 +235,139 @@ body {
 }
 
 .lamp-toggle:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
+}
+
+/* 下端の中央の点3つ（今どの瓶か）。明るさは見ている位置に合わせて JS で変える */
+.jar-dots {
+  position: fixed;
+  left: 50%;
+  /* 右下のアイコン（44px、下から12px）の真ん中の高さにそろえる */
+  bottom: calc(env(safe-area-inset-bottom) + 31px);
+  transform: translateX(-50%);
+  display: flex;
+  gap: 9px;
+  pointer-events: none;
+}
+
+.jar-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgb(255, 255, 255);
+  opacity: 0.2;
+}
+
+/*
+ * 個体の札。図鑑や標本の注記のように、個体から細い線を斜め上へ引き、短い横線の上に名前、下に段階と日数。
+ * 位置（折れる所）は JS で合わせる。線も文字も細く淡く。明るい昼の水の前でも読めるよう、ごく薄い影を敷く
+ */
+.creature-note {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  color: rgba(238, 238, 238, 0.9);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.8s ease;
+  will-change: transform, opacity;
+}
+
+.creature-note.shown {
+  opacity: 1;
+  transition-duration: 0.35s;
+}
+
+/* 瓶を切り替えるときなどは、すぐに消す */
+.creature-note.quick {
+  transition-duration: 0.15s;
+}
+
+.creature-note .lead {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+}
+
+.creature-note .lead path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.creature-note .lead .line {
+  stroke: rgba(238, 238, 238, 0.62);
+  stroke-width: 0.8px;
+}
+
+.creature-note .lead .halo {
+  stroke: rgba(0, 0, 0, 0.22);
+  stroke-width: 2.4px;
+}
+
+.creature-note .name,
+.creature-note .sub {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.55);
+}
+
+.creature-note .name {
+  /* 押しやすいよう、見た目より広く取る */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.35;
+  letter-spacing: 0.05em;
+  touch-action: manipulation;
+}
+
+.creature-note.shown .name {
+  pointer-events: auto;
+}
+
+.creature-note button.name::after {
+  content: '';
+  position: absolute;
+  inset: -8px -6px -4px;
+}
+
+.creature-note .name.unnamed {
+  opacity: 0.6;
+}
+
+.creature-note .sub {
+  font-size: 10px;
+  line-height: 1.3;
+  letter-spacing: 0.03em;
+  opacity: 0.66;
+}
+
+/* 名前を入れているとき。16px 未満だと iOS が画面を拡大する */
+.creature-note input.name {
+  width: 9em;
+  font-size: 16px;
+  line-height: 1.3;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.creature-note input.name::placeholder {
+  color: rgba(238, 238, 238, 0.4);
+}
+
+.creature-note button.name:focus-visible {
   outline: 1px solid rgba(255, 255, 255, 0.35);
   outline-offset: 2px;
 }

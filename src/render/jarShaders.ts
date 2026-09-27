@@ -22,6 +22,12 @@ export const JAR_DEFINES = /* glsl */ `
 #define SPARKLE_CELL ${JAR.sparkleCell.toFixed(5)}
 #define SPARKLE_RATE ${JAR.sparkleRate.toFixed(4)}
 #define RING_SWAY ${CAUSTIC.ringSway.toFixed(4)}
+#define RIPPLE_SPEED ${WATER.rippleSpeed.toFixed(4)}
+#define RIPPLE_LEN ${WATER.rippleWavelength.toFixed(4)}
+#define RIPPLE_WIDTH ${WATER.rippleWidth.toFixed(4)}
+#define RIPPLE_DECAY ${WATER.rippleDecay.toFixed(4)}
+#define RIPPLE_H ${WATER.rippleHeight.toFixed(5)}
+#define RIPPLE_SHINE ${WATER.rippleShine.toFixed(4)}
 `;
 
 /**
@@ -36,13 +42,39 @@ float glowFall(vec3 p, vec3 glowPos) {
 }
 `;
 
-/** 水面の高さ。海月の拍動で揺れたときだけ波立つ（ag は 0〜1） */
+/**
+ * 小さな波紋。uRipples の1つずつ (x, z, 始まった時刻, 強さ) から輪が広がり、だんだん消える。
+ * 返すのは高さ（瓶の高さ単位）と、輪の立ち具合（水面の光り方に使う、0〜1ほど）
+ */
+export const RIPPLE_GLSL = /* glsl */ `
+uniform vec4 uRipples[4];
+vec2 ripple(vec2 xz, float t) {
+  float h = 0.0;
+  float g = 0.0;
+  for (int i = 0; i < 4; i++) {
+    vec4 r = uRipples[i];
+    if (r.w <= 0.0) continue;
+    float age = t - r.z;
+    if (age < 0.0 || age > RIPPLE_DECAY * 6.0) continue;
+    float d = length(xz - r.xy);
+    float x = d - age * RIPPLE_SPEED;
+    float env = exp(-x * x / (RIPPLE_WIDTH * RIPPLE_WIDTH)) * exp(-age / RIPPLE_DECAY) * r.w / (1.0 + d * 6.0);
+    float ph = x * 6.2831853 / RIPPLE_LEN;
+    h += env * cos(ph);
+    g += env * abs(sin(ph));
+  }
+  return vec2(h * RIPPLE_H, g);
+}
+`;
+
+/** 水面の高さ。海月の拍動で揺れたときだけ波立つ（ag は 0〜1）。カップの波紋も足す */
 export const WATER_HEIGHT = /* glsl */ `
+${RIPPLE_GLSL}
 float waterHeight(vec2 xz, float t, float ag) {
   float w = sin(xz.x * 23.0 + t * 1.3) * cos(xz.y * 19.0 - t * 1.05)
           + 0.6 * sin((xz.x - xz.y) * 31.0 + t * 1.9)
           + 0.4 * cos((xz.x * 0.7 + xz.y) * 43.0 - t * 2.4);
-  return WATER_Y + WAVE_H * w * 0.5 * ag;
+  return WATER_Y + WAVE_H * w * 0.5 * ag + ripple(xz, t).x;
 }
 `;
 
@@ -161,6 +193,11 @@ uniform sampler2D tBloom;
 uniform float uBloomStrength;
 uniform vec2 uResolution;
 uniform vec2 uCoverScale, uCoverOffset;
+// 瓶の切り替えの視差で、部屋の写真が横にずれている量（写真の uv、奥の壁）
+uniform float uParallax;
+// 写真の外の左を窓の光にする度合い。見ている瓶は 1。すれ違って横へ離れた瓶は 0 で、写真を折り返して読む
+// （離れた瓶の縁が写真の外ばかり映して、白い板のように光らないように）
+uniform float uWindowSide;
 uniform mat4 uViewProj;
 uniform float uTime, uAgitation, uLensLight;
 uniform vec3 uKey, uKeyDir, uAmbient, uGlowPos, uGlowColor;
@@ -187,9 +224,10 @@ vec2 toScreen(vec3 p) {
  * 写真の外は、左（窓の側）は窓の光で明るく、右は暗い部屋
  */
 vec3 backdrop(vec2 s) {
-  vec2 p = s * uCoverScale + uCoverOffset;
-  vec3 wide = texture(tRoomWide, clamp(p, vec2(0.001), vec2(0.999))).rgb;
-  float left = smoothstep(0.02, 0.1, -p.x);
+  vec2 p = s * uCoverScale + uCoverOffset + vec2(uParallax, 0.0);
+  vec2 q = vec2(mix(abs(p.x), p.x, uWindowSide), p.y);
+  vec3 wide = texture(tRoomWide, clamp(q, vec2(0.001), vec2(0.999))).rgb;
+  float left = smoothstep(0.02, 0.1, -p.x) * uWindowSide;
   float right = smoothstep(0.0, 0.2, p.x - 1.0);
   wide = mix(wide, uKey * uWindowBand + uAmbient * 0.3, left);
   wide *= 1.0 - 0.75 * right;
@@ -437,13 +475,15 @@ void main() {
 }
 `;
 
-/** 水面。少し見下ろす構図なので、縁が細く光る程度。夜は裏側に海月の光がうっすら映る */
+/** 水面。少し見下ろす構図なので、縁が細く光る程度。夜は裏側に海月の光がうっすら映る。波紋の輪は細く光る */
 export const SURFACE_FRAG = /* glsl */ `
 ${common}
 ${JAR_DEFINES}
 ${GLOW_FALL}
 ${LAMP_GLSL}
+${RIPPLE_GLSL}
 uniform vec3 uKey, uAmbient, uGlowPos, uGlowColor;
+uniform float uTime;
 in vec3 vWorldPos;
 in vec2 vUv;
 void main() {
@@ -453,6 +493,8 @@ void main() {
   // デスクライトが差すと、水面の縁が細く光り、光の当たる所がほんのり明るい
   vec3 lampC = uLampColor * lampSpot(vWorldPos);
   vec3 col = (uAmbient * 0.5 + uKey * 0.1 + lampC * 0.25) * rim * 0.6 + uGlowColor * g * 0.08 + lampC * 0.012;
-  gl_FragColor = vec4(col, 0.03 + 0.05 * rim);
+  float rp = min(ripple(vWorldPos.xz, uTime).y, 1.5);
+  col += (uAmbient * 0.6 + uKey * 0.25 + lampC * 0.8) * rp * RIPPLE_SHINE;
+  gl_FragColor = vec4(col, 0.03 + 0.05 * rim + 0.12 * rp);
 }
 `;

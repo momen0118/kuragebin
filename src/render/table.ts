@@ -43,12 +43,16 @@ ${LAMP_GLSL}
 uniform sampler2D tRoom;
 uniform vec2 uResolution;
 uniform vec3 uKey, uGlowPos, uGlowColor, uLightDir;
-uniform float uShadow, uLensLight, uAgitation, uTime;
+uniform float uShadow, uLensLight, uTime;
 uniform float uTableBackZ, uTableLeftX;
+/** 天板に立っている瓶の横の位置（ワールド x）、数、瓶ごとの水面の揺れ（すれ違う間は2つ） */
+uniform float uJarX[2];
+uniform int uJarCount;
+uniform float uJarAgitation[2];
 in vec3 vWorldPos;
 
-// 光へ向かう線が瓶を通るときの影（x）と、水の円筒レンズが集めた光（y）
-vec2 jarShade(vec3 P, vec3 L) {
+// 光へ向かう線が瓶を通るときの影（x）と、水の円筒レンズが集めた光（y）。P は瓶の底の中心から見た位置
+vec2 jarShade(vec3 P, vec3 L, float agitation) {
   vec2 lxz = L.xz;
   float l2 = dot(lxz, lxz);
   if (l2 < 1e-5) return vec2(0.0);
@@ -67,7 +71,7 @@ vec2 jarShade(vec3 P, vec3 L) {
   float block = inside * below * (0.35 + 0.4 * smoothstep(0.6, 0.97, d)) / (1.0 + 0.8 * along);
 
   // 水の円筒が光を集める弧。縁を通る光ほど手前で集まる。いつもゆっくり揺らめく
-  vec2 sw = causticSway(side, uTime, uAgitation);
+  vec2 sw = causticSway(side, uTime, agitation);
   float f = ARC_FOCUS * (1.0 - 0.35 * d * d) + sw.x;
   float w = ARC_WIDTH * (1.0 + 0.8 * d);
   // 芯と、そのまわりのぼんやりした広がり
@@ -81,50 +85,67 @@ vec2 jarShade(vec3 P, vec3 L) {
 }
 
 void main() {
-  vec3 P = vWorldPos;
-  float r = length(P.xz);
+  vec3 Pw = vWorldPos;
   // 天板の外には描かない
-  float onTable = smoothstep(uTableBackZ, uTableBackZ + 0.04, P.z) * smoothstep(uTableLeftX, uTableLeftX + 0.04, P.x);
-
-  // 接地影（まわりの光を瓶がさえぎる）。透明な瓶なので控えめ
-  float out_ = max(r - JAR_R, 0.0);
-  float ao = 1.0 - 0.36 * exp(-out_ / 0.02) - 0.14 * exp(-out_ / 0.08);
-  ao = mix(ao, 0.72, 1.0 - smoothstep(JAR_R - 0.02, JAR_R, r));
-
-  vec2 sh = jarShade(P, normalize(uLightDir));
-  float mul = ao * (1.0 - sh.x * uShadow);
-
-  // 瓶が集めた光で、写真の天板の木目がそのまま明るくなる（窓の光の色を帯びる）
+  float onTable = smoothstep(uTableBackZ, uTableBackZ + 0.04, Pw.z) * smoothstep(uTableLeftX, uTableLeftX + 0.04, Pw.x);
   vec3 photo = texture(tRoom, gl_FragCoord.xy / uResolution).rgb;
   vec3 tint = uKey / max(max(uKey.r, uKey.g), max(uKey.b, 1e-3));
-  vec3 add = photo * tint * sh.y * uLensLight * ARC_GAIN;
+  vec3 lampTint = uLampColor / max(max(uLampColor.r, uLampColor.g), max(uLampColor.b, 1e-3));
+  float mul = 1.0;
+  vec3 add = vec3(0.0);
 
-  // 夜のデスクライト：光だまりの中に瓶の影が右へ落ち、瓶が集めた光の弧が出る
-  if (uLampLevel > 0.001) {
-    float spot = saturate(lampSpot(P));
-    vec2 shL = jarShade(P, lampDir(P));
-    mul *= 1.0 - shL.x * ${LAMP.shadow.toFixed(3)} * uLampLevel * spot;
-    vec3 lampTint = uLampColor / max(max(uLampColor.r, uLampColor.g), max(uLampColor.b, 1e-3));
-    add += photo * lampTint * shL.y * uLampLevel * spot * ${LAMP.lensLight.toFixed(3)} * ARC_GAIN;
+  // 瓶ごとに：接地影、窓の光の影と光の弧、夜のデスクライト（ライトは瓶ごとにあり、瓶と一緒に動く）
+  for (int i = 0; i < 2; i++) {
+    if (i >= uJarCount) break;
+    vec3 P = Pw - vec3(uJarX[i], 0.0, 0.0);
+    float ag = uJarAgitation[i];
+    float r = length(P.xz);
+
+    // 接地影（まわりの光を瓶がさえぎる）。透明な瓶なので控えめ
+    float out_ = max(r - JAR_R, 0.0);
+    float ao = 1.0 - 0.36 * exp(-out_ / 0.02) - 0.14 * exp(-out_ / 0.08);
+    ao = mix(ao, 0.72, 1.0 - smoothstep(JAR_R - 0.02, JAR_R, r));
+
+    vec2 sh = jarShade(P, normalize(uLightDir), ag);
+    mul *= ao * (1.0 - sh.x * uShadow);
+
+    // 瓶が集めた光で、写真の天板の木目がそのまま明るくなる（窓の光の色を帯びる）
+    add += photo * tint * sh.y * uLensLight * ARC_GAIN;
+
+    // 夜のデスクライト：光だまりの中に瓶の影が右へ落ち、瓶が集めた光の弧が出る
+    if (uLampLevel > 0.001) {
+      float spot = saturate(lampSpot(P));
+      vec2 shL = jarShade(P, lampDir(P), ag);
+      mul *= 1.0 - shL.x * ${LAMP.shadow.toFixed(3)} * uLampLevel * spot;
+      add += photo * lampTint * shL.y * uLampLevel * spot * ${LAMP.lensLight.toFixed(3)} * ARC_GAIN;
+    }
+
+    // 海月の光の照り返し（光る種だけ）。瓶の底越しに、海月が近いときだけほのかに
+    vec3 wood = vec3(0.62, 0.42, 0.3);
+    vec3 gd = uGlowPos - P;
+    float cosT = max(gd.y, 0.0) / length(gd + vec3(0.0, 1e-4, 0.0));
+    add += uGlowColor * wood * cosT * glowFall(P, uGlowPos) * 0.15 * float(i == 0);
   }
-
-  // 海月の光の照り返し。瓶の底越しに、海月が近いときだけほのかに
-  vec3 wood = vec3(0.62, 0.42, 0.3);
-  vec3 gd = uGlowPos - P;
-  float cosT = max(gd.y, 0.0) / length(gd + vec3(0.0, 1e-4, 0.0));
-  add += uGlowColor * wood * cosT * glowFall(P, uGlowPos) * 0.15;
 
   gl_FragColor = vec4(add * onTable, mix(1.0, mul, onTable));
 }
 `;
 
-export function createTable(shared: SharedUniforms, cam: PhotoCamera): Mesh {
+/** 天板に立っている瓶の横の位置と数、瓶ごとの水面の揺れ（描く前に入れる） */
+export interface TableJars {
+  uJarX: { value: number[] };
+  uJarCount: { value: number };
+  uJarAgitation: { value: number[] };
+}
+
+export function createTable(shared: SharedUniforms, cam: PhotoCamera): { mesh: Mesh; jars: TableJars } {
   const width = 4;
   const depth = 3;
   const geo = new PlaneGeometry(width, depth, 1, 1);
   geo.rotateX(-Math.PI / 2);
   // 手前（+z）へ伸ばし、奥は天板の縁まで
   geo.translate(0.8, 0, cam.tableBackZ + depth / 2);
+  const jars: TableJars = { uJarX: { value: [0, 0] }, uJarCount: { value: 1 }, uJarAgitation: { value: [0, 0] } };
   const mat = new ShaderMaterial({
     glslVersion: GLSL3,
     vertexShader: VERT,
@@ -144,8 +165,8 @@ export function createTable(shared: SharedUniforms, cam: PhotoCamera): Mesh {
       uGlowColor: shared.uGlowColor,
       uShadow: shared.uShadow,
       uLensLight: shared.uLensLight,
-      uAgitation: shared.uAgitation,
       uTime: shared.uTime,
+      ...jars,
       uLightDir: { value: new Vector3(...TABLE.lightDir).normalize() },
       uTableBackZ: { value: cam.tableBackZ },
       uTableLeftX: { value: cam.tableLeftX },
@@ -154,5 +175,5 @@ export function createTable(shared: SharedUniforms, cam: PhotoCamera): Mesh {
   const mesh = new Mesh(geo, mat);
   mesh.renderOrder = 1;
   mesh.frustumCulled = false;
-  return mesh;
+  return { mesh, jars };
 }
