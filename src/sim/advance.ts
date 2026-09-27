@@ -6,17 +6,18 @@ import { createRng, type Rng } from './rng';
 import type { GameState } from './state';
 
 /** 1刻み分進める（その場で書き換える）。wallBase + time·1000 がその時点の端末の時刻 */
-function step(state: GameState, dt: number, rng: Rng, rules: LifeRules, wallBase: number): void {
+function step(state: GameState, dt: number, rng: Rng, rules: LifeRules, wallBase: number, watching: number | null): void {
   state.time += dt;
-  stepLife(state, dt, { rng, rules, wall: wallBase + state.time * 1000 });
+  stepLife(state, dt, { rng, rules, wall: wallBase + state.time * 1000, watching });
 }
 
 /**
  * seconds 秒進めた新しい状態を返す（元の状態は変えない）。
  * 刻みの数が多すぎるときは刻みを粗くする（stepSeconds の整数倍）。
- * rules は生活環の期間と上限（ふだんは config の LIFE。確認用に差し替えられる）
+ * rules は生活環の期間と上限（ふだんは config の LIFE。確認用に差し替えられる）。
+ * watching は画面で見ている瓶（その瓶の出来事は日誌に書かず、水換えも起きない）。閉じていた分を進めるときは null
  */
-export function advance(state: GameState, seconds: number, rules: LifeRules = LIFE): GameState {
+export function advance(state: GameState, seconds: number, rules: LifeRules = LIFE, watching: number | null = null): GameState {
   const next = structuredClone(state);
   if (!(seconds > 0)) return next;
   // lastTick は time + pending の時点に当たる。出来事の端末の時刻はここから数える
@@ -28,12 +29,12 @@ export function advance(state: GameState, seconds: number, rules: LifeRules = LI
   const dt = base * k;
   const rng = createRng(next.rng);
   while (total >= dt) {
-    step(next, dt, rng, rules, wallBase);
+    step(next, dt, rng, rules, wallBase, watching);
     total -= dt;
   }
   // 粗い刻みの残りは細かい刻みで
   while (total >= base) {
-    step(next, base, rng, rules, wallBase);
+    step(next, base, rng, rules, wallBase, watching);
     total -= base;
   }
   next.pending = total;
@@ -52,9 +53,10 @@ export interface CatchUp {
 
 /**
  * 最後に進めた時刻から nowMs までの分を進める。
- * 上限（maxElapsedDays）を越える分は捨て、端末の時計が巻き戻っていたら経過0として何も壊さない
+ * 上限（maxElapsedDays）を越える分は捨て、端末の時計が巻き戻っていたら経過0として何も壊さない。
+ * watching は画面で見ている瓶（開いている間に進めるとき）。閉じていた分なら null
  */
-export function catchUp(state: GameState, nowMs: number, rules: LifeRules = LIFE): CatchUp {
+export function catchUp(state: GameState, nowMs: number, rules: LifeRules = LIFE, watching: number | null = null): CatchUp {
   const diff = (nowMs - state.lastTick) / 1000;
   if (!(diff >= 0)) {
     const next = structuredClone(state);
@@ -64,7 +66,7 @@ export function catchUp(state: GameState, nowMs: number, rules: LifeRules = LIFE
   const elapsed = Math.min(diff, SIM.maxElapsedDays * 86400);
   // 打ち切ったときは、今から上限の分だけさかのぼった所から進めたことにする（出来事の時刻が今につながる）
   const start = elapsed < diff ? { ...state, lastTick: nowMs - elapsed * 1000 } : state;
-  const next = advance(start, elapsed, rules);
+  const next = advance(start, elapsed, rules, watching);
   next.lastTick = nowMs;
   return { state: next, elapsed, rewound: false };
 }

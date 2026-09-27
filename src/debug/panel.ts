@@ -5,6 +5,7 @@
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
 import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
+import { downloadText, exportFilename } from '../ui/download';
 import { STAGE_LABELS } from '../ui/labels';
 
 export interface DebugPanelOptions {
@@ -42,6 +43,10 @@ export interface DebugPanelOptions {
   onFeedClear(): void;
   /** 食べた餌を消す（胃の色と成長の早まりがなくなる） */
   onMealsClear(): void;
+  /** 表示中の瓶の、瓶底の堆積を value にする（水換えの目安は 1） */
+  onSediment(value: number): void;
+  /** 日誌をすべて未読に戻す */
+  onUnread(): void;
 }
 
 const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
@@ -157,12 +162,17 @@ export class DebugPanel {
         <label class="row"><input class="real" type="checkbox"> 実物大（ポリプ・エフィラ）</label>
       </details>
       <details>
-        <summary>餌</summary>
+        <summary>餌と世話</summary>
         <div class="feed sub"></div>
         <div class="row buttons">
           <button type="button" class="feed-now">やる（1日1回を無視）</button>
           <button type="button" class="feed-clear">記録を消す</button>
           <button type="button" class="meals-clear">胃を空に</button>
+        </div>
+        <div class="row buttons">
+          <button type="button" data-sediment="1">堆積を満たす</button>
+          <button type="button" data-sediment="0.1">均す</button>
+          <button type="button" class="unread">日誌を未読に</button>
         </div>
       </details>
       <details>
@@ -201,6 +211,10 @@ export class DebugPanel {
     root.querySelector('.feed-now')!.addEventListener('click', () => this.opts.onFeed());
     root.querySelector('.feed-clear')!.addEventListener('click', () => this.opts.onFeedClear());
     root.querySelector('.meals-clear')!.addEventListener('click', () => this.opts.onMealsClear());
+    for (const b of root.querySelectorAll<HTMLButtonElement>('[data-sediment]')) {
+      b.addEventListener('click', () => this.opts.onSediment(Number(b.dataset.sediment)));
+    }
+    root.querySelector('.unread')!.addEventListener('click', () => this.opts.onUnread());
 
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-spawn]')) {
       b.addEventListener('click', () => {
@@ -365,16 +379,7 @@ export class DebugPanel {
   }
 
   private download(json: string): void {
-    const d = new Date();
-    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `kuragebin-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadText(json, exportFilename());
     this.note('書き出しました');
   }
 }

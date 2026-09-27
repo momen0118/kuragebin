@@ -231,6 +231,7 @@ export function createJar(shared: SharedUniforms, rimWarmColor: readonly [number
           uGlowPos: shared.uGlowPos,
           uGlowColor: shared.uGlowColor,
           uGlassTint: glassTint,
+          uSediment: shared.uSediment,
         },
       }),
     ),

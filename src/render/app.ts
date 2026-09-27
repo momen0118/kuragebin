@@ -22,6 +22,7 @@ import {
   type WebGLRenderTarget,
 } from 'three';
 import { BELL, CUP, FOOD, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SWIPE, WATER, type PhotoName } from '../config';
+import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState } from '../sim/state';
 import { Bloom } from './bloom';
@@ -96,6 +97,8 @@ export class App {
   private parallaxStep: [number, number] = [0, 0];
   /** 瓶ごとの水面の揺れ（0〜1）。拍動やつつきで立ち、ゆっくり収まる */
   private readonly agitations: number[];
+  /** 瓶ごとの、瓶底に溜まったもの（sim の sediment） */
+  private readonly sediments: number[];
   private wideDirty = true;
   private readonly bloom = new Bloom(RENDER.bloomLevels);
   private readonly composite;
@@ -195,6 +198,7 @@ export class App {
     );
     this.bubbles = this.jars.map(() => new Bubble(this.shared, rng));
     this.agitations = this.jars.map(() => 0);
+    this.sediments = this.jars.map(() => 0);
     this.pipette = new Pipette(this.shared);
     this.pipetteScene.add(this.pipette.group);
     this.food = new Food(this.shared, createRng((RENDER.seed ^ 0x5bd1e995) >>> 0));
@@ -367,6 +371,7 @@ export class App {
     this.shared.uViewProj.value.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     this.shared.uAgitation.value = this.agitations[i]!;
     this.shared.uRipples.value = this.ripples[i]!;
+    this.shared.uSediment.value = this.sediments[i]!;
     this.snow.shift.value = i;
     this.jars.forEach((c, k) => (c.group.visible = k === i && !c.hidden));
     this.bubbles.forEach((b, k) => (b.points.visible = k === i && b.isActive));
@@ -434,7 +439,10 @@ export class App {
 
   /** 瓶ごとの個体を状態に合わせる。time はゲーム内の今（胃の餌の薄れ方に使う） */
   setJars(jars: readonly JarState[], time: number): void {
-    jars.forEach((jar, i) => this.jars[i]?.sync(jar, time));
+    jars.forEach((jar, i) => {
+      this.jars[i]?.sync(jar, time);
+      if (i < this.sediments.length) this.sediments[i] = jar.sediment;
+    });
   }
 
   /** 確認用：最初の泳ぐ個体の傘の中心の画面上の位置（CSS px）。いなければ null */
@@ -548,14 +556,14 @@ export class App {
   }
 
   /**
-   * 表示中の瓶 jar に餌をやる流れを始める（状態の餌は先に game.feed でやっておく）。at はその餌の時刻（sim の meal.at）。
+   * 表示中の瓶 jar に餌をやる流れを始める（状態の餌は先に game.feed でやっておく）。at はその餌の時刻（sim の meal.at）、
+   * plan は出す粒の数と個体ごとに食べる粒の数（sim の feedingPlan）。
    * 瓶が止まっていて、カップもスポイトも使っていないときだけ。はじめられたら true
    */
-  feedStart(jar: number, at: number): boolean {
+  feedStart(jar: number, at: number, plan: FeedingPlan): boolean {
     if (this.handsBusy || !this.atRest || jar !== this.jarIndex) return false;
-    const bites = this.jars[jar]!.beginMeal(at);
-    const grains = Math.min(Math.max(Math.round(bites * (1 + FOOD.extra)), FOOD.min), FOOD.max);
-    this.feeding.begin(jar, grains);
+    this.jars[jar]!.beginMeal(at, plan.bites);
+    this.feeding.begin(jar, plan.grains);
     // 餌をやっている間は泡を出さない（スポイトから空気が出たように見えないように）
     this.bubbles[jar]?.hold(FOOD.showSeconds);
     return true;

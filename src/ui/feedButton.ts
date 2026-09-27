@@ -1,6 +1,6 @@
 // 餌のスポイト。右下のいちばん隅に、いつも小さなアイコンを出す（ライトはその内側）。
 // 押すと瓶に餌をやる。1瓶につき1日1回までで、やれないときは何も起きない（アイコンの見た目も変えない）。
-// スポイトを使っている間だけ、アイコンを少し明るくする。
+// 餌をやれるとき（とスポイトを使っている間）は、点いているライトのアイコンと同じくらい明るくする。
 import { jarActions, keepToSelf } from './jarActions';
 
 const ICON = `
@@ -16,6 +16,7 @@ const ICON = `
 export class FeedButton {
   private readonly el: HTMLButtonElement;
   private busy = false;
+  private ready = false;
 
   constructor(onFeed: () => void) {
     const el = document.createElement('button');
@@ -29,7 +30,14 @@ export class FeedButton {
     this.el = el;
   }
 
-  /** スポイトを使っている間は少し明るく */
+  /** 餌をやれるときは明るく（やれないときは今までどおり淡く） */
+  setReady(ready: boolean): void {
+    if (ready === this.ready) return;
+    this.ready = ready;
+    this.el.classList.toggle('ready', ready);
+  }
+
+  /** スポイトを使っている間は明るく */
   setBusy(busy: boolean): void {
     if (busy === this.busy) return;
     this.busy = busy;

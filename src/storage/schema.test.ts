@@ -41,6 +41,38 @@ describe('書き出し・読み込み', () => {
   });
 });
 
+describe('版3からのマイグレーション', () => {
+  test('3-3 までの保存データに、未読・行の名前・来た日・瓶底の堆積を足す', () => {
+    const s = advance(createInitialState(T0), 3 * 86400 + 123);
+    const v3 = JSON.parse(JSON.stringify(s)) as Record<string, unknown> & {
+      jars: Array<Record<string, unknown> & { creatures: Array<Record<string, unknown>> }>;
+      journal: Array<Record<string, unknown>>;
+    };
+    v3.schema = 3;
+    delete v3.journalSeen;
+    for (const e of v3.journal) delete e.name;
+    for (const jar of v3.jars) {
+      delete jar.sediment;
+      delete jar.leftover;
+      delete jar.cleanSince;
+      for (const c of jar.creatures) delete c.arrivedWallTime;
+    }
+    const m = migrate(v3);
+    expect(m.schema).toBe(SCHEMA_VERSION);
+    // それまでの日誌は未読
+    expect(m.journalSeen).toBe(0);
+    expect(m.journal.length).toBeGreaterThan(0);
+    expect(m.journal.every((e) => e.name === null)).toBe(true);
+    // 来た日は今の時刻からさかのぼって求める（進めていた間の時刻と合う）
+    for (const [i, jar] of m.jars.entries()) {
+      for (const [k, c] of jar.creatures.entries()) expect(c.arrivedWallTime).toBeCloseTo(s.jars[i]!.creatures[k]!.arrivedWallTime, 3);
+    }
+    // 堆積は始めてからの日数の分だけ溜まっている
+    expect(m.jars[0]!.sediment).toBeGreaterThan(0.2);
+    expect(m.jars[0]!.leftover).toBeNull();
+  });
+});
+
 describe('版2からのマイグレーション', () => {
   test('3-2 までの保存データを、餌を食べていない状態として読める', () => {
     const s = advance(createInitialState(T0), 2 * 86400);

@@ -771,9 +771,17 @@ export const LIFE: LifeRules = {
   spotTries: 12,
 };
 
-/** 観察日誌（出来事の記録）。古いものから消す */
+/**
+ * 観察日誌。記録は消さずに全部残す。見ている瓶で起きた出来事は書かない（開いていても、表示していない瓶の出来事は書く）。
+ * 1日1ページで、日は餌と同じく朝 FEED.dayStartHour 時で区切る（夜が途中で切れない）。
+ * 時間帯は明け方・昼・夕方・夜の四つ。明け方は日の出の dawnBefore 分前から dawnAfter 分後まで、
+ * 夕方は日の入りの duskBefore 分前から duskAfter 分後まで（デスクライトが点くころ）
+ */
 export const JOURNAL = {
-  maxEntries: 600,
+  dawnBefore: 60,
+  dawnAfter: 90,
+  duskBefore: 60,
+  duskAfter: 30,
 } as const;
 
 /**
@@ -789,6 +797,44 @@ export const FEED = {
   amount: [0.7, 1.0] as const,
   growthBoost: 0.2,
   boostSeconds: DAY,
+} as const;
+
+/**
+ * 瓶底に溜まったものの見え方（堆積は CARE）。マリンスノーがうっすら白っぽいまだらになって溜まり、
+ * 溜まるほど濃く広がる。水を替えると、薄く平らな膜に戻る。色はリニア、濃さは堆積 1（水換えの目安）のとき
+ */
+export const SEDIMENT = {
+  color: [0.56, 0.53, 0.47] as Vec3,
+  strength: 0.2,
+  /** 均された薄い膜の割合（まだらにならない分） */
+  film: 0.25,
+  /** まだらの細かさ（瓶底の半径に対する模様の数）：大きい斑、小さい斑、細かいむら */
+  scales: [8, 22, 55] as readonly number[],
+  /** 底とガラスの境（縁の角）に多く溜まる度合い */
+  corner: 0.3,
+  /** 積もったマリンスノーの細かい粒：升目の細かさ（瓶底の半径に対する数）と、粒のある升目の割合（堆積 1 のとき） */
+  flakeCells: 150,
+  flakeRate: 0.12,
+} as const;
+
+/**
+ * 見ていない間の世話（水換え）。水換えの機能は作らない。誰かが瓶の世話をしている跡としてだけ出る。
+ * 瓶底にはマリンスノーが少しずつ溜まり（1日 snowPerDay）、餌の食べ残しが消えると、そのぶん少し増える（食べ残し1粒 perGrain）。
+ * 食べ残しは餌をやってから leftoverSeconds で消えきる（瓶底の粒が薄れて消えるころ）。
+ * 溜まったものが threshold に届いた瓶と、その日に餌をやった瓶は、夜中（startHour 時から windowHours 時間のどこか。瓶と夜ごとに決まる）に水を替え、
+ * 瓶底が薄く均される（after まで）。餌をやった瓶は、食べ残しが消えきってから settleSeconds 待ってから替える（夜中にやったときは時刻がずれる）。
+ * threshold に届いただけの瓶は、その時刻にまだ待つ間なら見送る。どちらも、その瓶を表示していれば次の夜に回す。
+ * 日誌に「夜のうちに水を替えた」と一行残る。餌をやらなければ約11日に1回、餌をやった日はその夜
+ */
+export const CARE = {
+  snowPerDay: 1 / 12,
+  perGrain: 0.01,
+  leftoverSeconds: 300,
+  settleSeconds: 3600,
+  threshold: 1,
+  after: 0.1,
+  startHour: 2,
+  windowHours: 2,
 } as const;
 
 /**
@@ -1094,6 +1140,27 @@ export const TAG = {
   margin: 10,
   /** 名前を入れている間は、横線をこの高さ（画面の高さに対する割合）より上に出す（キーボードに隠れないように） */
   editMaxY: 0.34,
+} as const;
+
+/**
+ * 観察日誌のメモ帳（上にリングが付いた小さなもの）。画面の下寄りに置き、上には瓶が薄く見えたまま。
+ * 紙は真っ白にせず少しくすんだ色で、夜は部屋の明るさに合わせて暗くする（眩しくならないように）
+ */
+export const NOTEBOOK = {
+  /** 紙の明るさ（掛け算）：昼、夕方、夜（ライトが点いているとき）、夜（ライトを消しているとき） */
+  lumDay: 1,
+  lumDusk: 0.8,
+  lumNight: 0.55,
+  lumDark: 0.4,
+  /** めくる：指を離したとき、めくれたことにする割合（紙の高さに対して）と速さ（CSS px/秒）。めくる時間（秒） */
+  flipAt: 0.3,
+  flipSpeed: 600,
+  flipSeconds: 0.36,
+  /** 開く・閉じる時間（秒）。いちばん新しい日で下へ引いて閉じる距離（紙の高さに対する割合） */
+  openSeconds: 0.45,
+  closeAt: 0.22,
+  /** 縦の動きとみなす距離（CSS px） */
+  dragPx: 8,
 } as const;
 
 /** デバッグパネル（?debug のときだけ） */

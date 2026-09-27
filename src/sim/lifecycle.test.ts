@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import { JOURNAL, LIFE, type LifeRules } from '../config';
+import { LIFE, type LifeRules } from '../config';
 import { advance, catchUp } from './advance';
 import { fillAdults, spawnCreature } from './edit';
-import { freeSwimmerSlots, jarCounts, record } from './lifecycle';
+import { record } from './journal';
+import { freeSwimmerSlots, jarCounts } from './lifecycle';
 import { createInitialState, isSwimmer, type GameState } from './state';
 
 const T0 = Date.UTC(2026, 8, 25, 3, 0, 0);
@@ -133,13 +134,41 @@ describe('生活環', () => {
     expect(last.wallTime).toBeGreaterThan(far - 30 * DAY * 1000);
   });
 
-  test('日誌は多すぎると古いものから消える', () => {
+  test('日誌の記録は消さずに全部残す', () => {
     const s = createInitialState(T0);
-    for (let i = 0; i < JOURNAL.maxEntries + 50; i++) {
+    for (let i = 0; i < 2000; i++) {
       s.time = i;
       record(s, 'polyp', 0, 1, [i], T0 + i);
     }
-    expect(s.journal).toHaveLength(JOURNAL.maxEntries);
-    expect(s.journal[0]!.time).toBe(50);
+    expect(s.journal).toHaveLength(2000);
+    expect(s.journal[0]!.time).toBe(0);
+  });
+
+  test('見ている瓶の出来事は日誌に書かない（ほかの瓶の出来事は書く）', () => {
+    const make = (): ReturnType<typeof createInitialState> => {
+      const s = createInitialState(T0, 3);
+      // 瓶2にも成体を入れて、どちらの瓶でもポリプが付くようにする
+      fillAdults(s, 1, 1);
+      return s;
+    };
+    const closed = advance(make(), 2 * DAY);
+    const watched = advance(make(), 2 * DAY, LIFE, 0);
+    // 状態の進み方は同じ（書くかどうかだけが違う）
+    expect(watched.jars).toEqual(closed.jars);
+    expect(closed.journal.some((e) => e.jar === 0)).toBe(true);
+    expect(watched.journal.some((e) => e.jar === 0)).toBe(false);
+    expect(watched.journal.filter((e) => e.jar === 1)).toEqual(closed.journal.filter((e) => e.jar === 1));
+  });
+
+  test('名前のある個体の出来事には、その名前を残す', () => {
+    const s = createInitialState(T0);
+    s.jars[0]!.creatures = [];
+    const e = spawnCreature(s, 0, 'ephyra');
+    e.name = 'ゆら';
+    e.progress = 0.9999;
+    const n = advance(s, 3600);
+    const entry = n.journal.find((x) => x.kind === 'adult')!;
+    expect(entry.name).toBe('ゆら');
+    expect(entry.ids).toEqual([e.id]);
   });
 });

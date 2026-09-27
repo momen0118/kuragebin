@@ -1,11 +1,13 @@
 // ゲームの状態を持ち、時間を進め、保存する。
 // 起動時と画面に戻ったときに、閉じていた分を固定刻みで一気に進める（sim/advance.ts）。
+// 開いている間に進めるときは、見ている瓶を伝える（その瓶の出来事は日誌に書かず、水換えも起きない）。
 // 保存は設定を変えたとき、開いている間は一定の間隔で、画面を離れる直前に。
 import { LIFE, SIM, type LifeRules } from './config';
 import { canMove, moveCreature, renameCreature, type MoveResult } from './sim/actions';
 import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
 import { canFeed, feedJar, type FeedResult } from './sim/feed';
+import { hasUnread } from './sim/journal';
 import { createInitialState, type GameState, type Settings } from './sim/state';
 import { openStateStore, type StateStore } from './storage/db';
 import { exportState, importState } from './storage/io';
@@ -66,7 +68,7 @@ export class Game {
       // 読み込みに失敗しても、新しい状態で動く
     }
     const game = new Game(clock, s, state ?? createInitialState(now), readOnly);
-    game.catchUpNow(true);
+    game.catchUpNow(true, null);
     await game.save();
     return game;
   }
@@ -84,15 +86,31 @@ export class Game {
     return () => this.listeners.delete(fn);
   }
 
-  /** 開いている間、ときどき呼ぶ。時計に合わせて進め、間隔が空いたら保存する */
-  tick(): void {
-    this.catchUpNow(false);
+  /**
+   * 開いている間、ときどき呼ぶ。時計に合わせて進め、間隔が空いたら保存する。
+   * watching は画面で見ている瓶（その瓶の出来事は日誌に書かない）
+   */
+  tick(watching: number | null): void {
+    this.catchUpNow(false, watching);
     if (this.clock.wallNow() - this.lastSaveWall >= SIM.saveIntervalSeconds * 1000) void this.save();
   }
 
-  /** 画面に戻ったとき（と、確認用に時計を動かしたとき）：離れていた分を進めて保存する */
+  /** 画面に戻ったとき（と、確認用に時計を動かしたとき）：離れていた分を進めて保存する（見ていなかったので、どの瓶の出来事も書く） */
   resume(): void {
-    this.catchUpNow(true);
+    this.catchUpNow(true, null);
+    void this.save();
+  }
+
+  /** 日誌に未読の出来事があるか */
+  get unread(): boolean {
+    return hasUnread(this.current);
+  }
+
+  /** 日誌を開いた：今までの出来事を読んだことにする */
+  markJournalRead(): void {
+    if (!this.unread) return;
+    this.current = { ...this.current, journalSeen: this.current.journal.length };
+    this.emit();
     void this.save();
   }
 
@@ -125,8 +143,8 @@ export class Game {
 
   /** 瓶 jar に餌をやる。食べた量はこの時点で決まる（見た目はそれを見せるだけ） */
   feed(jar: number): FeedResult {
-    // やった時刻をそのまま記録できるよう、先に今まで進める
-    this.catchUpNow(false);
+    // やった時刻をそのまま記録できるよう、先に今まで進める（餌をやる瓶を見ている）
+    this.catchUpNow(false, jar);
     const next = structuredClone(this.current);
     const result = feedJar(next, jar, this.clock.now());
     if (result !== 'fed') return result;
@@ -204,9 +222,9 @@ export class Game {
     return this.saving;
   }
 
-  /** 時計に合わせて進める。record なら、進めた分と巻き戻しの有無を覚えておく（確認用の表示） */
-  private catchUpNow(record: boolean): void {
-    const r = catchUp(this.current, this.clock.now(), this.rules);
+  /** 時計に合わせて進める。record なら、進めた分と巻き戻しの有無を覚えておく（確認用の表示）。watching は見ている瓶 */
+  private catchUpNow(record: boolean, watching: number | null): void {
+    const r = catchUp(this.current, this.clock.now(), this.rules, watching);
     this.current = r.state;
     if (record) {
       this.lastCatchUp = r.elapsed;

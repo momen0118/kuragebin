@@ -1,10 +1,10 @@
 // ゲームの状態。瓶・個体・日誌・標本・設定を1つの状態として持ち、そのまま保存する。
 // 描画・DOM・three.js には依存しない。
-import { LIFE, SIM } from '../config';
+import { CARE, LIFE, SIM } from '../config';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -28,8 +28,9 @@ export interface Creature {
   progress: number;
   /** 今の段階の長さ（秒、ゲーム内）。段階に入ったときに決める */
   stageLength: number;
-  /** この瓶に来た時刻（ゲーム内の経過秒） */
+  /** この瓶に来た時刻（ゲーム内の経過秒）と、そのときの端末の時刻（ミリ秒。日誌の個体一覧の「来た日」） */
   arrivedAt: number;
+  arrivedWallTime: number;
   /** 名前（初期値なし） */
   name: string | null;
   /** 親の番号。ポリプは付けた成体、エフィラは放したポリプ。最初の1匹は null */
@@ -55,6 +56,20 @@ export interface JarState {
   resting: boolean;
   /** 最後に餌をやった端末の時刻（ミリ秒、まだなら null）。餌は1日1回まで */
   fedWallTime: number | null;
+  /**
+   * 瓶底に溜まったもの（CARE.threshold で水換えの目安）。マリンスノーが少しずつ、餌の食べ残しが消えると少し増える。
+   * 見ていない夜中に水を替えると、薄く均される
+   */
+  sediment: number;
+  /** まだ瓶底に残っている餌の食べ残し：消えたときに堆積に足す量と、消えきる時刻（ゲーム内の秒）。なければ null */
+  leftover: { amount: number; goneAt: number } | null;
+  /** 最後に食べ残しが消えきった時刻（ゲーム内の秒、まだなら null）。水換えはそこから少し間を空けたあと */
+  cleanSince: number | null;
+  /**
+   * 餌をやったので水を替えることになっている夜（年月日を1つの数にしたもの、なければ null）。
+   * その日付の夜中から、溜まった量によらず替える。見送った夜のぶんは次の夜に回す
+   */
+  waterDue: number | null;
 }
 
 /** 日誌に載せる出来事の種類 */
@@ -70,7 +85,9 @@ export type JournalKind =
   /** 瓶がいっぱいで、ポリプが休みに入った */
   | 'rest'
   /** 空きができて、ポリプがまた動き出した */
-  | 'wake';
+  | 'wake'
+  /** 見ていない夜中に水を替えた（瓶底が均された） */
+  | 'water';
 
 /** 観察日誌の出来事。文にするのは日誌を開いたとき（ui） */
 export interface JournalEntry {
@@ -84,6 +101,11 @@ export interface JournalEntry {
   /** 出来事の時刻（ゲーム内の経過秒）と、端末の時刻（ミリ秒） */
   time: number;
   wallTime: number;
+  /**
+   * その行の主な個体の名前（書いたときの名前。名無しなら null）。日誌では名前で書く。
+   * くびれ始めた・成体になったは本人、離れたは放したストロビラ、休み・再開はポリプが1つのときだけ
+   */
+  name: string | null;
 }
 
 /** 拾いもの（フェーズ4） */
@@ -120,6 +142,8 @@ export interface GameState {
   nextId: number;
   jars: JarState[];
   journal: JournalEntry[];
+  /** 日誌で読んだ出来事の数（これより後ろの出来事が未読。日誌のアイコンに点が付く） */
+  journalSeen: number;
   specimens: Specimen[];
   settings: Settings;
 }
@@ -146,6 +170,11 @@ export function stageRange(stage: Stage, rules = LIFE): readonly [number, number
   }
 }
 
+/** ゲーム内の時刻 t に当たる端末の時刻（ミリ秒）。進めている途中でないとき（lastTick が time + pending に当たるとき）に使う */
+export function wallAt(state: GameState, t: number): number {
+  return state.lastTick - (state.time + state.pending - t) * 1000;
+}
+
 /** 泳ぐ段階か（成体とエフィラ） */
 export function isSwimmer(stage: Stage): boolean {
   return stage === 'adult' || stage === 'ephyra';
@@ -165,6 +194,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     progress: 0,
     stageLength: rng.range(lo, hi),
     arrivedAt: 0,
+    arrivedWallTime: nowMs,
     name: null,
     parent: null,
     spot: null,
@@ -175,6 +205,10 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     creatures: i === 0 ? [first] : [],
     resting: false,
     fedWallTime: null,
+    sediment: CARE.after,
+    leftover: null,
+    cleanSince: null,
+    waterDue: null,
   }));
   return {
     schema: SCHEMA_VERSION,
@@ -186,6 +220,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     nextId: 2,
     jars,
     journal: [],
+    journalSeen: 0,
     specimens: [],
     settings: { ...DEFAULT_SETTINGS },
   };

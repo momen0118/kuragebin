@@ -2,9 +2,9 @@
 // 瓶底の個体（ポリプ・ストロビラ）を作ったり消したりし、毎フレーム動かす。
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
 import { Group, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
-import { EPHYRA, FOOD, SWIM } from '../config';
+import { EPHYRA, SWIM } from '../config';
 import { createRng } from '../sim/rng';
-import { isSwimmer, type Creature, type JarState, type Stage } from '../sim/state';
+import { isSwimmer, type Creature, type JarState } from '../sim/state';
 import type { Eater } from './food';
 import { Jellyfish } from './jelly/jellyfish';
 import { Polyp } from './jelly/polyp';
@@ -17,16 +17,11 @@ interface SwimmerView {
   neighbor: Neighbor;
   /** 皿から離れるのを待っている（まだ描かない） */
   waiting: boolean;
-  /** 状態の段階と育ち具合（見せ場で食べる粒の数を決める） */
-  stage: Stage;
-  growth: number;
 }
 
 interface PolypView {
   kind: 'polyp';
   polyp: Polyp;
-  stage: Stage;
-  growth: number;
 }
 
 type View = SwimmerView | PolypView;
@@ -90,14 +85,7 @@ export class Creatures {
     if (isSwimmer(c.stage)) {
       const jelly = new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius());
       jelly.group.traverse((o) => o.layers.enable(this.glowLayer));
-      const view: SwimmerView = {
-        kind: 'swimmer',
-        jelly,
-        neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius },
-        waiting: false,
-        stage: c.stage,
-        growth: this.growthOf(c),
-      };
+      const view: SwimmerView = { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false };
       // 皿を放しているストロビラの子なら、その皿が離れるまで待ってから泳ぎ出す
       const parent = c.parent !== null ? this.views.get(c.parent) : undefined;
       if (c.stage === 'ephyra' && parent?.kind === 'polyp' && parent.polyp.isReleasing) {
@@ -116,7 +104,7 @@ export class Creatures {
       this.group.add(jelly.group);
     } else {
       const polyp = new Polyp(this.shared, rng, c.spot ?? [0, 0]);
-      v = { kind: 'polyp', polyp, stage: c.stage, growth: 1 };
+      v = { kind: 'polyp', polyp };
       this.group.add(polyp.group);
     }
     this.views.set(c.id, v);
@@ -151,10 +139,8 @@ export class Creatures {
   }
 
   private apply(v: View, c: Creature, jar: JarState, time: number): void {
-    v.stage = c.stage;
-    v.growth = this.growthOf(c);
     if (v.kind === 'swimmer') {
-      v.jelly.setGrowth(v.growth, this.startRadius());
+      v.jelly.setGrowth(this.growthOf(c), this.startRadius());
       v.neighbor.radius = v.jelly.radius;
       v.jelly.stomach.sync(c.meal, time);
     } else {
@@ -298,25 +284,12 @@ export class Creatures {
     return { center: out.copy(v.jelly.swimmer.pos), radius: v.jelly.radius, swimmer: true };
   }
 
-  /**
-   * 餌の見せ場を始める：餌 at を食べた個体の胃の色を空から始め、見せ場で食べる粒の数を決める。
-   * 粒の数の合計を返す（食べた量と、段階・育ち具合による）
-   */
-  beginMeal(at: number): number {
-    let total = 0;
-    for (const v of this.views.values()) {
-      const stomach = v.kind === 'swimmer' ? v.jelly.stomach : v.polyp.stomach;
-      const bites = Math.max(1, Math.round(stomach.amount * this.bitesFor(v)));
-      if (stomach.begin(at, bites)) total += bites;
+  /** 餌の見せ場を始める：餌 at を食べた個体の胃の色を空から始める。bites は個体ごとに食べる粒の数（sim の feedingPlan） */
+  beginMeal(at: number, bites: ReadonlyMap<number, number>): void {
+    for (const [id, v] of this.views) {
+      const n = bites.get(id);
+      if (n) (v.kind === 'swimmer' ? v.jelly.stomach : v.polyp.stomach).begin(at, n);
     }
-    return total;
-  }
-
-  /** 食べた量 1 のときに見せ場で食べる粒の数 */
-  private bitesFor(v: View): number {
-    if (v.stage === 'adult') return FOOD.bitesAdult;
-    if (v.stage === 'ephyra') return FOOD.bitesEphyra[0] + (FOOD.bitesEphyra[1] - FOOD.bitesEphyra[0]) * v.growth;
-    return FOOD.bitesPolyp;
   }
 
   /** 見せ場で食べる個体（瓶の全員。皿から離れるのを待っているエフィラは除く） */
@@ -351,9 +324,9 @@ export class Creatures {
   }
 
   /** カップから出ていった個体を、この瓶の個体にする（動きはそのまま） */
-  adopt(id: number, jelly: Jellyfish, stage: Stage = 'adult', growth = 1): void {
+  adopt(id: number, jelly: Jellyfish): void {
     this.carried.delete(id);
-    this.views.set(id, { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, stage, growth });
+    this.views.set(id, { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false });
     this.group.add(jelly.group);
   }
 
