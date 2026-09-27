@@ -64,6 +64,7 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
           sediment,
           leftover: null,
           cleanSince: null,
+          waterDue: null,
           ...jar,
           creatures: jar.creatures.map((c: unknown) => {
             if (!isObject(c)) return c;
@@ -122,6 +123,7 @@ function validate(d: Raw): GameState {
     if (!isNumber(jar.sediment) || jar.sediment < 0) jar.sediment = CARE.after;
     if (!isLeftover(jar.leftover)) jar.leftover = null;
     if (!(jar.cleanSince === null || isNumber(jar.cleanSince))) jar.cleanSince = null;
+    if (!(jar.waterDue === null || isNumber(jar.waterDue))) jar.waterDue = null;
     for (const c of jar.creatures) {
       if (
         !isObject(c) ||

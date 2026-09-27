@@ -207,8 +207,10 @@ body {
   transition: opacity 0.6s ease;
 }
 
+/* 餌をやれるときは、点いているライトのアイコンと同じくらい明るく */
+.feed-button.ready svg,
 .feed-button.busy svg {
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
 .feed-button:focus-visible {
@@ -423,7 +425,7 @@ body {
 }
 
 .journal-button svg {
-  opacity: 0.26;
+  opacity: 0.6;
 }
 
 .journal-button .unread {
@@ -455,11 +457,11 @@ body {
   --lum: 1;
   --paper: #e3ddcf;
   --paper-edge: #cbc3b2;
-  --ink: #3b3732;
-  --ink-soft: rgba(59, 55, 50, 0.56);
+  --ink: #2a2723;
+  --ink-soft: rgba(42, 39, 35, 0.72);
   --rule: rgba(70, 82, 100, 0.13);
   --cover: #9a9080;
-  --cover-ink: #2f2b26;
+  --cover-ink: #221f1b;
   --line-h: 26px;
   position: fixed;
   inset: 0;
@@ -490,8 +492,12 @@ body {
   bottom: calc(env(safe-area-inset-bottom) + 18px);
   width: min(80vw, 320px);
   height: min(52vh, 430px);
-  transform: translate(-50%, calc(100% + 60px));
-  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.25, 1);
+  /* 閉じているときは画面の外へ下げ、下げきったら見えなくする（ページの下に画面が続く iOS でもはみ出さない） */
+  transform: translate(-50%, 110vh);
+  visibility: hidden;
+  transition:
+    transform 0.45s cubic-bezier(0.2, 0.8, 0.25, 1),
+    visibility 0s linear 0.45s;
   filter: brightness(var(--lum));
   outline: none;
   touch-action: none;
@@ -499,6 +505,10 @@ body {
 
 .journal.shown .notebook {
   transform: translate(-50%, 0);
+  visibility: visible;
+  transition:
+    transform 0.45s cubic-bezier(0.2, 0.8, 0.25, 1),
+    visibility 0s;
 }
 
 /* 名前を入れている間は、キーボードに隠れないよう持ち上げる */
@@ -678,7 +688,7 @@ body {
   padding: 4px 0 4px 8px;
   border: 0;
   background: transparent;
-  color: var(--ink-soft);
+  color: var(--ink);
   font: inherit;
   font-size: 12px;
   letter-spacing: 0.08em;
@@ -811,47 +821,48 @@ body {
 }
 
 /*
- * 付箋（インデックス）。紙の右の端から少しだけ出ていて、一覧と設定へ飛べる。
- * 丁寧には貼らない：高さも傾きも出ている長さもばらばら。色は褪せていて目立たない
+ * 付箋。紙の右の端から横に少し出ていて、一覧と設定へ飛べる。
+ * 丁寧には貼らない：高さも傾きも出ている長さもばらばら。角は丸めない。淡い色で目立たない
  */
 .index-tab {
   position: absolute;
-  right: -21px;
+  right: -34px;
   z-index: 1;
-  width: 30px;
-  padding: 6px 0 6px 14px;
+  width: 78px;
+  height: 21px;
+  padding: 0 0 0 46px;
   border: 0;
-  border-radius: 1px 3px 3px 1px;
-  color: rgba(40, 36, 30, 0.62);
+  border-radius: 0;
+  color: var(--ink-soft);
   font: inherit;
   font-size: 10px;
-  letter-spacing: 0.18em;
-  writing-mode: vertical-rl;
-  text-align: center;
-  box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.25);
+  line-height: 21px;
+  letter-spacing: 0.1em;
+  text-align: left;
+  white-space: nowrap;
+  box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.22);
   touch-action: manipulation;
 }
 
 .index-tab.to-roster {
-  top: 40%;
-  height: 52px;
-  background: #c3b27f;
-  transform: rotate(3.5deg);
+  top: 47%;
+  background: #ecc0c9;
+  transform: rotate(-3deg);
 }
 
 .index-tab.to-settings {
-  top: 63%;
-  right: -18px;
-  height: 46px;
-  background: #93aaa1;
-  transform: rotate(-5deg);
+  top: 64%;
+  right: -30px;
+  padding-left: 50px;
+  background: #ece2b4;
+  transform: rotate(2.5deg);
 }
 
 /* 出ている所が小さいので、押せる所は外側へ広げておく */
 .index-tab::after {
   content: '';
   position: absolute;
-  inset: -8px -14px -8px 4px;
+  inset: -10px -4px -10px 40px;
 }
 
 .index-tab:focus-visible,

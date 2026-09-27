@@ -336,6 +336,7 @@ async function main(): Promise<void> {
     dots.set(slider.position);
     tag.update(dt);
     feedButton.setBusy(app.feedingBusy);
+    feedButton.setReady(game.canFeed(slider.index) === 'fed');
   };
 
   canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());

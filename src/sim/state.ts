@@ -65,6 +65,11 @@ export interface JarState {
   leftover: { amount: number; goneAt: number } | null;
   /** 最後に食べ残しが消えきった時刻（ゲーム内の秒、まだなら null）。水換えはそこから少し間を空けたあと */
   cleanSince: number | null;
+  /**
+   * 餌をやったので水を替えることになっている夜（年月日を1つの数にしたもの、なければ null）。
+   * その日付の夜中から、溜まった量によらず替える。見送った夜のぶんは次の夜に回す
+   */
+  waterDue: number | null;
 }
 
 /** 日誌に載せる出来事の種類 */
@@ -203,6 +208,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     sediment: CARE.after,
     leftover: null,
     cleanSince: null,
+    waterDue: null,
   }));
   return {
     schema: SCHEMA_VERSION,

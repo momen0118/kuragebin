@@ -1,9 +1,10 @@
 // 餌。1瓶につき1日1回（端末の現地時刻の朝4時で日を区切る）。瓶にいる全員が食べ、食べた量は餌をやった瞬間に決まる。
 // 出す粒の数と、個体ごとに食べる粒の数もここで決める（描画の見せ場はそのとおりに食べて見せる）。
-// 食べ残しの粒は瓶底でしばらくして消え、そのぶん瓶底の堆積が少し増える（care.ts）。
+// 食べ残しの粒は瓶底でしばらくして消え、そのぶん瓶底の堆積が少し増える（care.ts）。餌をやった瓶は、その夜に水を替える。
 // 食べてから1日の間、エフィラとポリプの進みが少し速くなる（lifecycle.ts が growthRate を掛ける）。
 // 状態をその場で書き換える。
 import { CARE, FEED, FOOD } from '../config';
+import { dateKey } from './care';
 import { createRng } from './rng';
 import type { Creature, GameState, JarState } from './state';
 
@@ -54,6 +55,11 @@ export function feedJar(state: GameState, jar: number, wallMs: number): FeedResu
   const plan = feedingPlan(j, at);
   const amount = (plan.grains - plan.total) * CARE.perGrain + (j.leftover?.amount ?? 0);
   j.leftover = { amount, goneAt: at + CARE.leftoverSeconds };
+  // 餌の日（朝4時区切り）が明けるその夜に水を替える。0時を過ぎてからやったなら、その夜のうち
+  const night = new Date(wallMs);
+  if (night.getHours() >= FEED.dayStartHour) night.setDate(night.getDate() + 1);
+  const due = dateKey(night.getTime());
+  j.waterDue = j.waterDue === null ? due : Math.min(j.waterDue, due);
   return 'fed';
 }
 

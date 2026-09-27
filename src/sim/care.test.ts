@@ -68,17 +68,58 @@ describe('瓶底の堆積と水換え', () => {
     expect(new Date(w[0]!).getDate()).toBe(3);
   });
 
-  test('食べ残しが消えきってから少し間を空けたあとに限る。間に合わない夜は見送る', () => {
+  test('餌をやった瓶は、溜まった量によらずその夜に替える', () => {
     const s = createInitialState(local(1, 12));
-    setSediment(s, 0, CARE.threshold);
-    // その夜の水換えの少し前に餌をやる（食べ残しが消えきって間もない）
+    const at = local(1, 17);
+    const before = run(s, local(1, 12), at);
+    expect(feedJar(before, 0, at)).toBe('fed');
+    // 夕方のうちは替えない
+    const evening = run(before, at, local(1, 23, 59));
+    expect(waters(evening)).toHaveLength(0);
+    const n = run(evening, local(1, 23, 59), local(2, 12));
+    const w = waters(n);
+    expect(w).toHaveLength(1);
+    expect(Math.abs(w[0]! - waterTime(local(2, 12), 0))).toBeLessThanOrEqual(60 * 1000);
+    expect(n.jars[0]!.waterDue).toBeNull();
+    // 次の夜は替えない
+    expect(waters(run(n, local(2, 12), local(3, 12)))).toHaveLength(1);
+  });
+
+  test('夜中に餌をやったときは、食べ残しが消えきって少し間を空けてから替える', () => {
+    const s = createInitialState(local(1, 12));
+    // その夜の水換えの少し前に餌をやる
     const at = waterTime(local(2, 12), 0) - 20 * 60 * 1000;
     const before = run(s, local(1, 12), at);
     expect(feedJar(before, 0, at)).toBe('fed');
     const n = run(before, at, local(2, 12));
-    expect(waters(n)).toHaveLength(0);
-    const next = run(n, local(2, 12), local(3, 12));
-    expect(waters(next)).toHaveLength(1);
+    const w = waters(n);
+    expect(w).toHaveLength(1);
+    const expected = at + (CARE.leftoverSeconds + CARE.settleSeconds) * 1000;
+    expect(Math.abs(w[0]! - expected)).toBeLessThanOrEqual(60 * 1000);
+  });
+
+  test('夜明け前に餌をやっても、その朝のうちに替える', () => {
+    const s = createInitialState(local(1, 12));
+    const at = local(2, 3, 50);
+    const before = run(s, local(1, 12), at);
+    expect(feedJar(before, 0, at)).toBe('fed');
+    const n = run(before, at, local(2, 12));
+    const w = waters(n);
+    expect(w).toHaveLength(1);
+    const expected = at + (CARE.leftoverSeconds + CARE.settleSeconds) * 1000;
+    expect(Math.abs(w[0]! - expected)).toBeLessThanOrEqual(60 * 1000);
+  });
+
+  test('餌をやった瓶を夜じゅう見ていたら、次の夜に回す', () => {
+    const s = createInitialState(local(1, 12));
+    expect(feedJar(s, 0, local(1, 12))).toBe('fed');
+    const watched = run(s, local(1, 12), local(2, 12), 0);
+    expect(waters(watched)).toHaveLength(0);
+    expect(watched.jars[0]!.waterDue).not.toBeNull();
+    const next = run(watched, local(2, 12), local(3, 12));
+    const w = waters(next);
+    expect(w).toHaveLength(1);
+    expect(new Date(w[0]!).getDate()).toBe(3);
   });
 
   test('食べ残しが消えると、そのぶん堆積が増える', () => {
