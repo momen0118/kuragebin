@@ -2,7 +2,7 @@
 import { LIFE, type LifeRules } from '../config';
 import { findCreature } from './edit';
 import { freeSwimmerSlots } from './lifecycle';
-import { isSwimmer, type GameState } from './state';
+import { isSwimmer, wallAt, type GameState } from './state';
 
 /** 名前の長さの上限（文字） */
 export const NAME_MAX = 12;
@@ -34,6 +34,7 @@ export function moveCreature(state: GameState, id: number, toJar: number, rules:
   const c = found.creature;
   from.creatures = from.creatures.filter((x) => x.id !== id);
   c.arrivedAt = state.time;
+  c.arrivedWallTime = wallAt(state, state.time);
   if (c.stage === 'adult') c.progress = 0;
   state.jars[toJar]!.creatures.push(c);
   return 'moved';

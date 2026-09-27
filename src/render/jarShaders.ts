@@ -1,6 +1,6 @@
 // 瓶のシェーダ。水の入った円筒は横方向のレンズとして振る舞う。
 // 背景は瓶を丸ごと通り抜けた視線（4つの面で曲がる）で、中身は手前の面だけで曲がった視線で映す。
-import { CAUSTIC, JAR, JELLY_LOOK, LAMP, WATER } from '../config';
+import { CAUSTIC, JAR, JELLY_LOOK, LAMP, SEDIMENT, WATER } from '../config';
 import { CAUSTIC_SWAY } from './caustic';
 import { LAMP_GLSL } from './lamp';
 import common from './shaders/common.glsl?raw';
@@ -429,10 +429,28 @@ ${LAMP_GLSL}
 ${POOL_LIGHT}
 uniform sampler2D tBg;
 uniform mat4 uViewProj;
-uniform float uTime, uAgitation, uLensLight, uSparkle;
+uniform float uTime, uAgitation, uLensLight, uSparkle, uSediment;
 uniform vec3 uKey, uKeyDir, uAmbient, uGlowPos, uGlowColor, uGlassTint;
 in vec3 vWorldPos;
 in vec2 vUv;
+
+// 瓶底に溜まったもの（マリンスノー）。うっすら白っぽいまだらで、溜まるほど濃く広がる。
+// 水を替えたあとは薄く平らな膜だけ。模様は瓶底の座標で作る（瓶ごとに同じ模様でよい）
+float sediment(vec2 xz, float r) {
+  vec2 p = xz / ${(JAR.radius - JAR.glassThickness).toFixed(5)};
+  float n = 0.55 * valueNoise(p * ${SEDIMENT.scales[0]!.toFixed(2)} + 3.1)
+          + 0.3 * valueNoise(p * ${SEDIMENT.scales[1]!.toFixed(2)} - 7.7)
+          + 0.15 * valueNoise(p * ${SEDIMENT.scales[2]!.toFixed(2)} + 1.3);
+  float corner = smoothstep(0.7, 0.97, r) * ${SEDIMENT.corner.toFixed(3)};
+  float amount = clamp(uSediment, 0.0, 1.4);
+  // 溜まるほど、まだらの斑が広がってつながる
+  float patchy = smoothstep(0.6 - 0.16 * amount, 0.8, n + corner);
+  // 積もったマリンスノーの細かい粒（斑の多い所ほど多い）
+  vec2 cell = floor(p * ${SEDIMENT.flakeCells.toFixed(1)});
+  float flake = step(1.0 - ${SEDIMENT.flakeRate.toFixed(3)} * amount * (0.4 + patchy), hash12(cell + 11.0));
+  return amount * (${SEDIMENT.film.toFixed(3)} + ${(1 - SEDIMENT.film).toFixed(3)} * patchy) + flake * 1.6;
+}
+
 void main() {
   float r = vUv.x;
   // 底ガラス越しの天板。中央ほど拡大されて見える
@@ -454,6 +472,10 @@ void main() {
   vec3 col = under * 0.9 + light * pool * (ring * 0.07 + sk * uSparkle * 0.6);
   // デスクライトの光が水越しに底へ落ちる。光る種がいるときは、その光も近いところだけ
   col += uLampColor * lampSpot(vWorldPos) * 0.03 + uGlowColor * glow * 0.12;
+  // 溜まったものが瓶底を少し覆う。部屋の光とデスクライトを受けたぶんだけ見える
+  float sd = sediment(vWorldPos.xz, r) * ${SEDIMENT.strength.toFixed(3)};
+  vec3 dust = vec3(${SEDIMENT.color.map((v) => v.toFixed(3)).join(', ')}) * (uAmbient * 1.2 + uKey * 0.3 + uLampColor * lampSpot(vWorldPos) * 0.6 + uGlowColor * glow * 0.3);
+  col = mix(col, dust, clamp(sd, 0.0, 0.8));
   float a = 0.9 * (1.0 - smoothstep(0.985, 1.0, r));
   gl_FragColor = vec4(col * a, a);
 }

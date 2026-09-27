@@ -83,6 +83,16 @@ export function clearFed(state: GameState, jarIndex: number | null): void {
   });
 }
 
+/** 瓶底の堆積を value にする（jarIndex が null ならすべての瓶）。食べ残しも消えたことにする（水換えを試すため） */
+export function setSediment(state: GameState, jarIndex: number | null, value: number): void {
+  state.jars.forEach((jar, i) => {
+    if (jarIndex !== null && i !== jarIndex) return;
+    jar.sediment = Math.max(0, value);
+    jar.leftover = null;
+    jar.cleanSince = null;
+  });
+}
+
 /** 食べた餌を消す（胃の色と成長の早まりがなくなる） */
 export function clearMeals(state: GameState): void {
   for (const jar of state.jars) for (const c of jar.creatures) c.meal = null;

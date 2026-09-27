@@ -1,18 +1,20 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { HANDLING, SIM } from './config';
+import { HANDLING, NOTEBOOK, SIM } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
-import { hourOf, lightAt, sunOf } from './render/lighting';
+import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
-import { clearFed, clearMeals, fillAdults, removeCreature, setDiscs, setProgress, setStage, spawnCreature } from './sim/edit';
-import { lastMealAt } from './sim/feed';
+import { clearFed, clearMeals, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature } from './sim/edit';
+import { feedingPlan, lastMealAt } from './sim/feed';
 import type { GameState, Stage } from './sim/state';
 import { Carry } from './ui/carry';
 import { JarDots } from './ui/dots';
 import { FeedButton } from './ui/feedButton';
 import { Gestures, type Point } from './ui/gestures';
+import { JournalButton } from './ui/journal/button';
+import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
 import { CreatureTag } from './ui/tag';
@@ -141,6 +143,7 @@ async function main(): Promise<void> {
   const lampToggle = new LampToggle((on) => {
     app.setLampOn(on);
     game.updateSettings({ lamp: on });
+    applyLight();
   }, game.state.settings.lamp);
 
   /**
@@ -154,11 +157,48 @@ async function main(): Promise<void> {
     if (game.canFeed(j) !== 'fed') return false;
     tag.hide();
     if (game.feed(j) !== 'fed') return false;
-    const at = lastMealAt(game.state.jars[j]!);
-    if (at !== null) app.feedStart(j, at);
+    const jar = game.state.jars[j]!;
+    const at = lastMealAt(jar);
+    if (at !== null) app.feedStart(j, at, feedingPlan(jar, at));
     return true;
   };
   const feedButton = new FeedButton(() => void feedNow());
+
+  /** 読み込んだ状態に、ライトと見ている瓶を合わせる（日誌の設定とデバッグパネルから） */
+  const afterImport = (): void => {
+    app.setLampOn(game.state.settings.lamp);
+    lampToggle.set(game.state.settings.lamp);
+    jumpToSavedJar();
+  };
+
+  // 観察日誌（左下）。日誌に一行増えたら点が付き、開いたら消える
+  const notebook = new Notebook({
+    state: () => game.state,
+    now: () => clock.now(),
+    rename: (id, name) => game.rename(id, name),
+    exportJson: () => game.exportJson(),
+    importJson: (text) => {
+      game.importJson(text);
+      afterImport();
+    },
+    opened: () => {
+      tag.hide();
+      game.markJournalRead();
+    },
+    closed: () => game.markJournalRead(),
+  });
+  const journalButton = new JournalButton(() => notebook.open());
+  const showJournal = (): void => {
+    journalButton.setUnread(game.unread);
+    notebook.refresh();
+  };
+  showJournal();
+  game.onChange(showJournal);
+  /** 部屋の明るさに合わせた、日誌の紙の明るさ */
+  const paperLum = (light: LightState): number =>
+    NOTEBOOK.lumDay * light.day +
+    NOTEBOOK.lumDusk * light.dusk +
+    (app.lampIsOn && light.lamp > 0.5 ? NOTEBOOK.lumNight : NOTEBOOK.lumDark) * light.night;
 
   let hourOverride: number | null = null;
   let lightTimer = 0;
@@ -169,6 +209,7 @@ async function main(): Promise<void> {
     const light = lightAt(h, sun);
     app.setLight(light);
     lampToggle.setVisible(light.lamp > 0.5);
+    notebook.setLum(paperLum(light));
     panel?.showHour(h, sun.sunrise, sun.sunset);
   };
 
@@ -200,9 +241,7 @@ async function main(): Promise<void> {
           onExport: () => game.exportJson(),
           onImport: (text) => {
             game.importJson(text);
-            app.setLampOn(game.state.settings.lamp);
-            lampToggle.set(game.state.settings.lamp);
-            jumpToSavedJar();
+            afterImport();
           },
           onSpawn: (stage) => game.edit((s, rules) => void spawnCreature(s, slider.index, stage, rules)),
           onStage: (id, stage) => game.edit((s, rules) => setStage(s, id, stage, rules)),
@@ -215,6 +254,8 @@ async function main(): Promise<void> {
           onFeed: () => void feedNow(true),
           onFeedClear: () => game.edit((s) => clearFed(s, null)),
           onMealsClear: () => game.edit((s) => clearMeals(s)),
+          onSediment: (v) => game.edit((s) => setSediment(s, slider.index, v)),
+          onUnread: () => game.edit((s) => (s.journalSeen = 0)),
         })
       : null;
   /** 確認用：表示中の瓶の餌の様子 */
@@ -227,7 +268,8 @@ async function main(): Promise<void> {
     const f = app.feedingState;
     const g = f.grains;
     const show = f.active && f.jar === j ? `　${f.phase}・漂う${g.free}・食べ中${g.held + g.carry + g.absorb}・底${g.floor}` : '';
-    return `瓶${j + 1}：${can}（最後 ${last}）${show}`;
+    const care = `　瓶底 ${jar.sediment.toFixed(2)}${jar.leftover ? '（食べ残しあり）' : ''}`;
+    return `瓶${j + 1}：${can}（最後 ${last}）${show}${care}`;
   };
   /** 確認用：ポリプ・ストロビラ・エフィラを実物大で描く（すべての瓶） */
   const setRealSize = (on: boolean): void => {
@@ -369,6 +411,9 @@ async function main(): Promise<void> {
       feed: (force = false) => feedNow(force),
       feeding: () => app.feedingState,
       feedClear: () => edit((s) => clearFed(s, null)),
+      // 瓶底の堆積（瓶 jar を value に）と、日誌を開く・閉じる
+      sediment: (jar: number, value: number) => edit((s) => setSediment(s, jar, value)),
+      journal: (open: boolean) => (open ? notebook.open() : notebook.close()),
       setHour: (h: number) => {
         hourOverride = h;
         applyLight();
@@ -379,6 +424,7 @@ async function main(): Promise<void> {
     };
     // 確認用：描画側の中身を直接見る
     w.__kurageApp = app;
+    w.__kurageNotebook = notebook;
     w.__kurageReady = true;
     return;
   }
@@ -393,7 +439,8 @@ async function main(): Promise<void> {
     // 画面の大きさが知らせなしに変わっていることがあるので、ついでに確かめる
     if (lightTimer > (clock.speed > 1 ? 0 : 1)) {
       lightTimer = 0;
-      game.tick();
+      // 見ている瓶の出来事は日誌に書かない（ほかの瓶の出来事は書く）
+      game.tick(slider.index);
       applyLight();
       layout(canvas, app);
     }

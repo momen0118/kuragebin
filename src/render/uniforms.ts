@@ -35,6 +35,8 @@ export function createSharedUniforms() {
      * カップが水面を通るときに立つ
      */
     uRipples: { value: [new Vector4(), new Vector4(), new Vector4(), new Vector4()] },
+    /** 描いている瓶の、瓶底に溜まったもの（sim の sediment。1 で水換えの目安） */
+    uSediment: { value: 0 },
   };
 }
 

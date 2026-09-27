@@ -1,10 +1,13 @@
 // 生活環。成体は瓶底にポリプを付け、ポリプはくびれてストロビラになり、エフィラを放してポリプに戻る。
 // エフィラは育って成体になる。泳ぐ個体が上限に達した瓶では、ポリプは休んで進まない。
+// 出来事は日誌に書く。ただし見ている瓶（ctx.watching）の出来事は書かない（見ていたので）。
 // advance.ts の1刻みごとに呼ぶ（状態をその場で書き換える）。
-import { JOURNAL, LIFE, type LifeRules } from '../config';
+import { LIFE, type LifeRules } from '../config';
+import { stepCare } from './care';
 import { growthRate } from './feed';
+import { record } from './journal';
 import type { Rng } from './rng';
-import { isSwimmer, stageRange, type Creature, type GameState, type JarState, type JournalKind, type Stage } from './state';
+import { isSwimmer, stageRange, wallAt, type Creature, type GameState, type JarState, type Stage } from './state';
 
 export interface JarCounts {
   /** 泳ぐ個体（成体＋エフィラ） */
@@ -51,7 +54,10 @@ export function enterStage(c: Creature, stage: Stage, rng: Rng, rules: LifeRules
   if (isSwimmer(stage)) c.spot = null;
 }
 
-/** 新しい個体を作る（瓶にはまだ入れない）。番号は状態から取る */
+/**
+ * 新しい個体を作る（瓶にはまだ入れない）。番号は状態から取る。
+ * 来た時刻は今（進めている途中なら、extra に arrivedWallTime として刻みの端末の時刻を渡す）
+ */
 export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: LifeRules = LIFE, extra: Partial<Creature> = {}): Creature {
   return {
     id: state.nextId++,
@@ -63,6 +69,7 @@ export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: 
     progress: 0,
     stageLength: pickStageLength(stage, rng, rules),
     arrivedAt: state.time,
+    arrivedWallTime: wallAt(state, state.time),
     name: null,
     parent: null,
     spot: null,
@@ -106,22 +113,22 @@ export interface StepContext {
   rules: LifeRules;
   /** 刻みの終わりの、端末の時刻（ミリ秒）。日誌の出来事に付ける */
   wall: number;
+  /** 画面で見ている瓶（開いていて表示している瓶）。その瓶の出来事は日誌に書かず、水換えも起きない。閉じていれば null */
+  watching: number | null;
 }
 
-/** 日誌に出来事を足す。多すぎたら古いものから消す */
-export function record(state: GameState, kind: JournalKind, jar: number, count: number, ids: number[], wall: number): void {
-  state.journal.push({ kind, jar, count, ids, time: state.time, wallTime: wall });
-  const over = state.journal.length - JOURNAL.maxEntries;
-  if (over > 0) state.journal.splice(0, over);
-}
-
-/** すべての瓶の生活環を dt 秒進める */
+/** すべての瓶の生活環と瓶底を dt 秒進める */
 export function stepLife(state: GameState, dt: number, ctx: StepContext): void {
-  state.jars.forEach((jar, i) => stepJar(state, jar, i, dt, ctx));
+  state.jars.forEach((jar, i) => {
+    stepJar(state, jar, i, dt, ctx);
+    stepCare(state, jar, i, dt, ctx);
+  });
 }
 
 function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx: StepContext): void {
   const { rng, rules, wall } = ctx;
+  // 見ている瓶の出来事は日誌に書かない
+  const log = index !== ctx.watching;
   const counts = jarCounts(jar);
   const born: Creature[] = [];
   for (const c of jar.creatures) {
@@ -134,11 +141,15 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
         // 約1日ごとに瓶底へポリプを付ける。瓶底がいっぱいなら、空くまで待つ
         c.progress = Math.min(1, c.progress + dt / c.stageLength);
         if (c.progress >= 1 && counts.polyps < rules.maxPolyps) {
-          const polyp = createCreature(state, 'polyp', rng, rules, { parent: c.id, spot: pickSpot(spotsIn(jar, born), rng, rules) });
+          const polyp = createCreature(state, 'polyp', rng, rules, {
+            parent: c.id,
+            spot: pickSpot(spotsIn(jar, born), rng, rules),
+            arrivedWallTime: wall,
+          });
           born.push(polyp);
           counts.polyps++;
           enterStage(c, 'adult', rng, rules);
-          record(state, 'polyp', index, 1, [polyp.id], wall);
+          if (log) record(state, 'polyp', index, 1, [polyp.id], wall);
         }
         break;
       }
@@ -154,7 +165,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
           enterStage(c, 'strobila', rng, rules);
           c.discs = n;
           counts.pending += n;
-          record(state, 'strobila', index, 1, [c.id], wall);
+          if (log) record(state, 'strobila', index, 1, [c.id], wall, c.name);
         }
         break;
       }
@@ -167,13 +178,13 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
           counts.pending -= c.discs;
           const ids: number[] = [];
           for (let k = 0; k < n; k++) {
-            const e = createCreature(state, 'ephyra', rng, rules, { parent: c.id });
+            const e = createCreature(state, 'ephyra', rng, rules, { parent: c.id, arrivedWallTime: wall });
             born.push(e);
             ids.push(e.id);
           }
           counts.swimmers += n;
           enterStage(c, 'polyp', rng, rules);
-          if (n > 0) record(state, 'release', index, n, ids, wall);
+          if (n > 0 && log) record(state, 'release', index, n, ids, wall, c.name);
         }
         break;
       }
@@ -182,22 +193,26 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
         c.progress = Math.min(1, c.progress + (dt * growthRate(c, state.time)) / c.stageLength);
         if (c.progress >= 1) {
           enterStage(c, 'adult', rng, rules);
-          record(state, 'adult', index, 1, [c.id], wall);
+          if (log) record(state, 'adult', index, 1, [c.id], wall, c.name);
         }
         break;
       }
     }
   }
   if (born.length) jar.creatures.push(...born);
-  updateResting(state, jar, index, rules, wall);
+  updateResting(state, jar, index, rules, log ? wall : null);
 }
 
-/** 泳ぐ個体が上限で、くびれを待つポリプがいれば「休んでいる」。変わったら日誌に書く */
+/**
+ * 泳ぐ個体が上限で、くびれを待つポリプがいれば「休んでいる」。変わったら日誌に書く（wall が null なら書かない）。
+ * 休む・動き出すポリプが1つなら、その名前も書く
+ */
 export function updateResting(state: GameState, jar: JarState, index: number, rules: LifeRules, wall: number | null): void {
   const counts = jarCounts(jar);
   const waiting = jar.creatures.filter((c) => c.stage === 'polyp');
   const resting = waiting.length > 0 && counts.swimmers + counts.pending >= rules.maxSwimmers;
   if (resting === jar.resting) return;
   jar.resting = resting;
-  if (wall !== null) record(state, resting ? 'rest' : 'wake', index, waiting.length, waiting.map((c) => c.id), wall);
+  const name = waiting.length === 1 ? waiting[0]!.name : null;
+  if (wall !== null) record(state, resting ? 'rest' : 'wake', index, waiting.length, waiting.map((c) => c.id), wall, name);
 }

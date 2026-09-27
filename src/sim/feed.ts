@@ -1,7 +1,9 @@
 // 餌。1瓶につき1日1回（端末の現地時刻の朝4時で日を区切る）。瓶にいる全員が食べ、食べた量は餌をやった瞬間に決まる。
+// 出す粒の数と、個体ごとに食べる粒の数もここで決める（描画の見せ場はそのとおりに食べて見せる）。
+// 食べ残しの粒は瓶底でしばらくして消え、そのぶん瓶底の堆積が少し増える（care.ts）。
 // 食べてから1日の間、エフィラとポリプの進みが少し速くなる（lifecycle.ts が growthRate を掛ける）。
 // 状態をその場で書き換える。
-import { FEED } from '../config';
+import { CARE, FEED, FOOD } from '../config';
 import { createRng } from './rng';
 import type { Creature, GameState, JarState } from './state';
 
@@ -34,7 +36,10 @@ export function canFeed(state: GameState, jar: number, wallMs: number): FeedResu
   return 'fed';
 }
 
-/** 瓶 jar に餌をやる。食べる個体ごとに食べた量を決め、その日はもうやれないようにする */
+/**
+ * 瓶 jar に餌をやる。食べる個体ごとに食べた量を決め、その日はもうやれないようにする。
+ * 食べ残しは CARE.leftoverSeconds で消えきり、そのとき瓶底の堆積に足す
+ */
 export function feedJar(state: GameState, jar: number, wallMs: number): FeedResult {
   const result = canFeed(state, jar, wallMs);
   if (result !== 'fed') return result;
@@ -46,7 +51,40 @@ export function feedJar(state: GameState, jar: number, wallMs: number): FeedResu
   const [lo, hi] = FEED.amount;
   for (const c of j.creatures) if (eats(c)) c.meal = { at, amount: rng.range(lo, hi) };
   state.rng = rng.state();
+  const plan = feedingPlan(j, at);
+  const amount = (plan.grains - plan.total) * CARE.perGrain + (j.leftover?.amount ?? 0);
+  j.leftover = { amount, goneAt: at + CARE.leftoverSeconds };
   return 'fed';
+}
+
+/** 食べた量 1 のときに食べる粒の数：成体、エフィラ（育つほど多い）、ポリプ */
+function bitesPerMeal(c: Creature): number {
+  if (c.stage === 'adult') return FOOD.bitesAdult;
+  if (c.stage === 'ephyra') return FOOD.bitesEphyra[0] + (FOOD.bitesEphyra[1] - FOOD.bitesEphyra[0]) * c.progress;
+  if (c.stage === 'polyp') return FOOD.bitesPolyp;
+  return 0;
+}
+
+export interface FeedingPlan {
+  /** 個体ごとに食べる粒の数（餌 at を食べた個体だけ） */
+  bites: Map<number, number>;
+  /** 食べる粒の合計と、出す粒の数（食べ残しは grains - total） */
+  total: number;
+  grains: number;
+}
+
+/** 餌 at（sim の meal.at）の、出す粒の数と個体ごとに食べる粒の数 */
+export function feedingPlan(jar: JarState, at: number): FeedingPlan {
+  const bites = new Map<number, number>();
+  let total = 0;
+  for (const c of jar.creatures) {
+    if (!c.meal || c.meal.at !== at) continue;
+    const n = Math.max(1, Math.round(c.meal.amount * bitesPerMeal(c)));
+    bites.set(c.id, n);
+    total += n;
+  }
+  const grains = Math.min(Math.max(Math.round(total * (1 + FOOD.extra)), FOOD.min), FOOD.max);
+  return { bites, total, grains };
 }
 
 /**
