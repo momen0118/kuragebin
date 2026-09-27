@@ -24,8 +24,9 @@ import {
   Vector3,
   type Side,
 } from 'three';
-import { EPHYRA, JAR, JELLY_LOOK, POLYP, STROBILA } from '../../config';
+import { EPHYRA, JAR, JELLY_LOOK, POLYP, STOMACH, STROBILA } from '../../config';
 import type { Rng } from '../../sim/rng';
+import { Stomach } from '../stomach';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
 import common from '../shaders/common.glsl?raw';
@@ -52,6 +53,7 @@ out vec3 vWorldPos;
 out vec3 vWorldNormal;
 out vec3 vViewNormal;
 out float vLobe;
+out float vHeight;
 
 vec4 prof(float t) {
   float f = clamp(t, 0.0, 1.0) * float(N);
@@ -92,6 +94,7 @@ void main() {
   if (dot(nrm, nMer) < 0.0) nrm = -nrm;
   nrm = normalize(mix(nMer, nrm, smoothstep(0.0, 0.04, prof(t).x)));
   vLobe = prof(t).z;
+  vHeight = pos.y;
   vec4 wp = modelMatrix * vec4(pos, 1.0);
   vWorldPos = wp.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * nrm);
@@ -107,10 +110,13 @@ uniform float uGlowPass;
 uniform vec3 uKey, uKeyDir, uAmbient, uTint;
 uniform sampler2D tRoom;
 uniform vec2 uResolution;
+// 胃の中の餌の濃さ（0 で空）
+uniform float uMeal;
 in vec3 vWorldPos;
 in vec3 vWorldNormal;
 in vec3 vViewNormal;
 in float vLobe;
+in float vHeight;
 void main() {
   if (uGlowPass > 0.5) {
     gl_FragColor = vec4(0.0);
@@ -139,7 +145,15 @@ void main() {
   col += texture(tRoom, suv).rgb * refr;
   // 夜は輪郭と皿の縁でライトの光が散って、闇の中に形が浮かぶ
   col += uLampColor * spot * uTint * (0.12 * rim + 0.03 * core + 0.12 * vLobe) * ${JELLY_LOOK.lampScatter.toFixed(3)};
-  gl_FragColor = vec4(col, density * 0.55 + refr);
+  float alpha = density * 0.55 + refr;
+  // 食べた餌が体の中（杯のあたり）にうっすら橙色に透ける
+  if (uMeal > 0.001) {
+    vec3 sc = vec3(${STOMACH.color.map((v) => v.toFixed(3)).join(', ')});
+    float meal = uMeal * ${STOMACH.polyp.toFixed(4)} * (0.35 + core) * smoothstep(0.25, 0.5, vHeight) * (1.0 - smoothstep(0.85, 1.05, vHeight));
+    col += sc * (light * 2.0 + uLampColor * spot * 0.3) * meal;
+    alpha += meal * 0.55;
+  }
+  gl_FragColor = vec4(col, alpha);
 }
 `;
 
@@ -189,6 +203,8 @@ export class Polyp {
   readonly group = new Group();
   /** 瓶底の足もとの位置（ワールド） */
   readonly base = new Vector3();
+  /** 胃の中の餌の見え方（橙色） */
+  readonly stomach = new Stomach();
   private readonly body: Mesh[];
   private readonly strands: Mesh;
   private readonly profile: DataTexture;
@@ -198,6 +214,7 @@ export class Polyp {
     uLobeCut: { value: number };
     uTwitchDrop: { value: number };
     uLobePhase: { value: number };
+    uMeal: { value: number };
   };
   private readonly matrix = new Matrix4();
   private readonly quat = new Quaternion();
@@ -285,6 +302,7 @@ export class Polyp {
       uLobeCut: { value: STROBILA.lobeCut },
       uTwitchDrop: { value: STROBILA.twitchDrop },
       uLobePhase: { value: yaw },
+      uMeal: { value: 0 },
     };
     const tint = { value: new Vector3(...POLYP.body) };
     const geo = latheGrid(RINGS, SEGMENTS);
@@ -347,6 +365,11 @@ export class Polyp {
   /** 体の高さ（瓶の高さ単位） */
   get size(): number {
     return this.height;
+  }
+
+  /** 体の向き（足もとから口へ、ワールド） */
+  get axis(): Vector3 {
+    return this.up;
   }
 
   /** エフィラを放しているところか（離れるのを待つ皿がある） */
@@ -415,6 +438,8 @@ export class Polyp {
     this.shape = polypShape(input, this.shape);
     this.profile.needsUpdate = true;
     this.uniforms.uTwitch.value.set(this.twitch[0]!, this.twitch[1]!, this.twitch[2]!);
+    this.stomach.update(dt);
+    this.uniforms.uMeal.value = this.stomach.level;
 
     this.height = POLYP.height * this.sizeScale * this.grow;
     this.scaleV.setScalar(this.height);

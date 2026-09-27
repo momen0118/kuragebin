@@ -76,6 +76,18 @@ export function removeCreature(state: GameState, id: number, rules: LifeRules = 
   updateResting(state, jar, found.jar, rules, null);
 }
 
+/** 餌をやった記録を消す（その日のうちにまたやれる）。jarIndex が null ならすべての瓶 */
+export function clearFed(state: GameState, jarIndex: number | null): void {
+  state.jars.forEach((jar, i) => {
+    if (jarIndex === null || i === jarIndex) jar.fedWallTime = null;
+  });
+}
+
+/** 食べた餌を消す（胃の色と成長の早まりがなくなる） */
+export function clearMeals(state: GameState): void {
+  for (const jar of state.jars) for (const c of jar.creatures) c.meal = null;
+}
+
 /** 泳ぐ個体を成体 n 匹にする（エフィラは除く）。瓶底の個体はそのまま */
 export function fillAdults(state: GameState, jarIndex: number, n: number, rules: LifeRules = LIFE): void {
   const jar = state.jars[jarIndex]!;

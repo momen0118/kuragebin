@@ -5,6 +5,7 @@ import { LIFE, SIM, type LifeRules } from './config';
 import { canMove, moveCreature, renameCreature, type MoveResult } from './sim/actions';
 import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
+import { canFeed, feedJar, type FeedResult } from './sim/feed';
 import { createInitialState, type GameState, type Settings } from './sim/state';
 import { openStateStore, type StateStore } from './storage/db';
 import { exportState, importState } from './storage/io';
@@ -111,6 +112,24 @@ export class Game {
     const next = structuredClone(this.current);
     const result = moveCreature(next, id, toJar, this.rules);
     if (result !== 'moved') return result;
+    this.current = next;
+    this.emit();
+    void this.save();
+    return result;
+  }
+
+  /** 瓶 jar に今、餌をやれるか（'fed' ならやれる。1日1回、食べる個体がいる瓶だけ） */
+  canFeed(jar: number): FeedResult {
+    return canFeed(this.current, jar, this.clock.now());
+  }
+
+  /** 瓶 jar に餌をやる。食べた量はこの時点で決まる（見た目はそれを見せるだけ） */
+  feed(jar: number): FeedResult {
+    // やった時刻をそのまま記録できるよう、先に今まで進める
+    this.catchUpNow(false);
+    const next = structuredClone(this.current);
+    const result = feedJar(next, jar, this.clock.now());
+    if (result !== 'fed') return result;
     this.current = next;
     this.emit();
     void this.save();

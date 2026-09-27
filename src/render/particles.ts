@@ -245,6 +245,11 @@ export class Bubble {
     return this.active;
   }
 
+  /** しばらく新しい泡を出さない（餌をやっている間。スポイトから空気が出たように見えないように） */
+  hold(seconds: number): void {
+    if (!this.active) this.timeToNext = Math.max(this.timeToNext, seconds);
+  }
+
   update(dt: number): void {
     if (!this.active) {
       this.timeToNext -= dt;

@@ -4,7 +4,7 @@ import { LIFE, SIM } from '../config';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -38,12 +38,23 @@ export interface Creature {
   spot: [number, number] | null;
   /** ストロビラが放すエフィラの数（ほかの段階では 0） */
   discs: number;
+  /** 最後に食べた餌（まだなら null）。胃の橙色と、成長の早まりに使う */
+  meal: Meal | null;
+}
+
+export interface Meal {
+  /** 食べた時刻（ゲーム内の経過秒） */
+  at: number;
+  /** 食べた量（1 で満腹） */
+  amount: number;
 }
 
 export interface JarState {
   creatures: Creature[];
   /** 泳ぐ個体が上限に達していて、ポリプが休んでいる */
   resting: boolean;
+  /** 最後に餌をやった端末の時刻（ミリ秒、まだなら null）。餌は1日1回まで */
+  fedWallTime: number | null;
 }
 
 /** 日誌に載せる出来事の種類 */
@@ -158,10 +169,12 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     parent: null,
     spot: null,
     discs: 0,
+    meal: null,
   };
   const jars: JarState[] = Array.from({ length: SIM.jarCount }, (_, i) => ({
     creatures: i === 0 ? [first] : [],
     resting: false,
+    fedWallTime: null,
   }));
   return {
     schema: SCHEMA_VERSION,

@@ -173,7 +173,7 @@ body {
 
 /*
  * 画面下の隅のアイコン。中央は瓶の点3つに空けておく。
- * 右下は瓶に何かをする操作（ライト、あとで餌を一番隅に足す）、左下は日誌（あとで足す）
+ * 右下は瓶に何かをする操作（いちばん隅に餌、その内側に夜だけライト）、左下は日誌（あとで足す）
  */
 .jar-actions {
   position: fixed;
@@ -185,8 +185,40 @@ body {
   pointer-events: none;
 }
 
-/* 夜のデスクライトのオン・オフ。夜の間だけ出す */
+/* 餌のスポイト。いつも出している。スポイトを使っている間だけ少し明るい */
+.feed-button {
+  order: 2;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgb(255, 255, 255);
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.feed-button svg {
+  opacity: 0.26;
+  transition: opacity 0.6s ease;
+}
+
+.feed-button.busy svg {
+  opacity: 0.5;
+}
+
+.feed-button:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
+}
+
+/* 夜のデスクライトのオン・オフ。夜の間だけ出す（餌の内側） */
 .lamp-toggle {
+  order: 1;
   width: 44px;
   height: 44px;
   display: grid;

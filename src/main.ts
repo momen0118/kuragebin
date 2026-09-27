@@ -6,10 +6,12 @@ import { Game } from './game';
 import { App } from './render/app';
 import { hourOf, lightAt, sunOf } from './render/lighting';
 import { Clock } from './sim/clock';
-import { fillAdults, removeCreature, setDiscs, setProgress, setStage, spawnCreature } from './sim/edit';
+import { clearFed, clearMeals, fillAdults, removeCreature, setDiscs, setProgress, setStage, spawnCreature } from './sim/edit';
+import { lastMealAt } from './sim/feed';
 import type { GameState, Stage } from './sim/state';
 import { Carry } from './ui/carry';
 import { JarDots } from './ui/dots';
+import { FeedButton } from './ui/feedButton';
 import { Gestures, type Point } from './ui/gestures';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
@@ -128,7 +130,7 @@ async function main(): Promise<void> {
 
   // 瓶ごとの個体を描く（描いて動かすのは見えている瓶だけ）
   const showJars = (s: GameState): void => {
-    app.setJars(s.jars);
+    app.setJars(s.jars, s.time + s.pending);
     tag.refresh();
   };
   showJars(game.state);
@@ -140,6 +142,23 @@ async function main(): Promise<void> {
     app.setLampOn(on);
     game.updateSettings({ lamp: on });
   }, game.state.settings.lamp);
+
+  /**
+   * 表示中の瓶に餌をやる（1瓶につき1日1回）。状態は押したときに変え（食べた量もここで決まる）、
+   * スポイトが降りてきて水の中で餌を出し、粒が食べられていくのを見せる。やれたら true。force は確認用（1日1回を無視）
+   */
+  const feedNow = (force = false): boolean => {
+    if (app.handsBusy || slider.moving || !app.atRest) return false;
+    const j = slider.index;
+    if (force) game.edit((s) => clearFed(s, j));
+    if (game.canFeed(j) !== 'fed') return false;
+    tag.hide();
+    if (game.feed(j) !== 'fed') return false;
+    const at = lastMealAt(game.state.jars[j]!);
+    if (at !== null) app.feedStart(j, at);
+    return true;
+  };
+  const feedButton = new FeedButton(() => void feedNow());
 
   let hourOverride: number | null = null;
   let lightTimer = 0;
@@ -193,8 +212,23 @@ async function main(): Promise<void> {
           onFill: (n) => game.edit((s, rules) => fillAdults(s, slider.index, n, rules)),
           onCap: (n) => game.setRules({ maxSwimmers: n }),
           onRealSize: (on) => setRealSize(on),
+          onFeed: () => void feedNow(true),
+          onFeedClear: () => game.edit((s) => clearFed(s, null)),
+          onMealsClear: () => game.edit((s) => clearMeals(s)),
         })
       : null;
+  /** 確認用：表示中の瓶の餌の様子 */
+  const feedText = (): string => {
+    const j = slider.index;
+    const jar = game.state.jars[j]!;
+    const r = game.canFeed(j);
+    const can = r === 'fed' ? 'やれる' : r === 'already' ? '今日はやった' : '食べる個体がいない';
+    const last = jar.fedWallTime ? new Date(jar.fedWallTime).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'まだ';
+    const f = app.feedingState;
+    const g = f.grains;
+    const show = f.active && f.jar === j ? `　${f.phase}・漂う${g.free}・食べ中${g.held + g.carry + g.absorb}・底${g.floor}` : '';
+    return `瓶${j + 1}：${can}（最後 ${last}）${show}`;
+  };
   /** 確認用：ポリプ・ストロビラ・エフィラを実物大で描く（すべての瓶） */
   const setRealSize = (on: boolean): void => {
     for (const c of app.jars) c.setRealSize(on);
@@ -204,6 +238,7 @@ async function main(): Promise<void> {
     refreshPanel = (): void => {
       panel.showState(game.state, game.info, clock.speed, clock.drift);
       panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers);
+      panel.showFeed(feedText());
     };
     game.onChange(refreshPanel);
     refreshPanel();
@@ -230,8 +265,8 @@ async function main(): Promise<void> {
       slider.finish();
       app.setView(slider.position);
       const [x, y] = toNdc(p);
-      // カップを使っている間は、新しく運ばない
-      holdable = app.scoopBusy ? null : app.pickAt(x, y, fingerNdc(), true);
+      // カップやスポイトを使っている間は、新しく運ばない
+      holdable = app.handsBusy ? null : app.pickAt(x, y, fingerNdc(), true);
       return holdable !== null ? 'holdable' : 'plain';
     },
     tap: tapAt,
@@ -258,6 +293,7 @@ async function main(): Promise<void> {
     else app.simulate(dt);
     dots.set(slider.position);
     tag.update(dt);
+    feedButton.setBusy(app.feedingBusy);
   };
 
   canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
@@ -329,6 +365,10 @@ async function main(): Promise<void> {
       // 画面の上の位置（CSS px）をタップしたのと同じ（札、つつく）
       tap: (x: number, y: number) => tapAt({ x, y }),
       tagged: () => tag.shownId,
+      // 餌：アイコンを押したのと同じ（force は1日1回を無視）。feeding() は流れの段階と粒の数
+      feed: (force = false) => feedNow(force),
+      feeding: () => app.feedingState,
+      feedClear: () => edit((s) => clearFed(s, null)),
       setHour: (h: number) => {
         hourOverride = h;
         applyLight();

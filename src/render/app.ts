@@ -21,7 +21,7 @@ import {
   type Texture,
   type WebGLRenderTarget,
 } from 'three';
-import { BELL, CUP, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, CUP, FOOD, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SWIPE, WATER, type PhotoName } from '../config';
 import { createRng } from '../sim/rng';
 import type { JarState } from '../sim/state';
 import { Bloom } from './bloom';
@@ -30,10 +30,13 @@ import { createComposite } from './composite';
 import { FullscreenPass } from './fullscreen';
 import { Creatures } from './creatures';
 import { Cup } from './cup';
+import { Feeding } from './feeding';
+import { Food } from './food';
 import { createJar, type Jar } from './jar';
 import { apparentNdc } from './lensMap';
 import { lightAt, type LightState } from './lighting';
 import { Bubble, createSnow, type Snow } from './particles';
+import { Pipette } from './pipette';
 import { Room } from './room';
 import { Scoop } from './scoop';
 import { createTable, type TableJars } from './table';
@@ -124,6 +127,11 @@ export class App {
   private readonly cup: Cup;
   private readonly cupScene = new Scene();
   private readonly scoop: Scoop;
+  /** 餌をやるスポイトと、その流れ。スポイトは瓶の中身とは別に描く。餌の粒は瓶の中身と一緒に */
+  private readonly pipette: Pipette;
+  private readonly pipetteScene = new Scene();
+  private readonly food: Food;
+  private readonly feeding: Feeding;
   /** 瓶ごとの水面の波紋（x, z, 始まった時刻, 強さ） */
   private readonly ripples: Vector4[][];
   /** 確認用：中間の画像をそのまま出す（'bg' | 'contents' | 'glow' | 'room'） */
@@ -187,12 +195,34 @@ export class App {
     );
     this.bubbles = this.jars.map(() => new Bubble(this.shared, rng));
     this.agitations = this.jars.map(() => 0);
+    this.pipette = new Pipette(this.shared);
+    this.pipetteScene.add(this.pipette.group);
+    this.food = new Food(this.shared, createRng((RENDER.seed ^ 0x5bd1e995) >>> 0));
+    this.feeding = new Feeding(
+      {
+        ripple: (jar, x, z, strength, radius) => this.addRipple(jar, x, z, strength, radius),
+        obstruct: (jar, center, radius) => this.jars[jar]?.setObstacle(center, radius),
+        swimmers: (jar) => this.jars[jar]?.swimmers ?? [],
+        eaters: (jar) => this.jars[jar]?.eaters() ?? [],
+        finish: (jar, immediate) => this.jars[jar]?.finishMeal(immediate),
+      },
+      this.pipette,
+      this.food,
+    );
 
     const table = createTable(this.shared, pc);
     this.tableJars = table.jars;
     this.snow = createSnow(this.shared, rng);
     this.bgScene.add(table.mesh);
-    this.contentScene.add(this.jar.back, this.jar.floor, this.snow.points, ...this.jars.map((c) => c.group), ...this.bubbles.map((b) => b.points), this.jar.surface);
+    this.contentScene.add(
+      this.jar.back,
+      this.jar.floor,
+      this.snow.points,
+      this.food.points,
+      ...this.jars.map((c) => c.group),
+      ...this.bubbles.map((b) => b.points),
+      this.jar.surface,
+    );
     this.glassScene.add(this.jar.front);
     const jellies = new Group();
     this.parts = {
@@ -340,6 +370,7 @@ export class App {
     this.snow.shift.value = i;
     this.jars.forEach((c, k) => (c.group.visible = k === i && !c.hidden));
     this.bubbles.forEach((b, k) => (b.points.visible = k === i && b.isActive));
+    this.food.points.visible = this.feeding.active && i === this.feeding.jar;
     return cam;
   }
 
@@ -401,9 +432,9 @@ export class App {
     this.roomDirty = this.wideDirty = true;
   }
 
-  /** 瓶ごとの個体を状態に合わせる */
-  setJars(jars: readonly JarState[]): void {
-    jars.forEach((jar, i) => this.jars[i]?.sync(jar));
+  /** 瓶ごとの個体を状態に合わせる。time はゲーム内の今（胃の餌の薄れ方に使う） */
+  setJars(jars: readonly JarState[], time: number): void {
+    jars.forEach((jar, i) => this.jars[i]?.sync(jar, time));
   }
 
   /** 確認用：最初の泳ぐ個体の傘の中心の画面上の位置（CSS px）。いなければ null */
@@ -501,6 +532,35 @@ export class App {
     return this.scoop.busy;
   }
 
+  /** カップかスポイトを使っているところか。その間は、どちらも新しく使わない */
+  get handsBusy(): boolean {
+    return this.scoop.busy || this.feeding.busy;
+  }
+
+  /** スポイトを使っているところか（現れてから消えるまで） */
+  get feedingBusy(): boolean {
+    return this.feeding.busy;
+  }
+
+  /** 確認用：餌の流れの段階と、粒の数 */
+  get feedingState(): { phase: string; jar: number; active: boolean; grains: ReturnType<Food['counts']> } {
+    return { phase: this.feeding.phaseName, jar: this.feeding.jar, active: this.feeding.active, grains: this.food.counts() };
+  }
+
+  /**
+   * 表示中の瓶 jar に餌をやる流れを始める（状態の餌は先に game.feed でやっておく）。at はその餌の時刻（sim の meal.at）。
+   * 瓶が止まっていて、カップもスポイトも使っていないときだけ。はじめられたら true
+   */
+  feedStart(jar: number, at: number): boolean {
+    if (this.handsBusy || !this.atRest || jar !== this.jarIndex) return false;
+    const bites = this.jars[jar]!.beginMeal(at);
+    const grains = Math.min(Math.max(Math.round(bites * (1 + FOOD.extra)), FOOD.min), FOOD.max);
+    this.feeding.begin(jar, grains);
+    // 餌をやっている間は泡を出さない（スポイトから空気が出たように見えないように）
+    this.bubbles[jar]?.hold(FOOD.showSeconds);
+    return true;
+  }
+
   /** カップの中の個体（注ぎ終えたら null） */
   get scoopId(): number | null {
     return this.scoop.carriedId;
@@ -513,7 +573,7 @@ export class App {
 
   /** 長押し：表示中の瓶の泳ぐ個体 id を、水ごとカップに入れて瓶の口から上げる。はじめられたら true */
   scoopStart(id: number): boolean {
-    if (this.scoop.busy || !this.atRest) return false;
+    if (this.handsBusy || !this.atRest) return false;
     const i = this.jarIndex;
     const jelly = this.jars[i]!.lift(id);
     if (!jelly) return false;
@@ -567,6 +627,11 @@ export class App {
       this.agitations[i] = Math.min(1, this.agitations[i]! * Math.exp(-d / WATER.agitationDecay) + WATER.agitationGain * stir * d);
     }
     this.scoop.update(d);
+    // 餌：やっている瓶が見えなくなったら片付ける（胃の色はすぐに食べた量の分に）
+    if (this.feeding.active) {
+      if (this.visibleJars().includes(this.feeding.jar)) this.feeding.update(d);
+      else this.feeding.abort();
+    }
   }
 
   /** カップを瓶 jar のカメラで描く。mode 1 は瓶の中の部分だけ、2 は外の部分だけ（shaders/clip.ts） */
@@ -575,6 +640,14 @@ export class App {
     this.cup.prepare(cam);
     this.shared.uClipMode.value = mode;
     this.renderer.render(this.cupScene, cam);
+    this.shared.uClipMode.value = 0;
+  }
+
+  /** スポイトを瓶 jar のカメラで描く（mode はカップと同じ） */
+  private renderPipette(jar: number, mode: number): void {
+    const cam = this.useJar(jar);
+    this.shared.uClipMode.value = mode;
+    this.renderer.render(this.pipetteScene, cam);
     this.shared.uClipMode.value = 0;
   }
 
@@ -616,8 +689,9 @@ export class App {
     this.camera.layers.set(0);
     r.setRenderTarget(this.bgRT);
     r.render(this.bgScene, this.camera);
-    // カップ（と中の海月）の、瓶の口より上にある部分は背景に重ねる
+    // カップ（と中の海月）とスポイトの、瓶の口より上にある部分は背景に重ねる
     if (this.scoop.busy) this.renderCup(this.scoop.frameJar, 2);
+    if (this.feeding.busy && vis.includes(this.feeding.jar)) this.renderPipette(this.feeding.jar, 2);
 
     // 2. 中身：透明な画像に描く（瓶底は背景の天板を映す）。見えている瓶ごとに、その瓶の位置へずらしたカメラで
     this.jar.floorBg.value = this.bgRT.texture;
@@ -626,8 +700,9 @@ export class App {
     r.clear(true, false, false);
     for (const i of vis) {
       r.render(this.contentScene, this.useJar(i));
-      // カップの、瓶の口より下にある部分は瓶の中身として（手前のガラス越しに曲がって見える）
+      // カップとスポイトの、瓶の口より下にある部分は瓶の中身として（手前のガラス越しに曲がって見える）
       if (this.scoop.busy && i === this.scoop.frameJar) this.renderCup(i, 1);
+      if (this.feeding.busy && i === this.feeding.jar) this.renderPipette(i, 1);
     }
 
     // 3. 光る部分だけを描いてブルームにする（ミズクラゲは光らないので、光る種がいるときだけ）

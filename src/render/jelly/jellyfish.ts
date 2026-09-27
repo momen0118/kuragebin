@@ -3,6 +3,7 @@
 import { Group, Matrix4, Vector3, type BufferGeometry, type Material } from 'three';
 import { BELL, EPHYRA, JELLY_LOOK, ORAL_ARMS, POKE, RENDER, TENTACLES } from '../../config';
 import type { Rng } from '../../sim/rng';
+import { Stomach } from '../stomach';
 import type { SharedUniforms } from '../uniforms';
 import { createBell, type Bell, type BellLook } from './bell';
 import { ADULT_FORM, armReach, formAt, pulseParams, shapeParams, type JellyForm } from './form';
@@ -23,6 +24,8 @@ export class Jellyfish {
   readonly shape: BellShape;
   readonly tentacles: Tentacles;
   readonly arms: OralArms;
+  /** 胃の中の餌の見え方（橙色） */
+  readonly stomach = new Stomach();
   /** 近くを泳ぐほかの個体（よけるため。描画側が毎フレーム入れる） */
   neighbors: readonly Neighbor[] = [];
   private readonly matrix = new Matrix4();
@@ -99,6 +102,24 @@ export class Jellyfish {
   /** 傘の半径（瓶の高さ単位、腕の先まで） */
   get radius(): number {
     return this.form.radius;
+  }
+
+  /** 四つ葉の濃さ（0〜1。エフィラが育つにつれて浮かぶ） */
+  get gonads(): number {
+    return this.form.gonads;
+  }
+
+  /** 傘の座標（位置・向き・大きさ）。ローカルは傘の半径 = 1 の単位で、+y が傘の頂点の向き */
+  get frame(): Matrix4 {
+    return this.matrix;
+  }
+
+  /** 縁の平均の位置（傘のローカル）：[半径, 高さ] */
+  marginLocal(out: [number, number]): [number, number] {
+    const [r, y] = this.shape.margin();
+    out[0] = r;
+    out[1] = y;
+    return out;
   }
 
   /**
@@ -232,6 +253,7 @@ export class Jellyfish {
     }
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.flash *= Math.exp(-dt / POKE.flashDecay);
+    this.stomach.update(dt);
     this.sync();
   }
 
@@ -328,6 +350,7 @@ export class Jellyfish {
     (this.bell.profile.image.data as Float32Array).set(this.shape.points);
     this.bell.profile.needsUpdate = true;
     this.bell.contract.value = this.pulse.value(BELL.propagation);
+    this.bell.form.uMeal.value = this.stomach.level;
     // 発光：いつもの光と、つついた直後だけの光（ミズクラゲはどちらも 0）
     const k = JELLY_LOOK.glowStrength + JELLY_LOOK.pokeGlow * this.flash;
     this.glowNow = k;
