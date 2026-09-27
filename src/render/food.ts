@@ -31,8 +31,10 @@ const INNER_R = JAR.radius - JAR.glassThickness;
 const WALL_R = INNER_R - 0.008;
 const FLOOR_Y = JAR.bottomThickness + 0.003;
 const TOP_Y = JAR.waterLevel - 0.006;
-/** 胃のふくろの向き（四つ葉。縁弁の間） */
+/** 四つ葉（胃のふくろ）の向き（縁弁の間）と、傘のローカルでの四つ葉の中心・輪郭の半径（bell.ts の形から） */
 const POUCH = [0.25, 0.75, 1.25, 1.75].map((k) => k * Math.PI);
+const POUCH_CENTER = 0.157;
+const POUCH_RING = 0.087;
 /** 小さな個体でも、寄せる範囲と捕まえる距離はこれより小さくしない（瓶の高さ単位） */
 const MIN_PULL = 0.05;
 const MIN_CATCH = 0.012;
@@ -408,13 +410,17 @@ export class Food {
       g.a.set(f.mr * 0.97 * dx, f.my, f.mr * 0.97 * dz);
     }
     g.b.set(0.42 * dx, f.my - 0.08, 0.42 * dz);
-    // いちばん近い胃のふくろ（四つ葉の内側）。エフィラは真ん中の胃
+    // いちばん近い四つ葉の、輪郭の外側の弧の上（色づくのは輪郭だけ）。四つ葉のまだないエフィラは真ん中の胃
     const th = Math.atan2(dz, dx);
     let best = POUCH[0]!;
     for (const a of POUCH) if (Math.abs(Math.atan2(Math.sin(th - a), Math.cos(th - a))) < Math.abs(Math.atan2(Math.sin(th - best), Math.cos(th - best)))) best = a;
-    const grown = Math.min(Math.max((f.jelly.radius - 0.03) / 0.06, 0), 1);
-    const pr = 0.04 + 0.115 * grown;
-    g.c.set(pr * Math.cos(best), 0.3, pr * Math.sin(best));
+    const k = f.jelly.gonads;
+    const along = best + r.range(-1, 1);
+    g.c.set(
+      k * (POUCH_CENTER * Math.cos(best) + POUCH_RING * Math.cos(along)),
+      0.29,
+      k * (POUCH_CENTER * Math.sin(best) + POUCH_RING * Math.sin(along)),
+    );
     f.eater.stomach.catch();
   }
 

@@ -194,41 +194,38 @@ float canals(float s, float th) {
   return max(max(c, b1 * 0.8 * uCanals), max(b2 * 0.6 * uCanals, ring * uCanals));
 }
 
-// 四つ葉の生殖腺。中心に口を開いた蹄鉄形が4つ
-float gonads(float s, float th) {
+// 四つ葉の生殖腺。中心に口を開いた蹄鉄形が4つ。ring は蹄鉄の輪郭だけ、fill はその内側のうっすらした面
+void gonadParts(float s, float th, out float ring, out float fill) {
   vec2 q = vec2(cos(th), sin(th)) * (s / GONAD_S);
-  float g = 0.0;
+  ring = 0.0;
+  fill = 0.0;
   for (int k = 0; k < 4; k++) {
     float ang = PI * 0.25 + float(k) * PI * 0.5;
     vec2 c = 0.43 * vec2(cos(ang), sin(ang));
     vec2 d = q - c;
     float r = length(d);
-    float ring = exp(-pow((r - 0.24) / 0.075, 2.0));
+    float rk = exp(-pow((r - 0.24) / 0.075, 2.0));
     float facing = dot(d / max(r, 1e-4), -normalize(c));
-    ring *= 1.0 - 0.85 * smoothstep(0.55, 0.9, facing);
-    float fill = exp(-pow(r / 0.24, 3.0)) * 0.3;
-    g += ring + fill;
+    ring += rk * (1.0 - 0.85 * smoothstep(0.55, 0.9, facing));
+    fill += exp(-pow(r / 0.24, 3.0)) * 0.3;
   }
-  return g * (1.0 - smoothstep(0.85, 1.0, s / GONAD_S));
+  float edge = 1.0 - smoothstep(0.85, 1.0, s / GONAD_S);
+  ring *= edge;
+  fill *= edge;
 }
 
-// 胃の中の餌（成体）：四つ葉の内側（胃のふくろ）と、そのあいだの真ん中の胃
-float pouches(float s, float th) {
-  vec2 q = vec2(cos(th), sin(th)) * (s / GONAD_S);
-  float g = exp(-pow(length(q) / 0.26, 2.0)) * 0.6;
-  for (int k = 0; k < 4; k++) {
-    float ang = PI * 0.25 + float(k) * PI * 0.5;
-    vec2 c = 0.43 * vec2(cos(ang), sin(ang));
-    g += exp(-pow(length(q - c) / 0.2, 2.0));
-  }
-  return g * (1.0 - smoothstep(0.85, 1.0, s / GONAD_S));
+float gonads(float s, float th) {
+  float ring, fill;
+  gonadParts(s, th, ring, fill);
+  return ring + fill;
 }
 
-// 胃の中の餌（エフィラ）：真ん中の胃と、8本の腕へ伸びる管の付け根。育つと真ん中だけになる（あとは四つ葉の層）
+// 胃の中の餌（エフィラ）：真ん中の胃と、8本の腕へ伸びる管の付け根。
+// 育って四つ葉が浮かぶにつれて消える（成体は四つ葉の輪郭だけが色づく）
 float bellStomach(float s, float th) {
   float core = exp(-pow(s / 0.17, 2.0));
   float arms = pow(0.5 + 0.5 * cos(8.0 * th), 8.0) * smoothstep(0.08, 0.16, s) * (1.0 - smoothstep(0.26, 0.42, s));
-  return mix(core + arms * 0.7, exp(-pow(s / 0.2, 2.0)) * 0.6, uGonads);
+  return (core + arms * 0.7) * (1.0 - uGonads);
 }
 
 void main() {
@@ -283,11 +280,17 @@ void main() {
   col += bg * refr;
   float alpha = density * 0.5 + refr;
 
-  // 食べた餌が胃にうっすら橙色に透ける（夜はデスクライトの光が少し散る）
+  // 食べた餌がうっすら橙色に透ける。成体は四つ葉の輪郭だけ（内側と真ん中は色づかない）、エフィラは真ん中の胃。
+  // 夜はデスクライトの光が少し散る
   float meal = 0.0;
   if (uMeal > 0.001) {
-    if (gonad) meal = STOMACH_POUCH * pouches(s, th) * uGonads;
-    else if (inner) meal = STOMACH_BELL * bellStomach(s, th);
+    if (gonad) {
+      float ring, fill;
+      gonadParts(s, th, ring, fill);
+      meal = STOMACH_POUCH * ring * uGonads;
+    } else if (inner) {
+      meal = STOMACH_BELL * bellStomach(s, th);
+    }
     meal *= uMeal;
   }
   col += STOMACH_COLOR * (light * 1.6 + uLampColor * lampSpot(vWorldPos) * 0.35 * LAMP_SCATTER) * meal;

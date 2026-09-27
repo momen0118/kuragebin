@@ -104,6 +104,11 @@ export class Jellyfish {
     return this.form.radius;
   }
 
+  /** 四つ葉の濃さ（0〜1。エフィラが育つにつれて浮かぶ） */
+  get gonads(): number {
+    return this.form.gonads;
+  }
+
   /** 傘の座標（位置・向き・大きさ）。ローカルは傘の半径 = 1 の単位で、+y が傘の頂点の向き */
   get frame(): Matrix4 {
     return this.matrix;
