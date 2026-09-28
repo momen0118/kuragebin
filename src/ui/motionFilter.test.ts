@@ -94,7 +94,7 @@ describe('揺らしたいときだけ揺れる', () => {
       const s: MotionSample = { gravity: [0, -1, 0], accel: [amp * Math.sin(2 * Math.PI * freq * t), 0, 0], spin: [0, 0, 0] };
       const out = gate.apply(s, 1 / 60)!;
       peak = Math.max(peak, Math.abs(out.accel[0]));
-      expect(out.gravity).toEqual([0, -1, 0]);
+      expect(out.gravity[1]).toBeCloseTo(-1, 9);
     }
     return peak;
   };
@@ -105,6 +105,21 @@ describe('揺らしたいときだけ揺れる', () => {
     expect(shake(0.3, 5, 3, gate)).toBe(0);
     expect(shake(0.45, 2, 5, gate)).toBe(0);
     expect(shake(0.7, 3.5, 0.6, gate)).toBe(0);
+  });
+
+  test('軽く振ったときの手首の小さな回り（細かい傾きの変化）は水面に渡さず、ゆっくり傾けたぶんは渡す', () => {
+    const gate = new ShakeGate();
+    let wobble = 0;
+    for (let t = 0; t < 3; t += 1 / 60) {
+      const r = (6 * Math.PI) / 180 * Math.sin(2 * Math.PI * 3 * t);
+      const out = gate.apply({ gravity: [Math.sin(r), -Math.cos(r), 0], accel: [0.3 * Math.sin(2 * Math.PI * 3 * t), 0, 0], spin: [0, 0, 0] }, 1 / 60)!;
+      if (t > 1) wobble = Math.max(wobble, Math.abs(Math.atan2(out.gravity[0], -out.gravity[1])));
+    }
+    expect((wobble * 180) / Math.PI).toBeLessThan(0.5);
+    const r = (10 * Math.PI) / 180;
+    let out: MotionSample | null = null;
+    for (let t = 0; t < 8; t += 1 / 60) out = gate.apply({ gravity: [Math.sin(r), -Math.cos(r), 0], accel: [0, 0, 0], spin: [0, 0, 0] }, 1 / 60);
+    expect(Math.atan2(out!.gravity[0], -out!.gravity[1])).toBeCloseTo(r, 3);
   });
 
   test('机に置いたときの一瞬の衝撃では通さない', () => {

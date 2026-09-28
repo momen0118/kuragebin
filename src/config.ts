@@ -1223,6 +1223,12 @@ export const MOTION = {
    */
   shakeStirAttack: 0.08,
   shakeStirRelease: 0.9,
+  /**
+   * 傾き（重力の向き）をならす時間（秒）：門が閉じているとき calmTiltSmooth、開いているとき shakeTiltSmooth。
+   * 軽く振ると手首も少し回るので、閉じている間は、ゆっくりした傾きだけを水面に渡す（細かく傾きが変わって水面が揺れないように）
+   */
+  calmTiltSmooth: 0.9,
+  shakeTiltSmooth: 0.15,
   /** しばらく値が来なければ、センサーはないものとする（秒） */
   staleSeconds: 0.5,
   /** 画面が上下逆さの向きに重力が続いたら、加速度の符号が逆の端末とみなす（秒）。縦画面で逆さに持つことはまずない */
