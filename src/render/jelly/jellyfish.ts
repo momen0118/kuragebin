@@ -3,6 +3,7 @@
 import { Group, Matrix4, Vector3, type BufferGeometry, type Material } from 'three';
 import { BELL, EPHYRA, JELLY_LOOK, ORAL_ARMS, POKE, RENDER, TENTACLES } from '../../config';
 import type { Rng } from '../../sim/rng';
+import type { WaterField } from '../slosh';
 import { Stomach } from '../stomach';
 import type { SharedUniforms } from '../uniforms';
 import { createBell, type Bell, type BellLook } from './bell';
@@ -28,6 +29,8 @@ export class Jellyfish {
   readonly stomach = new Stomach();
   /** 近くを泳ぐほかの個体（よけるため。描画側が毎フレーム入れる） */
   neighbors: readonly Neighbor[] = [];
+  /** 揺らされた瓶の水の流れ（描画側が毎フレーム入れる。瓶が揺れていなければ止まった水） */
+  water: WaterField | null = null;
   private readonly matrix = new Matrix4();
   private readonly scale = new Vector3(BELL.radius, BELL.radius, BELL.radius);
   private form: JellyForm = ADULT_FORM;
@@ -202,6 +205,17 @@ export class Jellyfish {
     this.swimmer.letGo(vel, mode);
   }
 
+  /** 確認用：逆さまにして、揺れが収まった直後のようにする（拍動で起き直るところを見る） */
+  flipForDebug(): void {
+    this.swimmer.flipForDebug();
+    this.updateMatrix();
+  }
+
+  /** 揺れのあと、拍動で起き直っている最中か */
+  get righting(): boolean {
+    return this.swimmer.isRighting;
+  }
+
   /** 瓶から瓶へ座標を移す（x を dx だけずらす）。形と動きはそのまま */
   translate(dx: number): void {
     this.swimmer.translate(dx);
@@ -275,7 +289,7 @@ export class Jellyfish {
   private step(dt: number): void {
     if (dt > 0) {
       this.pulse.update(dt);
-      this.swimmer.update(dt, this.pulse, this.neighbors);
+      this.swimmer.update(dt, this.pulse, this.neighbors, this.swimmer.isCarried || this.swimmer.isGuided ? null : this.water);
       // カップの水ごと運ばれている：触手と口腕も水と一緒に動く（引きずられない）。瓶の壁の中に収めない
       const carried = this.swimmer.isCarried;
       this.tentacles.confined = !carried;
@@ -321,6 +335,7 @@ export class Jellyfish {
       this.jet,
       this.center,
       inflow,
+      this.swimmer.isCarried || this.swimmer.isGuided ? null : this.water,
     );
 
     const armAngles = this.arms.angles;
@@ -342,6 +357,7 @@ export class Jellyfish {
       },
       this.armJet,
       this.center,
+      this.swimmer.isCarried || this.swimmer.isGuided ? null : this.water,
     );
   }
 

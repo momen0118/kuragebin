@@ -20,10 +20,12 @@ import { LAMP_GLSL, lampUniforms } from '../lamp';
 import { CLIP_GLSL } from '../shaders/clip';
 import type { BellLook } from './bell';
 import type { RootFrame } from './tentacles';
+import { flowAt, type WaterField } from '../slosh';
 import common from '../shaders/common.glsl?raw';
 import { frag } from '../shaders/glsl';
 
 const INNER_R = JAR.radius - JAR.glassThickness;
+const tmpFlow = new Vector3();
 /** 幅方向の頂点の位置（-1〜1） */
 const ACROSS = [-1, -0.6, -0.25, 0, 0.25, 0.6, 1];
 
@@ -215,8 +217,11 @@ export class OralArms {
     this.seg = (ORAL_ARMS.length * radius * lengthFrac) / (this.nodes - 1);
   }
 
-  /** roots(i) は根元の位置と垂れる向き、radial(i) は根元での外向き（リボンの幅の向き） */
-  step(dt: number, roots: (i: number) => RootFrame, radial: (i: number) => Vector3, jet: Vector3, jetOrigin: Vector3): void {
+  /**
+   * roots(i) は根元の位置と垂れる向き、radial(i) は根元での外向き（リボンの幅の向き）。
+   * water は揺らされた瓶の水：口腕も水と一緒に動き、重さは重力の向きへ、揺れている間は軽い
+   */
+  step(dt: number, roots: (i: number) => RootFrame, radial: (i: number) => Vector3, jet: Vector3, jetOrigin: Vector3, water: WaterField | null = null): void {
     const n = this.count;
     const m = this.nodes;
     const x = this.x;
@@ -225,7 +230,11 @@ export class OralArms {
     const dt2 = dt * dt;
     const keep = 1 - ORAL_ARMS.drag;
     const bellR = this.radius;
-    const g = (-ORAL_ARMS.gravity * bellR) / BELL.radius;
+    const gw = ((ORAL_ARMS.gravity * bellR) / BELL.radius) * (water ? water.weight : 1);
+    const gx = water ? water.down.x * gw : 0;
+    const gy = water ? water.down.y * gw : -gw;
+    const gz = water ? water.down.z * gw : 0;
+    const moving = water !== null && water.moving;
 
     for (let i = 0; i < n; i++) {
       const root = roots(i);
@@ -249,15 +258,23 @@ export class OralArms {
         const oy = x[k + 1]! - jetOrigin.y;
         const oz = x[k + 2]! - jetOrigin.z;
         const near = 1 / (1 + (ox * ox + oy * oy + oz * oz) / (bellR * bellR * 3));
-        const vx = (x[k]! - px[k]!) * keep;
-        const vy = (x[k + 1]! - px[k + 1]!) * keep;
-        const vz = (x[k + 2]! - px[k + 2]!) * keep;
+        let vx = (x[k]! - px[k]!) * keep;
+        let vy = (x[k + 1]! - px[k + 1]!) * keep;
+        let vz = (x[k + 2]! - px[k + 2]!) * keep;
+        if (moving) {
+          // 揺らされた水の中：流れる水に対して抵抗がかかる（水と一緒に動く）
+          const f = flowAt(water, x[k]!, x[k + 1]!, x[k + 2]!, tmpFlow);
+          const d = dt * (1 - keep);
+          vx += f.x * d;
+          vy += f.y * d;
+          vz += f.z * d;
+        }
         px[k] = x[k]!;
         px[k + 1] = x[k + 1]!;
         px[k + 2] = x[k + 2]!;
-        x[k] = x[k]! + vx + jet.x * near * dt2;
-        x[k + 1] = x[k + 1]! + vy + (jet.y * near + g) * dt2;
-        x[k + 2] = x[k + 2]! + vz + jet.z * near * dt2;
+        x[k] = x[k]! + vx + (jet.x * near + gx) * dt2;
+        x[k + 1] = x[k + 1]! + vy + (jet.y * near + gy) * dt2;
+        x[k + 2] = x[k + 2]! + vz + (jet.z * near + gz) * dt2;
       }
 
       for (let iter = 0; iter < 4; iter++) {

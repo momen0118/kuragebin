@@ -41,6 +41,25 @@ describe('書き出し・読み込み', () => {
   });
 });
 
+describe('版4からのマイグレーション', () => {
+  test('3-4 までの保存データを、まだ揺らしていない状態として読める', () => {
+    const s = advance(createInitialState(T0), 2 * 86400);
+    const v4 = JSON.parse(JSON.stringify(s)) as Record<string, unknown> & { jars: Array<Record<string, unknown>> };
+    v4.schema = 4;
+    for (const jar of v4.jars) delete jar.stirredUntil;
+    const m = migrate(v4);
+    expect(m.schema).toBe(SCHEMA_VERSION);
+    expect(m.jars.every((j) => j.stirredUntil === null)).toBe(true);
+    expect(m).toEqual(s);
+  });
+
+  test('読めない揺れの記録は、揺らしていないことにする', () => {
+    const s = JSON.parse(JSON.stringify(createInitialState(T0)));
+    s.jars[1].stirredUntil = 'x';
+    expect(migrate(s).jars[1]!.stirredUntil).toBeNull();
+  });
+});
+
 describe('版3からのマイグレーション', () => {
   test('3-3 までの保存データに、未読・行の名前・来た日・瓶底の堆積を足す', () => {
     const s = advance(createInitialState(T0), 3 * 86400 + 123);

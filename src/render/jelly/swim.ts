@@ -1,14 +1,19 @@
 // 泳ぎ。収縮の瞬間に前へ進み、緩和中はゆっくり沈む。
 // 壁・底・水面が近づくと向きを緩やかに変え、ぶつからない。
 import { Quaternion, Vector2, Vector3 } from 'three';
-import { BELL, EPHYRA, JAR, POKE, SCOOP, SWIM } from '../../config';
+import { BELL, EPHYRA, JAR, POKE, SCOOP, SWIM, TUMBLE } from '../../config';
 import type { Rng } from '../../sim/rng';
+import { flowAt, type WaterField } from '../slosh';
 import type { Pulse } from './pulse';
 
 const UP = new Vector3(0, 1, 0);
 const tmpA = new Vector3();
 const tmpB = new Vector3();
 const tmpQ = new Quaternion();
+const tmpC = new Vector3();
+const tmpUp = new Vector3();
+const RIGHT_AT = Math.cos((TUMBLE.rightAt * Math.PI) / 180);
+const RIGHTED_AT = Math.cos((TUMBLE.rightedAt * Math.PI) / 180);
 
 /** 傘の中心が動ける範囲。low は漂って沈んでいく先の下限（ひとりのときの泳ぎ方を決める） */
 export interface SwimBounds {
@@ -103,6 +108,10 @@ export class Swimmer {
   private guided = false;
   private readonly guideBase = new Vector3();
   private readonly guideAxis = new Vector3(0, 1, 0);
+  /** 揺れの流れに転がされている度合い（0〜1）。流れの強さに合わせてすぐ上がり、ゆっくり下がる */
+  private tumble = 0;
+  /** 流れのあと大きく傾いていて、拍動で起き直っている最中 */
+  private righting = false;
 
   constructor(
     private readonly rng: Rng,
@@ -322,6 +331,25 @@ export class Swimmer {
     this.turnToward(tmpA.copy(A), SCOOP.jellyTurn, SCOOP.jellyTurnDamping, dt);
   }
 
+  /** 揺れのあと、拍動で起き直っている最中か */
+  get isRighting(): boolean {
+    return this.righting;
+  }
+
+  /**
+   * 確認用：逆さまにして、流れが収まった直後のようにする（拍動で起き直るところを見る）
+   */
+  flipForDebug(): void {
+    this.carried = null;
+    this.guided = false;
+    this.quat.setFromUnitVectors(UP, tmpA.set(this.rng.range(-0.25, 0.25), -1, this.rng.range(-0.15, 0.15)).normalize());
+    this.axis.copy(UP).applyQuaternion(this.quat);
+    this.angVel.set(0, 0, 0);
+    this.leanLeft = 0;
+    this.tumble = 0;
+    this.righting = true;
+  }
+
   /** 大きく傾いている最中か */
   get leaning(): boolean {
     return this.leanLeft > 0;
@@ -384,7 +412,11 @@ export class Swimmer {
     else this.wanderTarget.copy(UP);
   }
 
-  update(dt: number, pulse: Pulse, others: readonly Neighbor[] = []): void {
+  /**
+   * water は揺らされた瓶の水の流れ（なければ止まった水）。傘は流れに遅れてついていき、回る流れに乗って転がる。
+   * 強く流れている間は向きを変えられず、収まったあと大きく傾いていたら、拍動のたびに少しずつ起き直る
+   */
+  update(dt: number, pulse: Pulse, others: readonly Neighbor[] = [], water: WaterField | null = null): void {
     if (this.carried) {
       this.stepCarried(dt);
       return;
@@ -393,6 +425,16 @@ export class Swimmer {
       this.stepGuided(dt, pulse);
       return;
     }
+    const moving = water !== null && water.moving;
+    // 上（起き直る向き）は重力の逆。瓶を傾けたままにしていれば、傾いた上
+    const up = water ? tmpUp.copy(water.down).negate() : tmpUp.copy(UP);
+    const stir = moving ? water.stir : 0;
+    this.tumble = stir > this.tumble ? stir : this.tumble + (stir - this.tumble) * (1 - Math.exp(-dt / 1.5));
+    const tumbling = this.tumble > TUMBLE.calm;
+    const upDot = this.axis.dot(up);
+    if (tumbling) this.righting = false;
+    else if (!this.righting && upDot < RIGHT_AT) this.righting = true;
+    else if (this.righting && upDot > RIGHTED_AT) this.righting = false;
     const S = this.scale;
     this.crowded = others.some((o) => o.pos !== this.pos && !o.obstacle);
     // エフィラは縮むたびに少し転がる（ぎこちない）
@@ -407,21 +449,28 @@ export class Swimmer {
     // 縮みの深さとは切り離した推進（深く縮んでも1回に進む量は同じ）
     const push = pulse.thrustRate();
 
-    // ときどき大きく傾く
+    // ときどき大きく傾く（揺れの中と、起き直っている間は傾かない）
+    if (tumbling || this.righting) this.leanLeft = 0;
     if (this.leanLeft > 0) this.leanLeft -= dt;
     else {
       this.leanTimer -= dt;
-      if (this.leanTimer <= 0) this.startLean();
+      if (this.leanTimer <= 0 && !tumbling && !this.righting) this.startLean();
     }
     const leaning = this.leanLeft > 0;
 
-    // 推進：縮む速さに応じて傘の向きへ。大きく傾いている間は、その場で漂うように弱く
+    // 推進：縮む速さに応じて傘の向きへ。大きく傾いている間は、その場で漂うように弱く。
+    // 起き直っている間も弱く（逆さまのまま底へ泳いでいかないように）
     let thrust = (this.mode === 'drift' ? SWIM.thrust * SWIM.driftThrust : SWIM.thrust) * S.thrust;
     if (leaning) thrust *= SWIM.leanThrust;
+    if (this.righting) thrust *= TUMBLE.rightingThrust;
     this.vel.addScaledVector(this.axis, thrust * push * dt);
-    // 沈む力と水の抵抗
-    this.vel.y -= SWIM.sink * S.sink * dt;
-    this.vel.multiplyScalar(Math.exp(-SWIM.drag * dt));
+    // 沈む力と水の抵抗。揺らされた水の中では、傘は流れに遅れてついていく（抵抗が流れのほうへ引く）
+    this.vel.addScaledVector(up, -SWIM.sink * S.sink * dt);
+    const keep = Math.exp(-SWIM.drag * dt);
+    if (moving) {
+      const u = flowAt(water, this.pos.x, this.pos.y, this.pos.z, tmpC).multiplyScalar(TUMBLE.bellFollow);
+      this.vel.sub(u).multiplyScalar(keep).add(u);
+    } else this.vel.multiplyScalar(keep);
     this.pos.addScaledVector(this.vel, dt);
     // ごくゆるい水の流れに乗って漂う
     this.currentPhase += dt * 0.021;
@@ -479,14 +528,15 @@ export class Swimmer {
       this.vel.x += ux * k * SWIM.othersPush * dt;
       this.vel.y += uy * k * SWIM.othersPush * dt;
     }
-    if (desired.lengthSq() < 1e-6) desired.copy(UP);
+    if (desired.lengthSq() < 1e-6) desired.copy(up);
     desired.normalize();
     // 傾きすぎたら起き上がろうとする（自分から大きく傾いている間は起き上がらない）
-    const lean = 1 - this.axis.y;
-    if (!leaning) desired.addScaledVector(UP, SWIM.righting * S.righting * lean).normalize();
-    if (desired.y < SWIM.minAxisY) {
-      desired.y = SWIM.minAxisY;
-      desired.normalize();
+    const lean = 1 - upDot;
+    if (!leaning) desired.addScaledVector(up, SWIM.righting * S.righting * lean).normalize();
+    // 上への傾きの限界（瓶を傾けたままにしていれば、傾いた上から数える）
+    const dUp = desired.dot(up);
+    if (dUp < SWIM.minAxisY) {
+      desired.addScaledVector(up, SWIM.minAxisY - dUp).normalize();
     }
 
     // 上へ泳ぐ／弱い拍動でゆっくり沈む、を行き来する。水面が近づいたら沈む方へ、底が近づいたら泳ぐ方へ
@@ -500,14 +550,27 @@ export class Swimmer {
       this.modeTimer = SWIM.cruiseMaxTime;
       this.modeTarget = this.pickTarget('cruise');
     }
-    if (this.mode === 'drift') pulse.setStyle(SWIM.driftAmp, SWIM.driftRest * S.driftRest, SWIM.driftTempo * S.driftTempo);
+    // 起き直っている間は、間をあけずに打ち続ける
+    if (this.mode === 'drift' && !this.righting) pulse.setStyle(SWIM.driftAmp, SWIM.driftRest * S.driftRest, SWIM.driftTempo * S.driftTempo);
     else pulse.setStyle(1, 0, 1);
 
-    // 向きを変える。収縮しているときほど変えやすい
-    const torque = tmpA.crossVectors(this.axis, desired);
-    const boost = 1 + SWIM.turnPulseBoost * Math.min(push / 4, 1.5);
-    this.angVel.addScaledVector(torque, SWIM.turnGain * boost * dt);
-    this.angVel.multiplyScalar(Math.exp(-SWIM.turnDamping * dt));
+    // 向きを変える。収縮しているときほど変えやすい。揺れの流れの中では、流れに負けて向きを変えられない
+    if (this.righting) {
+      // 流れのあと大きく傾いている：縮むたびに少しずつ上へ起き直る（何拍もかけて）
+      const torque = tmpA.crossVectors(this.axis, up);
+      if (torque.lengthSq() < 1e-4) torque.crossVectors(this.axis, tmpB.set(1, 0, 0)).addScaledVector(tmpB.set(0, 0, 1), 0.3);
+      this.angVel.addScaledVector(torque.normalize(), TUMBLE.rightingPerBeat * push * dt);
+    } else {
+      const torque = tmpA.crossVectors(this.axis, desired);
+      const boost = 1 + SWIM.turnPulseBoost * Math.min(push / 4, 1.5);
+      this.angVel.addScaledVector(torque, SWIM.turnGain * boost * (1 - this.tumble) * dt);
+    }
+    // 水の中で回るのを止める抵抗。回る流れの中では、流れと一緒に回る
+    const spinKeep = Math.exp(-SWIM.turnDamping * dt);
+    if (moving) {
+      const w = tmpC.copy(water.omega).multiplyScalar(TUMBLE.spinFollow);
+      this.angVel.sub(w).multiplyScalar(spinKeep).add(w);
+    } else this.angVel.multiplyScalar(spinKeep);
     const w = this.angVel.length();
     if (w > 1e-6) {
       tmpQ.setFromAxisAngle(tmpA.copy(this.angVel).divideScalar(w), w * dt);

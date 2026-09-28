@@ -21,10 +21,11 @@ import {
   type Texture,
   type WebGLRenderTarget,
 } from 'three';
-import { BELL, CUP, FOOD, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, CUP, FOOD, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState } from '../sim/state';
+import type { MotionSample } from '../ui/motionFilter';
 import { Bloom } from './bloom';
 import { coverTransform, solvePhotoCamera, type PhotoCamera } from './camera';
 import { createComposite } from './composite';
@@ -40,6 +41,8 @@ import { Bubble, createSnow, type Snow } from './particles';
 import { Pipette } from './pipette';
 import { Room } from './room';
 import { Scoop } from './scoop';
+import { WaterMotion } from './slosh';
+import { Splash, StirredSediment } from './stirred';
 import { createTable, type TableJars } from './table';
 import { chooseTargetType, createTarget } from './targets';
 import { createSharedUniforms, type SharedUniforms } from './uniforms';
@@ -135,6 +138,16 @@ export class App {
   private readonly pipetteScene = new Scene();
   private readonly food: Food;
   private readonly feeding: Feeding;
+  /** 瓶ごとの、揺らされた水（水面の傾き・流れ）。動かすのは見えている瓶だけ */
+  private readonly waters: WaterMotion[];
+  /** 端末の動き（瓶の座標）。揺れを使わないとき・センサーがないときは null */
+  private motion: MotionSample | null = null;
+  /** 揺らしたときだけ出るもの（飛沫と舞い上がる堆積）。表示中の瓶の分だけ */
+  private readonly splash: Splash;
+  private readonly dust: StirredSediment;
+  private effectsJar = 0;
+  /** 瓶ごとの「揺らした」（sim に記録する。takeStirred で読むと消える） */
+  private readonly stirred: boolean[];
   /** 瓶ごとの水面の波紋（x, z, 始まった時刻, 強さ） */
   private readonly ripples: Vector4[][];
   /** 確認用：中間の画像をそのまま出す（'bg' | 'contents' | 'glow' | 'room'） */
@@ -197,6 +210,12 @@ export class App {
       this.cup,
     );
     this.bubbles = this.jars.map(() => new Bubble(this.shared, rng));
+    this.waters = this.jars.map(() => new WaterMotion());
+    this.stirred = this.jars.map(() => false);
+    this.splash = new Splash(this.shared, createRng((RENDER.seed ^ 0x27d4eb2f) >>> 0), (x, z, strength) =>
+      this.addRipple(this.effectsJar, x, z, strength),
+    );
+    this.dust = new StirredSediment(this.shared, createRng((RENDER.seed ^ 0x165667b1) >>> 0));
     this.agitations = this.jars.map(() => 0);
     this.sediments = this.jars.map(() => 0);
     this.pipette = new Pipette(this.shared);
@@ -222,10 +241,12 @@ export class App {
       this.jar.back,
       this.jar.floor,
       this.snow.points,
+      this.dust.points,
       this.food.points,
       ...this.jars.map((c) => c.group),
       ...this.bubbles.map((b) => b.points),
       this.jar.surface,
+      this.splash.points,
     );
     this.glassScene.add(this.jar.front);
     const jellies = new Group();
@@ -371,7 +392,15 @@ export class App {
     this.shared.uViewProj.value.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
     this.shared.uAgitation.value = this.agitations[i]!;
     this.shared.uRipples.value = this.ripples[i]!;
-    this.shared.uSediment.value = this.sediments[i]!;
+    // 揺らされた水：水面の傾き、マリンスノーのずれ。瓶底は、舞い上がっている分だけ薄い
+    const water = this.waters[i]!;
+    this.shared.uWaterTilt.value.copy(water.slope);
+    this.shared.uSnowFlowShift.value.copy(water.snowShift);
+    this.shared.uSnowFlowTurn.value.copy(water.snowTurn);
+    const lifted = i === this.effectsJar ? this.dust.suspended * STIRRED_SEDIMENT.floorThin : 0;
+    this.shared.uSediment.value = this.sediments[i]! * (1 - lifted);
+    this.splash.points.visible = i === this.effectsJar && this.splash.active;
+    this.dust.points.visible = i === this.effectsJar && this.dust.active;
     this.snow.shift.value = i;
     this.jars.forEach((c, k) => (c.group.visible = k === i && !c.hidden));
     this.bubbles.forEach((b, k) => (b.points.visible = k === i && b.isActive));
@@ -606,6 +635,39 @@ export class App {
     this.scoop.release();
   }
 
+  /**
+   * 端末の動き（瓶の座標の重力の向き・揺れ・回す速さ）。null なら端末は止まっていて、まっすぐ立っている。
+   * 傾きは見えている瓶すべてに、揺れは表示中の瓶だけにかかる。カップかスポイトを使っている間は、どちらもかけない
+   */
+  setMotion(sample: MotionSample | null): void {
+    this.motion = sample;
+  }
+
+  /** 瓶 jar が揺らされたか（読むと消える）。sim に記録する */
+  takeStirred(jar: number): boolean {
+    const v = this.stirred[jar] ?? false;
+    if (v) this.stirred[jar] = false;
+    return v;
+  }
+
+  /** 確認用：表示中の瓶の水の様子 */
+  get waterState(): { stir: number; tiltDeg: number; rim: number; splash: boolean; dust: number; righting: number } {
+    const w = this.waters[this.jarIndex]!;
+    return {
+      stir: w.field.stir,
+      tiltDeg: (Math.atan(w.slope.length()) * 180) / Math.PI,
+      rim: w.rimSpeed,
+      splash: this.splash.active,
+      dust: this.dust.suspended,
+      righting: this.creatures.swimmers.filter((j) => j.righting).length,
+    };
+  }
+
+  /** 確認用：表示中の瓶の泳ぐ個体を逆さまにして、揺れが収まった直後のようにする（拍動で起き直るところを見る） */
+  flipForDebug(): void {
+    this.creatures.flipForDebug();
+  }
+
   /** 描かずに動きだけを進める（確認用の早回しにも使う） */
   simulate(dt: number): void {
     const d = Math.min(Math.max(dt, 0), RENDER.maxFrameDt);
@@ -621,10 +683,22 @@ export class App {
     this.fade = Math.min(1, this.fade + d / RENDER.fadeInSeconds);
     this.shared.uTime.value = this.time;
     // 動かすのは見えている瓶だけ。ほかの瓶の個体は止めておく（状態はシミュレーションで進む）
-    for (const i of this.visibleJars()) {
+    const vis = this.visibleJars();
+    const hands = this.handsBusy;
+    const shown = this.jarIndex;
+    this.waters.forEach((w, i) => {
+      if (!vis.includes(i)) w.reset();
+    });
+    for (const i of vis) {
       const creatures = this.jars[i]!;
-      creatures.update(d, this.placeJarCamera(i));
-      this.bubbles[i]!.update(d);
+      // 揺らされた水：傾きは見えている瓶すべてに、揺れは表示中の瓶だけに
+      const water = this.waters[i]!;
+      const m = hands ? null : this.motion;
+      water.update(d, m && i !== shown ? { gravity: m.gravity, accel: [0, 0, 0], spin: [0, 0, 0] } : m);
+      if (water.field.stir >= SLOSH.recordAt) this.stirred[i] = true;
+      const field = water.still ? null : water.field;
+      creatures.update(d, this.placeJarCamera(i), field);
+      this.bubbles[i]!.update(d, field);
       // 拍動が水面を揺らす（水面に近いほど強い。小さな個体ほど弱い）
       let stir = 0;
       for (const j of creatures.swimmers) {
@@ -632,7 +706,20 @@ export class App {
         const near = Math.exp(-(JAR.waterLevel - j.swimmer.pos.y) / 0.3);
         stir += rate * near * (j.radius / RENDER_ADULT_RADIUS);
       }
-      this.agitations[i] = Math.min(1, this.agitations[i]! * Math.exp(-d / WATER.agitationDecay) + WATER.agitationGain * stir * d);
+      this.agitations[i] = Math.max(
+        water.agitation,
+        Math.min(1, this.agitations[i]! * Math.exp(-d / WATER.agitationDecay) + WATER.agitationGain * stir * d),
+      );
+    }
+    // 飛沫と舞い上がる堆積は表示中の瓶の分だけ。瓶が変わったら片付ける
+    if (shown !== this.effectsJar) {
+      this.splash.clear();
+      this.dust.clear();
+      this.effectsJar = shown;
+    }
+    if (vis.includes(shown)) {
+      this.splash.update(d, this.waters[shown]!);
+      this.dust.update(d, this.waters[shown]!, this.sediments[shown]!);
     }
     this.scoop.update(d);
     // 餌：やっている瓶が見えなくなったら片付ける（胃の色はすぐに食べた量の分に）

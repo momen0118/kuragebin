@@ -4,7 +4,7 @@
 // advance.ts の1刻みごとに呼ぶ（状態をその場で書き換える）。
 import { LIFE, type LifeRules } from '../config';
 import { stepCare } from './care';
-import { growthRate } from './feed';
+import { growthRate } from './growth';
 import { record } from './journal';
 import type { Rng } from './rng';
 import { isSwimmer, stageRange, wallAt, type Creature, type GameState, type JarState, type Stage } from './state';
@@ -157,7 +157,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
         // 泳ぐ個体が上限なら休む（進まない）。餌を食べてから1日は少し速い
         const free = rules.maxSwimmers - counts.swimmers - counts.pending;
         if (free <= 0) break;
-        c.progress = Math.min(1, c.progress + (dt * growthRate(c, state.time)) / c.stageLength);
+        c.progress = Math.min(1, c.progress + (dt * growthRate(c, state.time, jar.stirredUntil)) / c.stageLength);
         if (c.progress >= 1) {
           // くびれ始める。放す数は空きの分まで
           const [lo, hi] = rules.ephyraCount;
@@ -190,7 +190,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
       }
       case 'ephyra': {
         // 餌を食べてから1日は少し速く育つ
-        c.progress = Math.min(1, c.progress + (dt * growthRate(c, state.time)) / c.stageLength);
+        c.progress = Math.min(1, c.progress + (dt * growthRate(c, state.time, jar.stirredUntil)) / c.stageLength);
         if (c.progress >= 1) {
           enterStage(c, 'adult', rng, rules);
           if (log) record(state, 'adult', index, 1, [c.id], wall, c.name);

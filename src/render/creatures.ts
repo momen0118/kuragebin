@@ -9,6 +9,7 @@ import type { Eater } from './food';
 import { Jellyfish } from './jelly/jellyfish';
 import { Polyp } from './jelly/polyp';
 import { swimBounds, type Neighbor } from './jelly/swim';
+import type { WaterField } from './slosh';
 import type { SharedUniforms } from './uniforms';
 
 interface SwimmerView {
@@ -200,8 +201,13 @@ export class Creatures {
     this.obstacle.radius = radius;
   }
 
-  /** 動かし、奥のものから先に描くよう順番を決める */
-  update(dt: number, camera: Camera): void {
+  /** 確認用：泳ぐ個体を逆さまにして、揺れが収まった直後のようにする（拍動で起き直るところを見る） */
+  flipForDebug(): void {
+    for (const j of this.swimmers) j.flipForDebug();
+  }
+
+  /** 動かし、奥のものから先に描くよう順番を決める。water は揺らされた瓶の水（瓶底の個体は動かない） */
+  update(dt: number, camera: Camera, water: WaterField | null = null): void {
     const cam = camera.getWorldPosition(this.tmp);
     this.neighbors.length = 0;
     const swim: SwimmerView[] = [];
@@ -216,6 +222,7 @@ export class Creatures {
     if (this.obstructed) this.neighbors.push(this.obstacle);
     for (const v of swim) {
       v.jelly.neighbors = this.neighbors;
+      v.jelly.water = water;
       v.jelly.update(dt);
     }
     for (const v of polyps) v.polyp.update(dt);

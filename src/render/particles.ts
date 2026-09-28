@@ -11,10 +11,11 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
-import { JAR, WATER } from '../config';
+import { JAR, SLOSH, WATER } from '../config';
 import type { Rng } from '../sim/rng';
 import type { SharedUniforms } from './uniforms';
 import { GLOW_FALL } from './jarShaders';
+import { flowAt, type WaterField } from './slosh';
 import { LAMP_GLSL, lampUniforms } from './lamp';
 import common from './shaders/common.glsl?raw';
 import { frag } from './shaders/glsl';
@@ -38,6 +39,7 @@ const DEFINES = /* glsl */ `
 #define SNOW_GLOW ${WATER.snowGlow.toFixed(3)}
 #define SNOW_LAMP ${WATER.snowLamp.toFixed(3)}
 #define SNOW_OCCLUSION ${WATER.snowOcclusion.toFixed(3)}
+#define FLOW_CY ${SLOSH.centerY.toFixed(4)}
 `;
 
 const SNOW_VERT = /* glsl */ `
@@ -52,8 +54,22 @@ uniform float uTime;
 uniform float uSnowShift;
 uniform vec2 uResolution;
 uniform vec3 uKey, uAmbient, uGlowPos, uGlowColor;
+// 揺らされた瓶：流れに運ばれた分（ずれと、瓶の真ん中まわりに回った量）と、水面の傾き
+uniform vec3 uSnowFlowShift, uSnowFlowTurn;
+uniform vec2 uWaterTilt;
 out float vAlpha;
 out vec3 vColor;
+
+/** 瓶の真ん中を中心に、回転ベクトル w（向きが軸、長さが角度）だけ回す */
+vec3 turnAround(vec3 p, vec3 w) {
+  float a = length(w);
+  if (a < 1e-4) return p;
+  vec3 k = w / a;
+  vec3 q = p - vec3(0.0, FLOW_CY, 0.0);
+  q = q * cos(a) + cross(k, q) * sin(a) + k * dot(k, q) * (1.0 - cos(a));
+  return q + vec3(0.0, FLOW_CY, 0.0);
+}
+
 void main() {
   // 大きさは偏らせる：ほとんどが細かい粒で、大きい粒はまれ
   float sizeT = pow(aSeed2.x, SIZE_SKEW);
@@ -70,6 +86,12 @@ void main() {
   p.x += 0.005 * sin(uTime * 0.37 + aSeed2.w * 40.0);
   p.z += 0.005 * cos(uTime * 0.29 + aSeed.x * 50.0);
   float fade = smoothstep(0.0, 0.05, y) * smoothstep(range, range - 0.06, y);
+  // 揺らされた瓶では、粒が流れに運ばれる。瓶の外や水面の上へ出た粒は見せない
+  p = turnAround(p, uSnowFlowTurn) + uSnowFlowShift * (0.4 + 0.6 * smoothstep(FLOOR_Y, TOP_Y, p.y));
+  float pr = length(p.xz);
+  fade *= 1.0 - smoothstep(INNER_R - 0.02, INNER_R - 0.008, pr);
+  float wy = TOP_Y + dot(uWaterTilt, p.xz);
+  fade *= smoothstep(wy, wy - 0.03, p.y) * smoothstep(FLOOR_Y - 0.01, FLOOR_Y + 0.01, p.y);
 
   vec4 mv = viewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -192,6 +214,9 @@ export function createSnow(shared: SharedUniforms, rng: Rng): Snow {
           uGlowPos: shared.uGlowPos,
           uGlowColor: shared.uGlowColor,
           uSnowShift: shift,
+          uSnowFlowShift: shared.uSnowFlowShift,
+          uSnowFlowTurn: shared.uSnowFlowTurn,
+          uWaterTilt: shared.uWaterTilt,
         },
       }),
     ),
@@ -207,6 +232,7 @@ export class Bubble {
   private active = false;
   private timeToNext: number;
   private readonly pos = new Vector3();
+  private readonly flow = new Vector3();
   /** 上がりはじめてからの時間と、揺れの位相 */
   private age = 0;
   private phase = 0;
@@ -250,7 +276,8 @@ export class Bubble {
     if (!this.active) this.timeToNext = Math.max(this.timeToNext, seconds);
   }
 
-  update(dt: number): void {
+  /** water は揺らされた瓶の水（泡も流れに運ばれる） */
+  update(dt: number, water: WaterField | null = null): void {
     if (!this.active) {
       this.timeToNext -= dt;
       if (this.timeToNext <= 0) {
@@ -269,6 +296,14 @@ export class Bubble {
       this.pos.y += speed * dt;
       this.pos.x += Math.sin(this.phase * 9.0) * 0.012 * dt;
       this.pos.z += Math.cos(this.phase * 7.3) * 0.01 * dt;
+      if (water?.moving) {
+        this.pos.addScaledVector(flowAt(water, this.pos.x, this.pos.y, this.pos.z, this.flow), dt);
+        const r = Math.hypot(this.pos.x, this.pos.z);
+        if (r > INNER_R - 0.01) {
+          this.pos.x *= (INNER_R - 0.01) / r;
+          this.pos.z *= (INNER_R - 0.01) / r;
+        }
+      }
       const top = JAR.waterLevel - 0.004;
       this.alpha.value = WATER.bubbleOpacity * Math.min(1, this.age * 4) * Math.min(1, (top - this.pos.y) / 0.01);
       if (this.pos.y >= top) {

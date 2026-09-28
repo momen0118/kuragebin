@@ -35,8 +35,13 @@ export function createSharedUniforms() {
      * カップが水面を通るときに立つ
      */
     uRipples: { value: [new Vector4(), new Vector4(), new Vector4(), new Vector4()] },
-    /** 描いている瓶の、瓶底に溜まったもの（sim の sediment。1 で水換えの目安） */
+    /** 描いている瓶の、瓶底に溜まったもの（sim の sediment。1 で水換えの目安。舞い上がっている間は薄い） */
     uSediment: { value: 0 },
+    /** 描いている瓶の水面の傾き（x, z の向き。瓶を傾けたり揺らしたりしたとき） */
+    uWaterTilt: { value: new Vector2() },
+    /** 描いている瓶のマリンスノーが、揺れの流れに運ばれた分（ずれと、瓶の真ん中まわりに回った量） */
+    uSnowFlowShift: { value: new Vector3() },
+    uSnowFlowTurn: { value: new Vector3() },
   };
 }
 

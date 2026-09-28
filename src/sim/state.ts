@@ -4,7 +4,7 @@ import { CARE, LIFE, SIM } from '../config';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -70,6 +70,11 @@ export interface JarState {
    * その日付の夜中から、溜まった量によらず替える。見送った夜のぶんは次の夜に回す
    */
   waterDue: number | null;
+  /**
+   * 瓶を揺らして水が動いている間の終わり（ゲーム内の秒、なければ null）。その間だけエフィラの育ちがわずかに早まる。
+   * 揺らすたびに今から数えなおす（延びるだけで、量は増えない）
+   */
+  stirredUntil: number | null;
 }
 
 /** 日誌に載せる出来事の種類 */
@@ -120,7 +125,7 @@ export interface Settings {
   lamp: boolean;
   /** 音（初期オフ、フェーズ4） */
   sound: boolean;
-  /** 揺れを使う（フェーズ3） */
+  /** 揺れを使う（端末を傾けたり揺らしたりすると、瓶の水が動く）。iOS で許可を断られたらオフにする */
   motion: boolean;
   /** 画質（フェーズ4） */
   quality: 'high' | 'medium' | 'low';
@@ -209,6 +214,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     leftover: null,
     cleanSince: null,
     waterDue: null,
+    stirredUntil: null,
   }));
   return {
     schema: SCHEMA_VERSION,

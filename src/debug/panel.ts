@@ -1,6 +1,7 @@
 // デバッグパネル。URL に ?debug（または #debug）を付けたときだけ出す。
 // 時刻の上書き（光の確認用）、背景写真の切り替えと重ね表示（位置合わせの確認用）、FPS、
 // 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、餌（1日1回を無視してやる・記録を消す）、
+// 揺れ（センサーなしで一回揺らす・傾けたままにする・逆さまから起き直るところを見る）、
 // 状態の表示・リセット・書き出し・読み込み。
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
@@ -47,6 +48,10 @@ export interface DebugPanelOptions {
   onSediment(value: number): void;
   /** 日誌をすべて未読に戻す */
   onUnread(): void;
+  /** 揺れ：表示中の瓶を一回揺らす（弱・強）、傾けたままにする（度。null でやめる）、泳ぐ個体を逆さまにして起き直るところを見る */
+  onShake(kind: 'weak' | 'strong'): void;
+  onTilt(deg: number | null): void;
+  onFlip(): void;
 }
 
 const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
@@ -110,6 +115,7 @@ export class DebugPanel {
   private readonly progressEl: HTMLInputElement;
   private readonly capSel: HTMLSelectElement;
   private readonly feedEl: HTMLDivElement;
+  private readonly motionEl: HTMLDivElement;
   /** 選んでいる個体と、進みのつまみを動かしている最中か */
   private selected: number | null = null;
   private pickNewest = false;
@@ -176,6 +182,17 @@ export class DebugPanel {
         </div>
       </details>
       <details>
+        <summary>揺れ</summary>
+        <div class="motion sub"></div>
+        <div class="row buttons">
+          <button type="button" data-shake="weak">一回揺らす（弱）</button>
+          <button type="button" data-shake="strong">（強）</button>
+          <button type="button" class="flip">逆さま→起き直り</button>
+        </div>
+        <label class="row"><input class="tilt-on" type="checkbox"> 傾けたまま <span class="tilt-deg">0°</span></label>
+        <input class="tilt" type="range" min="${-DEBUG.tiltMax}" max="${DEBUG.tiltMax}" step="1" value="0" aria-label="傾き">
+      </details>
+      <details>
         <summary>状態</summary>
         <div class="state sub"></div>
         <div class="row buttons">
@@ -215,6 +232,23 @@ export class DebugPanel {
       b.addEventListener('click', () => this.opts.onSediment(Number(b.dataset.sediment)));
     }
     root.querySelector('.unread')!.addEventListener('click', () => this.opts.onUnread());
+    this.motionEl = root.querySelector('.motion')!;
+    for (const b of root.querySelectorAll<HTMLButtonElement>('[data-shake]')) {
+      b.addEventListener('click', () => this.opts.onShake(b.dataset.shake as 'weak' | 'strong'));
+    }
+    root.querySelector('.flip')!.addEventListener('click', () => this.opts.onFlip());
+    const tiltOn = root.querySelector<HTMLInputElement>('.tilt-on')!;
+    const tilt = root.querySelector<HTMLInputElement>('.tilt')!;
+    const tiltDeg = root.querySelector<HTMLSpanElement>('.tilt-deg')!;
+    const applyTilt = (): void => {
+      tiltDeg.textContent = `${tilt.value}°`;
+      this.opts.onTilt(tiltOn.checked ? Number(tilt.value) : null);
+    };
+    tilt.addEventListener('input', () => {
+      tiltOn.checked = true;
+      applyTilt();
+    });
+    tiltOn.addEventListener('change', applyTilt);
 
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-spawn]')) {
       b.addEventListener('click', () => {
@@ -362,6 +396,11 @@ export class DebugPanel {
   /** 表示中の瓶の餌：その日にやったか、見せ場の様子 */
   showFeed(text: string): void {
     if (this.feedEl.textContent !== text) this.feedEl.textContent = text;
+  }
+
+  /** 揺れ：センサーの様子、表示中の瓶の水の様子、sim の「水が動いている」残り */
+  showMotion(text: string): void {
+    if (this.motionEl.textContent !== text) this.motionEl.textContent = text;
   }
 
   tick(dt: number): void {

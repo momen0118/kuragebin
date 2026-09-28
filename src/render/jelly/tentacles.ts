@@ -12,7 +12,7 @@ import {
   OneFactor,
   OneMinusSrcAlphaFactor,
   ShaderMaterial,
-  type Vector3,
+  Vector3,
 } from 'three';
 import { BELL, JAR, JELLY_LOOK, TENTACLES } from '../../config';
 import { LOBES } from './profile';
@@ -22,8 +22,10 @@ import { LAMP_GLSL, lampUniforms } from '../lamp';
 import { CLIP_GLSL } from '../shaders/clip';
 import type { BellLook } from './bell';
 import { frag } from '../shaders/glsl';
+import { flowAt, type WaterField } from '../slosh';
 
 const INNER_R = JAR.radius - JAR.glassThickness;
+const tmpFlow = new Vector3();
 
 const VERT = /* glsl */ `
 in vec3 aTangent;
@@ -297,9 +299,10 @@ export class Tentacles {
   /**
    * 1ステップ進める。roots(i) は i 本目の根元を返す。
    * jet は収縮で押し出される水の向き×強さ（ワールド、加速度）、inflow は緩むときに傘の下へ吸い込む強さ。
-   * 小さな個体では、重さや水の流れも大きさに合わせて弱める（同じ形で縮めた動きになる）
+   * 小さな個体では、重さや水の流れも大きさに合わせて弱める（同じ形で縮めた動きになる）。
+   * water は揺らされた瓶の水：触手は水と一緒に動き（抵抗が流れのほうへ引く）、重さは重力の向きへ、揺れている間は軽い
    */
-  step(dt: number, roots: (i: number) => RootFrame, jet: Vector3, jetOrigin: Vector3, inflow = 0): void {
+  step(dt: number, roots: (i: number) => RootFrame, jet: Vector3, jetOrigin: Vector3, inflow = 0, water: WaterField | null = null): void {
     const n = this.count;
     const m = this.nodes;
     const x = this.x;
@@ -308,7 +311,12 @@ export class Tentacles {
     const keep = 1 - TENTACLES.drag;
     const bellR = this.radius;
     const scale = bellR / BELL.radius;
-    const g = -TENTACLES.gravity * scale;
+    // 重さ（重力の向き。揺らされた瓶では、揺れている間は軽い）
+    const gw = TENTACLES.gravity * scale * (water ? water.weight : 1);
+    const gx = water ? water.down.x * gw : 0;
+    const gy = water ? water.down.y * gw : -gw;
+    const gz = water ? water.down.z * gw : 0;
+    const moving = water !== null && water.moving;
     this.time += dt;
     const t = this.time;
     const cur = TENTACLES.current * scale;
@@ -355,12 +363,20 @@ export class Tentacles {
         // 水のゆるい流れ。場所でゆっくり向きが変わるので、近くの触手は一緒に揺れてまとまる
         const od = Math.sqrt(d2) || 1;
         const pull = (inflow * near) / od;
-        const ax = jet.x * near - ox * pull + cur * (Math.sin(y * 23 + t * 0.7 + px0 * 37) + ownX);
-        const ay = jet.y * near - oy * pull + g;
-        const az = jet.z * near - oz * pull + cur * (Math.cos(y * 19 - t * 0.6 + pz0 * 41) + ownZ);
-        const vx = (x[k]! - px[k]!) * keep;
-        const vy = (x[k + 1]! - px[k + 1]!) * keep;
-        const vz = (x[k + 2]! - px[k + 2]!) * keep;
+        const ax = jet.x * near - ox * pull + cur * (Math.sin(y * 23 + t * 0.7 + px0 * 37) + ownX) + gx;
+        const ay = jet.y * near - oy * pull + gy;
+        const az = jet.z * near - oz * pull + cur * (Math.cos(y * 19 - t * 0.6 + pz0 * 41) + ownZ) + gz;
+        let vx = (x[k]! - px[k]!) * keep;
+        let vy = (x[k + 1]! - px[k + 1]!) * keep;
+        let vz = (x[k + 2]! - px[k + 2]!) * keep;
+        if (moving) {
+          // 揺らされた水の中：止まった水ではなく、流れる水に対して抵抗がかかる（水と一緒に動く）
+          const f = flowAt(water, px0, y, pz0, tmpFlow);
+          const d = dt * (1 - keep);
+          vx += f.x * d;
+          vy += f.y * d;
+          vz += f.z * d;
+        }
         px[k] = x[k]!;
         px[k + 1] = x[k + 1]!;
         px[k + 2] = x[k + 2]!;
