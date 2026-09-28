@@ -76,7 +76,7 @@ export class WaterMotion {
   /** 軽くなっている度合い（0〜1）。強く揺れている間 1 へ、収まると TUMBLE.lightFall 秒で戻る */
   private light = 0;
   private acc = 0;
-  /** 揺れの強さ（g、ならしたもの）と、振りはじめに決めた回る向き */
+  /** かき混ぜられている強さ（g、ShakeGate がならしたもの）と、振りはじめに決めた回る向き */
   private energy = 0;
   private readonly energyAxis = new Vector3(0, 0, 1);
   private readonly tmp = new Vector3();
@@ -162,16 +162,16 @@ export class WaterMotion {
     sw.x += (-a[2] * SLOSH.swirlGain - sw.x / SLOSH.swirlDecay) * dt;
     sw.y += (-sw.y / SLOSH.swirlDecay) * dt;
     sw.z += (a[0] * SLOSH.swirlGain - sw.z / SLOSH.swirlDecay) * dt;
-    // 何往復も振ると、往復は打ち消しあうが、水はかき混ぜられて回りだす。向きは振りはじめの揺れで決める
-    const am = Math.hypot(a[0], a[1], a[2]);
-    const wasCalm = this.energy < SLOSH.energyFloor;
-    this.energy += (am - this.energy) * (1 - Math.exp(-dt / SLOSH.energySmooth));
-    if (wasCalm && am > SLOSH.energyFloor) {
-      // 上 × 揺れと逆向き（ほとんど画面の中で回る向き）。上下にだけ振ったときは、画面の中で回す
-      this.energyAxis.set(-a[2] * 0.5, 0, a[0]);
-      if (this.energyAxis.lengthSq() < 1e-6) this.energyAxis.set(0, 0, a[1] >= 0 ? 1 : -1);
+    // 振ると、往復は打ち消しあうが、水はかき混ぜられて回りだす（かき混ぜの強さは ShakeGate がならして渡す）。
+    // 向きは振りはじめの揺れで決める：上 × 揺れと逆向き（ほとんど画面の中で回る向き）。上下にだけ振ったときは、画面の中で回す
+    const stirIn = input?.stir ?? 0;
+    if (this.energy < SLOSH.energyFloor && stirIn >= SLOSH.energyFloor) {
+      const p = input?.push ?? [1, 0, 0];
+      this.energyAxis.set(-p[2] * 0.5, 0, p[0]);
+      if (this.energyAxis.lengthSq() < 1e-6) this.energyAxis.set(0, 0, p[1] >= 0 ? 1 : -1);
       this.energyAxis.normalize();
     }
+    this.energy = stirIn;
     const drive = Math.max(0, this.energy - SLOSH.energyFloor) * SLOSH.energySwirl;
     sw.addScaledVector(this.energyAxis, (drive / SLOSH.swirlDecay) * dt);
     if (sw.length() > SLOSH.maxSwirl) sw.setLength(SLOSH.maxSwirl);
