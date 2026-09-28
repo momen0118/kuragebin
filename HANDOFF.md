@@ -5,7 +5,7 @@
 ## 確認のしかた
 
 - 本番：https://momen0118.github.io/kuragebin/ （main への push で GitHub Actions が公開。作業ブランチは PR にしてユーザーがマージする。
-  フェーズ1・2は momen0118/kuragebin#1、3-1 は #5、3-2 は #6、3-3 は #7、3-4 は #8 でマージ済み。3-5 はブランチ `claude/fervent-pascal-lh2d5u`（ユーザーの確認待ち））
+  フェーズ1・2は momen0118/kuragebin#1、3-1 は #5、3-2 は #6、3-3 は #7、3-4 は #8 でマージ済み。3-5 は #9（ユーザーの確認待ち））
 - ユーザーと友人の AI で考えた趣味のプロジェクト。PR にレビューは付かない（ユーザーがマージするだけ）。PR の見張りや CI の待ち受けは要らない
 - プレビュー：https://claude.ai/artifact/HBagJXCZ9voVBG58Dx3zVR （`#debug` を付けるとデバッグパネル。クエリは渡せない）
   - 作り方：`npx vite build --base ./ --outDir dist-preview`。ページは小さな HTML で、`./assets/index-*.js` と `./assets/index-*.css` を読み、`bg/*.webp` は公開済み
@@ -584,5 +584,5 @@
 
 ## 次にやること
 
-3-5（瓶を揺らす）はブランチ `claude/fervent-pascal-lh2d5u`。ユーザーの確認待ち（とくに実機での揺れの強さと向き）。
+3-5（瓶を揺らす）は momen0118/kuragebin#9。ユーザーの確認待ち（とくに実機での揺れの強さと向き）。
 確認が済んだらフェーズ3は終わり。次はフェーズ4（仕上げ：個体差と変異、拾いもの、桜の季節、音、画質設定）。各段階の始めに「先に決めたいこと」をユーザーに確かめる
