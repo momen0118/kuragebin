@@ -1,7 +1,7 @@
 // 観察日誌のメモ帳。上にリングが付いた小さなもので、画面の下寄りに置く（上には瓶が薄く見えたまま）。
 // 1ページに1日、新しい日が上。下から上へめくると前の日、下へ引くと1日新しい日へ戻り、いちばん新しい日で下へ引くと閉じる。
 // 紙の外をタップしても閉じる。後ろのほうのページに個体一覧（瓶ごと。ここでも名前を付けられる）、
-// いちばん最後（裏表紙の内側）に設定（データの書き出し・読み込み）。紙の端から少し出た付箋2枚でそこへ飛べ、
+// いちばん最後（裏表紙の内側）に設定（揺れを使うか、データの書き出し・読み込み）。紙の端から少し出た付箋2枚でそこへ飛べ、
 // 一覧と設定のページには「日誌へ」。紙は少しくすんだ色で、夜は部屋の明るさに合わせて暗くする。
 import { NOTEBOOK } from '../../config';
 import { NAME_MAX } from '../../sim/actions';
@@ -20,6 +20,9 @@ export interface NotebookOptions {
   exportJson(): string;
   /** 書き出したデータを読み込む。読めなければ投げる */
   importJson(text: string): void;
+  /** 揺れを使うか（設定）と、それを変える（使うにしたときは、ここで許可を訊く） */
+  motion(): boolean;
+  setMotion(on: boolean): void;
   /** 開いた・閉じた（日誌を読んだことにする） */
   opened(): void;
   closed(): void;
@@ -224,7 +227,14 @@ export class Notebook {
         : `<p class="empty">水だけ</p>`;
       return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">${esc(leaf.page.title)}</h2><button type="button" class="to-journal">日誌へ</button></div>${rows}</div>`;
     }
+    const on = this.opts.motion();
     return `<div class="leaf-body"><div class="leaf-head"><span></span><button type="button" class="to-journal">日誌へ</button></div>
+      <div class="settings">
+      <div class="motion">
+        <p class="label">揺れ</p>
+        <p class="hint">端末を傾けたり揺らしたりすると、瓶の水が動く</p>
+        <div class="data-buttons choice"><button type="button" class="motion-on" aria-pressed="${on}">使う</button><button type="button" class="motion-off" aria-pressed="${!on}">使わない</button></div>
+      </div>
       <div class="data">
         <p class="label">データ</p>
         <p class="hint">機種を変えるときに</p>
@@ -232,7 +242,7 @@ export class Notebook {
         <div class="confirm" hidden><p>今の瓶は、読み込んだ中身に置き換わる。</p><div class="data-buttons"><button type="button" class="import-yes">読み込む</button><button type="button" class="import-no">やめる</button></div></div>
         <p class="note" aria-live="polite"></p>
         <input type="file" class="file" accept="application/json,.json" hidden>
-      </div></div>`;
+      </div></div></div>`;
   }
 
   /** ページの傾き（0 で平ら、180 でリングの向こうへめくれている）。90 を越えると裏になって見えない */
@@ -401,6 +411,8 @@ export class Notebook {
     else if (t.classList.contains('import')) this.current.querySelector<HTMLInputElement>('.file')?.click();
     else if (t.classList.contains('import-yes')) this.importData();
     else if (t.classList.contains('import-no')) this.cancelImport();
+    else if (t.classList.contains('motion-on')) this.opts.setMotion(true);
+    else if (t.classList.contains('motion-off')) this.opts.setMotion(false);
   }
 
   /** 個体一覧で名前を付ける。Enter か欄の外で決まり、Esc でやめる。16px 未満だと iOS が画面を拡大する */

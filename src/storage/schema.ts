@@ -75,6 +75,11 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
       }),
     };
   },
+  // 5：瓶を揺らして水が動いている間（まだ揺らしていない）
+  4: (d) => {
+    const jars = Array.isArray(d.jars) ? d.jars : [];
+    return { ...d, jars: jars.map((jar: unknown) => (isObject(jar) ? { stirredUntil: null, ...jar } : jar)) };
+  },
 };
 
 export class SchemaError extends Error {}
@@ -124,6 +129,7 @@ function validate(d: Raw): GameState {
     if (!isLeftover(jar.leftover)) jar.leftover = null;
     if (!(jar.cleanSince === null || isNumber(jar.cleanSince))) jar.cleanSince = null;
     if (!(jar.waterDue === null || isNumber(jar.waterDue))) jar.waterDue = null;
+    if (!(jar.stirredUntil === null || isNumber(jar.stirredUntil))) jar.stirredUntil = null;
     for (const c of jar.creatures) {
       if (
         !isObject(c) ||

@@ -2,7 +2,8 @@ import { describe, expect, test } from 'vitest';
 import { FEED } from '../config';
 import { advance } from './advance';
 import { clearFed, spawnCreature } from './edit';
-import { canFeed, feedDay, feedJar, growthRate } from './feed';
+import { canFeed, feedDay, feedJar } from './feed';
+import { growthRate } from './growth';
 import { createInitialState, type GameState, type Stage } from './state';
 
 /** 端末の現地時刻（ミリ秒）。どの時間帯で走らせても同じになるよう、現地時刻で作る */

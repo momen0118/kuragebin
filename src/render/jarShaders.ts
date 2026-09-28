@@ -67,14 +67,18 @@ vec2 ripple(vec2 xz, float t) {
 }
 `;
 
-/** 水面の高さ。海月の拍動で揺れたときだけ波立つ（ag は 0〜1）。カップの波紋も足す */
+/**
+ * 水面の高さ。海月の拍動で揺れたときだけ波立つ（ag は 0〜1）。カップの波紋も足す。
+ * 瓶を傾けたり揺らしたりすると、水面は瓶に対して傾く（uWaterTilt：x, z の向きの傾き。瓶の真ん中を軸に）
+ */
 export const WATER_HEIGHT = /* glsl */ `
 ${RIPPLE_GLSL}
+uniform vec2 uWaterTilt;
 float waterHeight(vec2 xz, float t, float ag) {
   float w = sin(xz.x * 23.0 + t * 1.3) * cos(xz.y * 19.0 - t * 1.05)
           + 0.6 * sin((xz.x - xz.y) * 31.0 + t * 1.9)
           + 0.4 * cos((xz.x * 0.7 + xz.y) * 43.0 - t * 2.4);
-  return WATER_Y + WAVE_H * w * 0.5 * ag + ripple(xz, t).x;
+  return WATER_Y + dot(uWaterTilt, xz) + WAVE_H * w * 0.5 * ag + ripple(xz, t).x;
 }
 `;
 

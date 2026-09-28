@@ -7,6 +7,7 @@ import { canMove, moveCreature, renameCreature, type MoveResult } from './sim/ac
 import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
 import { canFeed, feedJar, type FeedResult } from './sim/feed';
+import { stirJar } from './sim/growth';
 import { hasUnread } from './sim/journal';
 import { createInitialState, type GameState, type Settings } from './sim/state';
 import { openStateStore, type StateStore } from './storage/db';
@@ -152,6 +153,19 @@ export class Game {
     this.emit();
     void this.save();
     return result;
+  }
+
+  /**
+   * 瓶 jar を揺らした：その瓶の水が数時間「動いた」状態になり、その間だけエフィラの育ちがわずかに早まる。
+   * 何度揺らしても量は増えず、時間が延びるだけ。日誌には書かない
+   */
+  stir(jar: number): void {
+    this.catchUpNow(false, jar);
+    const next = structuredClone(this.current);
+    if (!stirJar(next, jar)) return;
+    this.current = next;
+    this.emit();
+    void this.save();
   }
 
   /** 名前を付ける（null や空なら名無しに戻す） */

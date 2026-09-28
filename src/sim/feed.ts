@@ -1,7 +1,7 @@
 // 餌。1瓶につき1日1回（端末の現地時刻の朝4時で日を区切る）。瓶にいる全員が食べ、食べた量は餌をやった瞬間に決まる。
 // 出す粒の数と、個体ごとに食べる粒の数もここで決める（描画の見せ場はそのとおりに食べて見せる）。
 // 食べ残しの粒は瓶底でしばらくして消え、そのぶん瓶底の堆積が少し増える（care.ts）。餌をやった瓶は、その夜に水を替える。
-// 食べてから1日の間、エフィラとポリプの進みが少し速くなる（lifecycle.ts が growthRate を掛ける）。
+// 食べてから1日の間、エフィラとポリプの進みが少し速くなる（growth.ts）。
 // 状態をその場で書き換える。
 import { CARE, FEED, FOOD } from '../config';
 import { dateKey } from './care';
@@ -91,16 +91,6 @@ export function feedingPlan(jar: JarState, at: number): FeedingPlan {
   }
   const grains = Math.min(Math.max(Math.round(total * (1 + FOOD.extra)), FOOD.min), FOOD.max);
   return { bites, total, grains };
-}
-
-/**
- * 食べた餌による、段階の進みの速さの倍率。食べてから boostSeconds の間だけ、
- * エフィラ（成体になるまで）とポリプ（くびれ始めるまで）が速くなる。time はゲーム内の今（刻みの終わり）
- */
-export function growthRate(c: Creature, time: number): number {
-  if (!c.meal || (c.stage !== 'ephyra' && c.stage !== 'polyp')) return 1;
-  const since = time - c.meal.at;
-  return since > 0 && since <= FEED.boostSeconds ? 1 + FEED.growthBoost * c.meal.amount : 1;
 }
 
 /** 瓶の個体が最後に食べた餌の時刻（ゲーム内。誰も食べていなければ null） */

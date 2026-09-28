@@ -1,6 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { HANDLING, NOTEBOOK, SIM } from './config';
+import { HANDLING, MOTION, NOTEBOOK, SIM, SLOSH } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -17,6 +17,7 @@ import { JournalButton } from './ui/journal/button';
 import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
+import { DebugMotion, DeviceMotionSource } from './ui/motion';
 import { CreatureTag } from './ui/tag';
 import { registerServiceWorker } from './pwa/register';
 
@@ -146,6 +147,42 @@ async function main(): Promise<void> {
     applyLight();
   }, game.state.settings.lamp);
 
+  // 瓶を揺らす：端末の動き（DeviceMotion）。「揺れを使う」がオンで、許可があるときだけ受け取る。
+  // iOS は許可が要る：瓶をつついた最初のタップと、設定で「使う」を入れ直したときに訊く。断られたら設定をオフにして、以後は訊かない
+  const motion = new DeviceMotionSource();
+  const debugMotion = new DebugMotion();
+  motion.setListening(game.state.settings.motion);
+  const askMotion = (): void => {
+    void motion.request().then((p) => {
+      if (p === 'granted') motion.setListening(game.state.settings.motion);
+      else if (p === 'denied' && game.state.settings.motion) game.updateSettings({ motion: false });
+    });
+  };
+  const setMotion = (on: boolean): void => {
+    game.updateSettings({ motion: on });
+    if (on && motion.needsPermission) askMotion();
+    else motion.setListening(on);
+  };
+  canvas.addEventListener('click', () => {
+    if (game.state.settings.motion && motion.needsPermission && motion.state === 'unknown') askMotion();
+  });
+  /** 揺らしたことを sim に記録した時刻（瓶ごと、performance.now） */
+  const stirReported = game.state.jars.map(() => -Infinity);
+  /** 端末の動きを描画へ渡し、揺らされた瓶を sim に記録する（何度揺らしても、記録し直すのは間をあけて） */
+  const applyMotion = (dt: number): void => {
+    debugMotion.update(dt);
+    // 読み込みやリセットで設定が変わっても合うように（許可がなければ受け取らない）
+    motion.setListening(game.state.settings.motion);
+    const sensor = game.state.settings.motion ? motion.sample(MOTION.staleSeconds) : null;
+    app.setMotion(debugMotion.apply(sensor));
+    const now = performance.now();
+    for (let j = 0; j < stirReported.length; j++) {
+      if (!app.takeStirred(j) || now - stirReported[j]! < SLOSH.recordInterval * 1000) continue;
+      stirReported[j] = now;
+      game.stir(j);
+    }
+  };
+
   /**
    * 表示中の瓶に餌をやる（1瓶につき1日1回）。状態は押したときに変え（食べた量もここで決まる）、
    * スポイトが降りてきて水の中で餌を出し、粒が食べられていくのを見せる。やれたら true。force は確認用（1日1回を無視）
@@ -181,6 +218,8 @@ async function main(): Promise<void> {
       game.importJson(text);
       afterImport();
     },
+    motion: () => game.state.settings.motion,
+    setMotion,
     opened: () => {
       tag.hide();
       game.markJournalRead();
@@ -256,6 +295,9 @@ async function main(): Promise<void> {
           onMealsClear: () => game.edit((s) => clearMeals(s)),
           onSediment: (v) => game.edit((s) => setSediment(s, slider.index, v)),
           onUnread: () => game.edit((s) => (s.journalSeen = 0)),
+          onShake: (kind) => debugMotion.start(kind),
+          onTilt: (deg) => debugMotion.setTilt(deg),
+          onFlip: () => app.flipForDebug(),
         })
       : null;
   /** 確認用：表示中の瓶の餌の様子 */
@@ -275,6 +317,22 @@ async function main(): Promise<void> {
   const setRealSize = (on: boolean): void => {
     for (const c of app.jars) c.setRealSize(on);
     showJars(game.state);
+  };
+  /** 確認用：センサーと、表示中の瓶の水の様子 */
+  const motionText = (): string => {
+    const w = app.waterState;
+    const sensor = !game.state.settings.motion
+      ? '揺れを使わない'
+      : motion.isListening
+        ? `センサー受信中（符号 ${motion.accelSign}）`
+        : motion.supported
+          ? `許可 ${motion.state}`
+          : 'センサーなし';
+    const s = game.state;
+    const until = s.jars[slider.index]!.stirredUntil;
+    const left = until !== null ? until - (s.time + s.pending) : 0;
+    const sim = left > 0 ? `水が動いている 残り${Math.ceil(left / 60)}分` : '水は静か';
+    return `${sensor}　流れ ${w.stir.toFixed(2)}・傾き ${w.tiltDeg.toFixed(1)}°・縁 ${w.rim.toFixed(2)}${w.splash ? '・飛沫' : ''}${w.dust > 0 ? `・舞う ${w.dust.toFixed(2)}` : ''}${w.righting ? `・起き直り中 ${w.righting}` : ''}　${sim}`;
   };
   if (panel) {
     refreshPanel = (): void => {
@@ -329,6 +387,7 @@ async function main(): Promise<void> {
 
   /** 1フレーム：瓶の並びを動かし、描き、点と札を合わせる（draw が false なら描かずに動きだけ） */
   const tick = (dt: number, draw = true): void => {
+    applyMotion(dt);
     slider.update(dt);
     app.setView(slider.position);
     if (draw) app.frame(dt);
@@ -422,6 +481,12 @@ async function main(): Promise<void> {
       setPhoto: (only: Parameters<App['setPhotoDebug']>[0], overlay: Parameters<App['setPhotoDebug']>[1]) =>
         app.setPhotoDebug(only, overlay),
       setLamp: (on: boolean) => app.setLampOn(on),
+      // 揺れ：一回揺らす（'weak' | 'strong'）、傾けたままにする（度。null でやめる）、逆さまにして起き直るところを見る、水の様子
+      shake: (kind: 'weak' | 'strong') => debugMotion.start(kind),
+      tilt: (deg: number | null) => debugMotion.setTilt(deg),
+      flip: () => app.flipForDebug(),
+      water: () => app.waterState,
+      motionText: () => motionText(),
     };
     // 確認用：描画側の中身を直接見る
     w.__kurageApp = app;
@@ -447,6 +512,7 @@ async function main(): Promise<void> {
     }
     tick(dt);
     panel?.tick(dt);
+    panel?.showMotion(motionText());
     raf = requestAnimationFrame(loop);
   };
   const start = (): void => {
