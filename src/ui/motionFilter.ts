@@ -88,7 +88,8 @@ export function tiltDeadZone(g: V3, dz: number): V3 {
 
 /**
  * 揺らしたいときだけ揺れる。揺れの強さ（ならしたもの）か回す速さがしきい値を越えたときだけ開き、
- * 揺れと回す速さを通す。開くときはゆっくり立ち上がり、弱まってしばらくしたら閉じる。傾き（重力の向き）はいつも通す。
+ * 揺れと回す速さを通す。開くときはゆっくり立ち上がり、弱まってしばらくしたら閉じる。
+ * 傾き（重力の向き）はいつも通すが、閉じている間はゆっくりした変化だけ（軽く振ったときの手首の小さな回りで水面が揺れないように）。
  * 振ってかき混ぜられている強さ（stir）と振りはじめの向き（push）も添える
  */
 export class ShakeGate {
@@ -97,6 +98,8 @@ export class ShakeGate {
   private open = false;
   private quiet = 0;
   private readonly push: V3 = [1, 0, 0];
+  /** ならした傾き（重力の向き）。閉じている間は、ゆっくりした傾きだけを通す */
+  private gravity: V3 | null = null;
   /** 開いている度合い（0〜1、なめらかにする前） */
   level = 0;
 
@@ -107,9 +110,10 @@ export class ShakeGate {
         this.energy = 0;
         this.stirred = 0;
         this.open = false;
+        this.gravity = null;
         return null;
       }
-      s = neutralSample();
+      s = { ...neutralSample(), gravity: this.gravity ? [...this.gravity] : [0, -1, 0] };
     }
     const d = Math.max(dt, 0);
     const a = Math.hypot(s.accel[0], s.accel[1], s.accel[2]);
@@ -129,8 +133,15 @@ export class ShakeGate {
     // ゆっくり立ち上がってから大きくなる
     const L = this.level;
     const k = L * L * (3 - 2 * L);
+    // 傾き：閉じている間はゆっくりした変化だけ、開くほど速くついていく
+    const gs = (this.gravity ??= [...s.gravity]);
+    const tg = MOTION.calmTiltSmooth + (MOTION.shakeTiltSmooth - MOTION.calmTiltSmooth) * k;
+    const kg = 1 - Math.exp(-d / tg);
+    for (let i = 0; i < 3; i++) gs[i]! += (s.gravity[i]! - gs[i]!) * kg;
+    const gl = Math.hypot(gs[0], gs[1], gs[2]) || 1;
+    for (let i = 0; i < 3; i++) gs[i]! /= gl;
     return {
-      gravity: s.gravity,
+      gravity: [gs[0], gs[1], gs[2]],
       accel: [s.accel[0] * k, s.accel[1] * k, s.accel[2] * k],
       spin: [s.spin[0] * k, s.spin[1] * k, s.spin[2] * k],
       stir: this.stirred * k,
