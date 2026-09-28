@@ -12,6 +12,7 @@ import {
   OneMinusSrcAlphaFactor,
   Points,
   ShaderMaterial,
+  Vector2,
   Vector3,
 } from 'three';
 import { JAR, SEDIMENT, SPLASH, STIRRED_SEDIMENT, WATER } from '../config';
@@ -133,6 +134,9 @@ export class Splash {
   private cooldown = 0;
   /** 跳ねている粒があるか */
   active = false;
+  /** 強い一回を振ってから跳ねるまでの残り（秒）と、水が寄る側 */
+  private kickDelay = -1;
+  private readonly kickDir = new Vector2(1, 0);
 
   constructor(
     shared: SharedUniforms,
@@ -153,7 +157,16 @@ export class Splash {
   update(dt: number, water: WaterMotion): void {
     this.cooldown -= dt;
     const surface = (x: number, z: number): number => JAR.waterLevel + water.slope.x * x + water.slope.y * z;
-    if (water.rimSpeed > SPLASH.threshold && this.cooldown <= 0) {
+    // 強い一回を振った直後は、水が寄る側から跳ねる（少し遅れて、水が縁へ寄ったころ）
+    const kicked = water.splashKick >= SPLASH.kickAt;
+    if (kicked) {
+      this.kickDelay = SPLASH.kickDelay;
+      this.kickDir.copy(water.splashDir);
+    }
+    water.splashKick = 0;
+    this.kickDelay -= dt;
+    const fromKick = this.kickDelay <= 0 && this.kickDelay > -dt - 1e-6;
+    if ((water.rimSpeed > SPLASH.threshold || fromKick) && this.cooldown <= 0) {
       this.cooldown = SPLASH.interval;
       const [lo, hi] = SPLASH.count;
       const n = lo + Math.floor(this.rng.next() * (hi - lo + 1));
@@ -161,7 +174,8 @@ export class Splash {
         const d = this.drops.find((x) => !x.alive);
         if (!d) break;
         // 水面の縁が上がっていく側から
-        const th = Math.atan2(water.rimDir.y, water.rimDir.x) + this.rng.range(-0.6, 0.6);
+        const side = fromKick ? this.kickDir : water.rimDir;
+        const th = Math.atan2(side.y, side.x) + this.rng.range(-0.6, 0.6);
         const r = INNER_R - 0.006;
         const x = r * Math.cos(th);
         const z = r * Math.sin(th);

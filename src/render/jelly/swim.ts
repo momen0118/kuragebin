@@ -426,7 +426,7 @@ export class Swimmer {
       return;
     }
     const moving = water !== null && water.moving;
-    // 上（起き直る向き）は重力の逆。瓶を傾けたままにしていれば、傾いた上
+    // 上（起き直る向き）は下向きの逆（端末の傾きは使わないので、いつも瓶の真上）
     const up = water ? tmpUp.copy(water.down).negate() : tmpUp.copy(UP);
     const stir = moving ? water.stir : 0;
     this.tumble = stir > this.tumble ? stir : this.tumble + (stir - this.tumble) * (1 - Math.exp(-dt / 1.5));
@@ -533,7 +533,7 @@ export class Swimmer {
     // 傾きすぎたら起き上がろうとする（自分から大きく傾いている間は起き上がらない）
     const lean = 1 - upDot;
     if (!leaning) desired.addScaledVector(up, SWIM.righting * S.righting * lean).normalize();
-    // 上への傾きの限界（瓶を傾けたままにしていれば、傾いた上から数える）
+    // 上への傾きの限界
     const dUp = desired.dot(up);
     if (dUp < SWIM.minAxisY) {
       desired.addScaledVector(up, SWIM.minAxisY - dUp).normalize();

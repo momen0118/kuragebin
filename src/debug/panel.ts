@@ -1,7 +1,7 @@
 // デバッグパネル。URL に ?debug（または #debug）を付けたときだけ出す。
 // 時刻の上書き（光の確認用）、背景写真の切り替えと重ね表示（位置合わせの確認用）、FPS、
 // 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、餌（1日1回を無視してやる・記録を消す）、
-// 揺れ（センサーなしで一回揺らす・傾けたままにする・逆さまから起き直るところを見る）、
+// 揺れ（今の値と閾値、センサーなしで一回揺らす・逆さまから起き直るところを見る）、
 // 状態の表示・リセット・書き出し・読み込み。
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
@@ -48,9 +48,8 @@ export interface DebugPanelOptions {
   onSediment(value: number): void;
   /** 日誌をすべて未読に戻す */
   onUnread(): void;
-  /** 揺れ：表示中の瓶を一回揺らす（弱・中・強。弱は反応しないくらい）、傾けたままにする（度。null でやめる）、泳ぐ個体を逆さまにして起き直るところを見る */
+  /** 揺れ：表示中の瓶を一回揺らす（弱・中・強。弱は閾値を越えない）、泳ぐ個体を逆さまにして起き直るところを見る */
   onShake(kind: 'weak' | 'medium' | 'strong'): void;
-  onTilt(deg: number | null): void;
   onFlip(): void;
 }
 
@@ -190,8 +189,6 @@ export class DebugPanel {
           <button type="button" data-shake="strong">（強）</button>
           <button type="button" class="flip">逆さま→起き直り</button>
         </div>
-        <label class="row"><input class="tilt-on" type="checkbox"> 傾けたまま <span class="tilt-deg">0°</span></label>
-        <input class="tilt" type="range" min="${-DEBUG.tiltMax}" max="${DEBUG.tiltMax}" step="1" value="0" aria-label="傾き">
       </details>
       <details>
         <summary>状態</summary>
@@ -238,18 +235,7 @@ export class DebugPanel {
       b.addEventListener('click', () => this.opts.onShake(b.dataset.shake as 'weak' | 'medium' | 'strong'));
     }
     root.querySelector('.flip')!.addEventListener('click', () => this.opts.onFlip());
-    const tiltOn = root.querySelector<HTMLInputElement>('.tilt-on')!;
-    const tilt = root.querySelector<HTMLInputElement>('.tilt')!;
-    const tiltDeg = root.querySelector<HTMLSpanElement>('.tilt-deg')!;
-    const applyTilt = (): void => {
-      tiltDeg.textContent = `${tilt.value}°`;
-      this.opts.onTilt(tiltOn.checked ? Number(tilt.value) : null);
-    };
-    tilt.addEventListener('input', () => {
-      tiltOn.checked = true;
-      applyTilt();
-    });
-    tiltOn.addEventListener('change', applyTilt);
+    this.motionEl.style.whiteSpace = 'pre-line';
 
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-spawn]')) {
       b.addEventListener('click', () => {
@@ -399,7 +385,7 @@ export class DebugPanel {
     if (this.feedEl.textContent !== text) this.feedEl.textContent = text;
   }
 
-  /** 揺れ：センサーの様子、表示中の瓶の水の様子、sim の「水が動いている」残り */
+  /** 揺れ：センサーの様子、今の値と閾値、最後に振った一回、表示中の瓶の水の様子、sim の「水が動いている」残り */
   showMotion(text: string): void {
     if (this.motionEl.textContent !== text) this.motionEl.textContent = text;
   }

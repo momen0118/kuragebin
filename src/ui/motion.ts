@@ -1,8 +1,8 @@
 // 端末の動き（DeviceMotion）を受け取る。iOS は許可が要る（瓶をつついた最初のタップと、設定で「揺れを使う」を入れ直したときに訊く）。
 // 許可がない・センサーのない端末では、何も起きずに普通に動く。
-// デバッグパネルからは、センサーなしで揺れを試せる（一回揺らす、傾けたままにする）。
+// デバッグパネルからは、センサーなしで揺れを試せる（一回揺らす）。
 import { DEBUG } from '../config';
-import { gravityForRoll, MotionFilter, neutralSample, type MotionSample, type RawMotion, type V3 } from './motionFilter';
+import { MotionFilter, quietSample, type MotionSample, type RawMotion, type V3 } from './motionFilter';
 
 export type MotionPermission = 'unknown' | 'granted' | 'denied';
 
@@ -102,14 +102,10 @@ export class DeviceMotionSource {
 type ShakeKind = keyof typeof DEBUG.shakes;
 
 /**
- * 確認用の揺れ。一回揺らす（決まった向きに何往復か振る）と、傾けたままにする（左右の傾き）。
- * センサーの値に足して（傾けたままにするときは重力の向きを置きかえて）使う
+ * 確認用の揺れ。一回揺らす（決まった向きに何往復か振る。弱は閾値を越えない強さ）。
+ * センサーの値に加速度として足す（振ったかどうかの判定は、センサーと同じく ShakeDetector がする）
  */
 export class DebugMotion {
-  /** 傾けたままにする角度（度、右が下がる向きが正）。null なら使わない */
-  private target: number | null = null;
-  /** 今の傾き。手で傾けるくらいの速さで target へ寄せる（null に戻すときは 0 まで戻してから） */
-  private tilt: number | null = null;
   private shake: { kind: ShakeKind; t: number } | null = null;
 
   /** 一回揺らす */
@@ -117,42 +113,27 @@ export class DebugMotion {
     this.shake = { kind, t: 0 };
   }
 
-  /** 傾けたままにする（度）。null でやめる */
-  setTilt(deg: number | null): void {
-    this.target = deg;
-    if (deg !== null && this.tilt === null) this.tilt = 0;
-  }
-
   get active(): boolean {
-    return this.tilt !== null || this.shake !== null;
+    return this.shake !== null;
   }
 
   update(dt: number): void {
-    if (this.tilt !== null) {
-      const to = this.target ?? 0;
-      const step = DEBUG.tiltSpeed * dt;
-      this.tilt += Math.max(-step, Math.min(step, to - this.tilt));
-      if (this.target === null && this.tilt === 0) this.tilt = null;
-    }
     if (!this.shake) return;
     this.shake.t += dt;
     if (this.shake.t > DEBUG.shakes[this.shake.kind].seconds) this.shake = null;
   }
 
-  /** センサーの値（なければ null）に、確認用の揺れと傾きを重ねる。どちらもなければ null */
+  /** センサーの値（なければ null）に、確認用の揺れを重ねる。どちらもなければ null */
   apply(base: MotionSample | null): MotionSample | null {
-    if (!this.active) return base;
-    const out = base ? { gravity: [...base.gravity] as V3, accel: [...base.accel] as V3, spin: [...base.spin] as V3 } : neutralSample();
-    if (this.tilt !== null) out.gravity = gravityForRoll(this.tilt);
-    if (this.shake) {
-      const s = DEBUG.shakes[this.shake.kind];
-      const t = this.shake.t;
-      // 振りはじめと終わりは弱く。何往復か振る
-      const env = Math.sin((Math.PI * t) / s.seconds) ** 0.5;
-      const a = s.accel * env * Math.sin(2 * Math.PI * s.freq * t);
-      const l = Math.hypot(...s.dir) || 1;
-      for (let i = 0; i < 3; i++) out.accel[i]! += (s.dir[i]! / l) * a;
-    }
+    if (!this.shake) return base;
+    const out = base ? { accel: [...base.accel] as V3, spin: [...base.spin] as V3 } : quietSample();
+    const s = DEBUG.shakes[this.shake.kind];
+    const t = this.shake.t;
+    // 振りはじめと終わりは弱く。何往復か振る
+    const env = Math.sin((Math.PI * t) / s.seconds) ** 0.5;
+    const a = s.accel * env * Math.sin(2 * Math.PI * s.freq * t);
+    const l = Math.hypot(...s.dir) || 1;
+    for (let i = 0; i < 3; i++) out.accel[i]! += (s.dir[i]! / l) * a;
     return out;
   }
 }

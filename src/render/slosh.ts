@@ -1,16 +1,16 @@
 // 揺らされた瓶の水（瓶1つ分。瓶の座標で、瓶は原点）。
-// 水面は減衰する振り子で傾く：重力（と揺れの慣性）に対して水平を保とうとし、端末の傾きより少し遅れてついてきて、
-// 止めたあとは何度か往復してから静まる。
-// 水の流れは3つを重ねる：
-//   一様な流れ（瓶が動くと水が取り残され、壁に止められてすぐ消える）
+// 端末の傾きには追従しない。振った一回ぶんの勢い（Kick）を受けて動き、何度か揺れて静まる：
+//   水面は減衰する振り子で、振った向きの側が下がるように往復する
+//   一様な流れ（振った向きと逆へ水が取り残され、壁に止められてすぐ消える）
 //   水面の往復に合わせた流れ（水面が上がる側へ寄り、縁で上下する。深いほど弱い）
-//   瓶の中を回る流れ（強く揺らすと生まれ、数秒かけて消える。端末を回したときは、水が取り残されて逆へ回る）
+//   瓶の中を回る流れ（数秒かけて消える。続けて振ると、はじめの一回で決めた向きに回り続ける。回したときは、回した向きと逆）
+// 勢いはいきなりではなく、少しの間にゆっくり立ち上がってから与える。
 // 流れは瓶の中身を運ぶ。触手と口腕は水と一緒に、傘は遅れて（瓶から見ると先に動く）。
 import { Vector2, Vector3 } from 'three';
-import { JAR, MOTION, SLOSH, TUMBLE } from '../config';
-import type { MotionSample } from '../ui/motionFilter';
+import { JAR, KICK, SLOSH, TUMBLE } from '../config';
+import type { Kick } from '../ui/motionFilter';
 
-const MAX_SLOPE = Math.tan((MOTION.maxTilt * Math.PI) / 180);
+const MAX_SLOPE = Math.tan((SLOSH.maxTilt * Math.PI) / 180);
 const INNER_R = JAR.radius - JAR.glassThickness;
 const SUBSTEP = 1 / 120;
 
@@ -25,7 +25,7 @@ export interface WaterField {
   center: Vector3;
   /** 水面の傾きの変わる速さ（水面の往復に合わせた流れ） */
   slopeVel: Vector2;
-  /** 下向き（重力の向き。瓶の傾きの上限まで） */
+  /** 下向き（中身が沈む・垂れる向き。端末の傾きは使わないので、いつも瓶の真下） */
   down: Vector3;
   /** 触手と口腕の重さの割合（1 がふだん。強く揺れている間は軽くなり、ふわっと舞い上がる） */
   weight: number;
@@ -73,14 +73,18 @@ export class WaterMotion {
   /** 水面の縁がいちばん速く上下している所の速さ（瓶の高さ/秒）と、その向き（x, z の単位ベクトル）。飛沫に使う */
   rimSpeed = 0;
   readonly rimDir = new Vector2(1, 0);
+  /** 強い一回を振った直後（飛沫を跳ねさせる）：勢いの大きさと、水が寄る側（x, z の単位ベクトル）。Splash が読んだら 0 にする */
+  splashKick = 0;
+  readonly splashDir = new Vector2(1, 0);
   /** 軽くなっている度合い（0〜1）。強く揺れている間 1 へ、収まると TUMBLE.lightFall 秒で戻る */
   private light = 0;
   private acc = 0;
-  /** かき混ぜられている強さ（g、ShakeGate がならしたもの）と、振りはじめに決めた回る向き */
-  private energy = 0;
-  private readonly energyAxis = new Vector3(0, 0, 1);
+  /** 与えている途中の勢い：残りの時間と、与えきったときの水面の速さ・流れ・回る流れ */
+  private readonly pending: Array<{ t: number; slope: Vector2; flow: Vector3; swirl: Vector3 }> = [];
+  /** 続けて振っている間の回る向き（はじめの一回で決める）と、最後に振ってからの秒 */
+  private readonly episodeAxis = new Vector3(0, 0, 1);
+  private sinceKick = Infinity;
   private readonly tmp = new Vector3();
-  private readonly target = new Vector2();
 
   /** 静かな水に戻す（瓶が見えなくなったとき） */
   reset(): void {
@@ -92,18 +96,19 @@ export class WaterMotion {
     this.snowTurn.set(0, 0, 0);
     const f = this.field;
     f.omega.set(0, 0, 0);
-    f.down.set(0, -1, 0);
     f.weight = 1;
     f.stir = 0;
     f.moving = false;
     this.rimSpeed = 0;
     this.light = 0;
-    this.energy = 0;
+    this.pending.length = 0;
+    this.sinceKick = Infinity;
+    this.splashKick = 0;
   }
 
   /** 静かで、傾いてもいない（描くときに何も足さなくてよい） */
   get still(): boolean {
-    return !this.field.moving && this.slope.lengthSq() < 1e-10 && this.slopeVel.lengthSq() < 1e-10;
+    return !this.field.moving && !this.pending.length && this.slope.lengthSq() < 1e-10 && this.slopeVel.lengthSq() < 1e-10;
   }
 
   /** 水面の波立ち（uAgitation）に足す分（0〜1） */
@@ -112,88 +117,102 @@ export class WaterMotion {
   }
 
   /**
-   * dt 秒進める。input は瓶の座標の端末の動き（重力の向き・揺れ・回す速さ）。null なら端末は止まっていて、まっすぐ立っている
+   * 振った一回ぶんの勢いを与える（KICK.spread 秒かけて、ゆっくり立ち上がってから）。
+   * 振った向きの側の水面が下がり、水は逆へ取り残され、瓶の中を回りだす
    */
-  update(dt: number, input: MotionSample | null): void {
+  kick(k: Kick): void {
+    const [dx, dy, dz] = k.dir;
+    const m = k.size;
+    const slope = new Vector2();
+    const flow = new Vector3();
+    const swirl = new Vector3();
+    if (k.spin) {
+      // 回した：水は取り残されて、回した向きと逆へ回る。水面も少し揺れる
+      swirl.set(-dx, -dy, -dz).multiplyScalar(SLOSH.kickSwirl * m);
+      slope.set(-dz, dx).multiplyScalar(SLOSH.kickSlope * m * 0.4);
+    } else {
+      // 振った：振った向きの側の水面が下がる（水は逆側へ寄る）。水は逆へ取り残される
+      slope.set(-dx, -dz).multiplyScalar(SLOSH.kickSlope * m);
+      flow.set(-dx, -dy, -dz).multiplyScalar(SLOSH.kickFlow * m);
+      // 回る向きは、続けて振っている間ははじめの一回のまま（往復して打ち消しあわないように）。上 × 振った向きと逆向き
+      if (this.sinceKick > KICK.episode) {
+        this.episodeAxis.set(-dz * 0.5, 0, dx);
+        if (this.episodeAxis.lengthSq() < 1e-6) this.episodeAxis.set(0, 0, dy >= 0 ? 1 : -1);
+        this.episodeAxis.normalize();
+      }
+      swirl.copy(this.episodeAxis).multiplyScalar(SLOSH.kickSwirl * m);
+      this.sinceKick = 0;
+    }
+    this.pending.push({ t: 0, slope, flow, swirl });
+    // 水は振った向きと逆の側へ寄って、縁から跳ねる
+    if (!k.spin && Math.hypot(dx, dz) > 0.2) {
+      this.splashKick = Math.max(this.splashKick, m);
+      this.splashDir.set(-dx, -dz).normalize();
+    }
+  }
+
+  /** dt 秒進める */
+  update(dt: number): void {
     this.acc += Math.min(dt, 0.1);
     while (this.acc >= SUBSTEP) {
-      this.step(SUBSTEP, input);
+      this.step(SUBSTEP);
       this.acc -= SUBSTEP;
     }
   }
 
-  private step(dt: number, input: MotionSample | null): void {
+  private step(dt: number): void {
     const f = this.field;
-    const g = input?.gravity ?? [0, -1, 0];
-    const a = input?.accel ?? [0, 0, 0];
-    const spin = input?.spin ?? [0, 0, 0];
-
-    // 水面：重力と揺れの慣性を合わせた向きに対して水平になろうとする（減衰する振り子）
-    const ex = g[0] - a[0];
-    const ey = g[1] - a[1];
-    const ez = g[2] - a[2];
-    // 上へ強く加速して「下」がなくなった瞬間は、前の向きのまま
-    if (ey < -0.15) {
-      this.target.set(-ex / ey, -ez / ey);
-      const l = this.target.length();
-      if (l > MAX_SLOPE) this.target.multiplyScalar(MAX_SLOPE / l);
-    }
-    const w = 2 * Math.PI * SLOSH.freq;
+    this.sinceKick += dt;
     const s = this.slope;
     const sv = this.slopeVel;
-    sv.x += (w * w * (this.target.x - s.x) - 2 * SLOSH.damping * w * sv.x) * dt;
-    sv.y += (w * w * (this.target.y - s.y) - 2 * SLOSH.damping * w * sv.y) * dt;
+    const fl = this.flow;
+    const sw = this.swirl;
+    // 勢いを、ゆっくり立ち上がる形（sin² の山）で KICK.spread 秒かけて与える
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const p = this.pending[i]!;
+      const t0 = p.t / KICK.spread;
+      p.t += dt;
+      const t1 = Math.min(p.t / KICK.spread, 1);
+      const share = (x: number): number => x - Math.sin(2 * Math.PI * x) / (2 * Math.PI);
+      const k = share(t1) - share(t0);
+      sv.addScaledVector(p.slope, k);
+      fl.addScaledVector(p.flow, k);
+      sw.addScaledVector(p.swirl, k);
+      if (t1 >= 1) this.pending.splice(i, 1);
+    }
+
+    // 水面：まっすぐに戻ろうとする減衰する振り子（端末の傾きには追従しない）
+    const w = 2 * Math.PI * SLOSH.freq;
+    sv.x += (-w * w * s.x - 2 * SLOSH.damping * w * sv.x) * dt;
+    sv.y += (-w * w * s.y - 2 * SLOSH.damping * w * sv.y) * dt;
     s.addScaledVector(sv, dt);
     const sl = s.length();
-    if (sl > MAX_SLOPE * 1.3) s.multiplyScalar((MAX_SLOPE * 1.3) / sl);
-
-    // 下向き（中身が沈む・垂れる向き）は、傾きの上限までの重力の向き
-    f.down.set(g[0], g[1], g[2]).normalize();
-
-    // 一様な流れ：瓶が動くと水が取り残され、壁に止められてすぐ消える
-    const fl = this.flow;
-    fl.x += (-a[0] * SLOSH.flowGain - fl.x / SLOSH.flowDecay) * dt;
-    fl.y += (-a[1] * SLOSH.flowGain - fl.y / SLOSH.flowDecay) * dt;
-    fl.z += (-a[2] * SLOSH.flowGain - fl.z / SLOSH.flowDecay) * dt;
-    if (fl.length() > SLOSH.maxFlow) fl.setLength(SLOSH.maxFlow);
-
-    // 回る流れ：横に揺らすと、水面に近い所ほど強く取り残されて、瓶の中を縦に回る（上 × 揺れと逆向き）
-    const sw = this.swirl;
-    sw.x += (-a[2] * SLOSH.swirlGain - sw.x / SLOSH.swirlDecay) * dt;
-    sw.y += (-sw.y / SLOSH.swirlDecay) * dt;
-    sw.z += (a[0] * SLOSH.swirlGain - sw.z / SLOSH.swirlDecay) * dt;
-    // 振ると、往復は打ち消しあうが、水はかき混ぜられて回りだす（かき混ぜの強さは ShakeGate がならして渡す）。
-    // 向きは振りはじめの揺れで決める：上 × 揺れと逆向き（ほとんど画面の中で回る向き）。上下にだけ振ったときは、画面の中で回す
-    const stirIn = input?.stir ?? 0;
-    if (this.energy < SLOSH.energyFloor && stirIn >= SLOSH.energyFloor) {
-      const p = input?.push ?? [1, 0, 0];
-      this.energyAxis.set(-p[2] * 0.5, 0, p[0]);
-      if (this.energyAxis.lengthSq() < 1e-6) this.energyAxis.set(0, 0, p[1] >= 0 ? 1 : -1);
-      this.energyAxis.normalize();
+    if (sl > MAX_SLOPE) {
+      s.multiplyScalar(MAX_SLOPE / sl);
+      // 上限に当たったら、外へ向かう速さを弱める
+      const out = sv.dot(s) / MAX_SLOPE;
+      if (out > 0) sv.addScaledVector(s, (-out * 0.7) / MAX_SLOPE);
     }
-    this.energy = stirIn;
-    const drive = Math.max(0, this.energy - SLOSH.energyFloor) * SLOSH.energySwirl;
-    sw.addScaledVector(this.energyAxis, (drive / SLOSH.swirlDecay) * dt);
+
+    // 取り残された流れは壁に止められてすぐ消え、回る流れは数秒かけて消える
+    fl.multiplyScalar(Math.exp(-dt / SLOSH.flowDecay));
+    if (fl.length() > SLOSH.maxFlow) fl.setLength(SLOSH.maxFlow);
+    sw.multiplyScalar(Math.exp(-dt / SLOSH.swirlDecay));
     if (sw.length() > SLOSH.maxSwirl) sw.setLength(SLOSH.maxSwirl);
-    // 端末を回したときは、水が取り残されて逆へ回る
-    f.omega.set(sw.x - spin[0] * SLOSH.spinFollow, sw.y - spin[1] * SLOSH.spinFollow, sw.z - spin[2] * SLOSH.spinFollow);
-    if (f.omega.length() > SLOSH.maxSwirl) f.omega.setLength(SLOSH.maxSwirl);
+    f.omega.copy(sw);
 
     // 水面の縁の上下の速さ（いちばん速い向き）
     this.rimSpeed = sv.length() * INNER_R;
     if (this.rimSpeed > 1e-6) this.rimDir.copy(sv).normalize();
 
-    // 流れの強さ：揺れで取り残された水と、回る流れ（傾けただけの水面の往復と、ゆっくり回したぶんは数えない）。
-    // 上がるのはすぐ、下がるのはゆっくり
-    const speed = fl.length() + sw.length() * 0.2 + (f.omega.length() - sw.length()) * 0.05;
+    // 流れの強さ：取り残された水と、回る流れ（水面の往復は数えない）。上がるのはすぐ、下がるのはゆっくり
+    const speed = fl.length() + sw.length() * 0.2;
     const stirNow = Math.min(1, speed / SLOSH.stirFlow);
     f.stir = stirNow > f.stir ? stirNow : f.stir + (stirNow - f.stir) * (1 - Math.exp(-dt / SLOSH.stirFall));
     // 強く揺れている間、触手と口腕は軽くなる（ふわっと舞い上がる）。収まるとゆっくり重さが戻る
     this.light = f.stir > this.light ? f.stir : this.light * Math.exp(-dt / TUMBLE.lightFall);
-    // 急に下げたとき（下向きの揺れ）は、その間さらに軽い
-    const drop = Math.max(0, -(a[0] * g[0] + a[1] * g[1] + a[2] * g[2]));
-    f.weight = Math.max(0, (1 - TUMBLE.float * this.light) * (1 - Math.min(drop, 1)));
-    f.moving = speed > 1e-4 || this.light > 0.01 || this.rimSpeed > 1e-4;
+    f.weight = Math.max(0, 1 - TUMBLE.float * this.light);
+    f.moving = speed > 1e-4 || this.light > 0.01 || this.rimSpeed > 1e-4 || this.pending.length > 0;
 
     // マリンスノーのずれ：流れに運ばれ、ゆっくり元へ戻る
     const k = 1 / SLOSH.snowReturn;

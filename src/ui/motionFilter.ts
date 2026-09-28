@@ -1,23 +1,28 @@
-// 端末の動きのセンサー（DeviceMotion）の値を、瓶の座標の「重力の向き・揺れ・回す速さ」にする。DOM に依存しない。
+// 端末の動きのセンサー（DeviceMotion）の値から、振ったことを検出する。DOM に依存しない。
+// 使うのは重力を除いた加速度と回転の速さだけ。端末の傾き（重力の向き）は水面にも海月にも使わない
+// （重力は、揺れを分けるのと、加速度の符号の違いを見分けるのと、振った向きを瓶の座標に直すのにだけ使う）。
 // 瓶は画面に固定されているので、端末の座標（x が画面の右、y が上、z が手前）をそのまま瓶の座標として使う。
-// 左右の傾き（画面の中で回す向き）はそのまま、前後の傾き（画面を上へ向けて持つ角度）は持っている角度にゆっくり慣れて、
-// そこを「まっすぐ」とする。傾きは上限までにする。
-import { MOTION } from '../config';
+// 前後の傾き（画面を上へ向けて持つ角度）は持っている角度にゆっくり慣れて、そこを「まっすぐ」とする。
+import { KICK, MOTION } from '../config';
 
 export type V3 = [number, number, number];
 
-/** 瓶の座標での、今の端末の動き */
+/** 瓶の座標での、今の端末の揺れ */
 export interface MotionSample {
-  /** 重力の向き（単位ベクトル、下向き）。傾きは MOTION.maxTilt まで */
-  gravity: V3;
   /** 揺れ（重力を除いた加速度、g）。上限 MOTION.maxAccel */
   accel: V3;
-  /** 回す速さのうち、水が取り残される分（ラジアン/秒） */
+  /** 回す速さのうち、速い分（ラジアン/秒）。ゆっくり傾けた回りは入らない */
   spin: V3;
-  /** 振ってかき混ぜられている強さ（g、ならしたもの。ShakeGate が入れる）。瓶の中を回る流れのもと */
-  stir?: number;
-  /** 振りはじめの向き（単位ベクトル。ShakeGate が入れる）。回る流れの向きを決める */
-  push?: V3;
+}
+
+/** 振った一回。水に一回ぶんの勢いを与える */
+export interface Kick {
+  /** 振った向き（瓶の座標、単位ベクトル）。回したときは回す軸 */
+  dir: V3;
+  /** 勢いの大きさ（0〜1） */
+  size: number;
+  /** 回した（true）か、振った（false）か */
+  spin: boolean;
 }
 
 /** センサーの1回分の値（DeviceMotionEvent のまま。単位は m/s² と 度/秒） */
@@ -32,7 +37,7 @@ export interface RawMotion {
 
 const G = 9.80665;
 
-export const neutralSample = (): MotionSample => ({ gravity: [0, -1, 0], accel: [0, 0, 0], spin: [0, 0, 0] });
+export const quietSample = (): MotionSample => ({ accel: [0, 0, 0], spin: [0, 0, 0] });
 
 function len(v: V3): number {
   return Math.hypot(v[0], v[1], v[2]);
@@ -67,95 +72,84 @@ function rotX(v: V3, a: number): V3 {
   return [v[0], v[1] * c - v[2] * s, v[1] * s + v[2] * c];
 }
 
-/** 重力の向き（下向きの単位ベクトル）の傾きを、真下から max ラジアンまでにする */
-export function clampTilt(g: V3, max: number): V3 {
-  const h = Math.hypot(g[0], g[2]);
-  const angle = Math.atan2(h, -g[1]);
-  if (angle <= max || h < 1e-9) return g;
-  const s = Math.sin(max) / h;
-  return [g[0] * s, -Math.cos(max), g[2] * s];
-}
-
-/** 真下から dz ラジアンまでの傾きは真下に、越えた分だけ傾ける（持っている手のぶれ） */
-export function tiltDeadZone(g: V3, dz: number): V3 {
-  const h = Math.hypot(g[0], g[2]);
-  if (h < 1e-9) return g;
-  const angle = Math.atan2(h, -g[1]);
-  const a = Math.max(0, angle - dz);
-  const s = Math.sin(a) / h;
-  return [g[0] * s, -Math.cos(a), g[2] * s];
-}
-
 /**
- * 揺らしたいときだけ揺れる。揺れの強さ（ならしたもの）か回す速さがしきい値を越えたときだけ開き、
- * 揺れと回す速さを通す。開くときはゆっくり立ち上がり、弱まってしばらくしたら閉じる。
- * 傾き（重力の向き）はいつも通すが、閉じている間はゆっくりした変化だけ（軽く振ったときの手首の小さな回りで水面が揺れないように）。
- * 振ってかき混ぜられている強さ（stir）と振りはじめの向き（push）も添える
+ * 振ったことの検出。加速度か回転の速さを少しならし（一瞬の衝撃を除く）、閾値を越えたら、
+ * 越えた瞬間の向き（振りはじめの向き）と、そこから少しの間でいちばん強かったところの強さを「一回」として返す。次の一回までは少しあける。
+ * デバッグパネル用に、今の値と、少し前までのいちばん大きかった値も持つ
  */
-export class ShakeGate {
-  private energy = 0;
-  private stirred = 0;
-  private open = false;
-  private quiet = 0;
-  private readonly push: V3 = [1, 0, 0];
-  /** ならした傾き（重力の向き）。閉じている間は、ゆっくりした傾きだけを通す */
-  private gravity: V3 | null = null;
-  /** 開いている度合い（0〜1、なめらかにする前） */
-  level = 0;
+export class ShakeDetector {
+  /** 今の値（ならしたもの）：加速度（g）と回転の速さ（ラジアン/秒） */
+  accel = 0;
+  spin = 0;
+  /** 少し前（KICK.peakHold 秒）までのいちばん大きかった値 */
+  accelPeak = 0;
+  spinPeak = 0;
+  private peakAge = 0;
+  /** 最後の一回（なければ null）と、それからの秒 */
+  last: Kick | null = null;
+  sinceLast = Infinity;
+  private collecting = -1;
+  private rest = 0;
+  /** 向きをならしたもの（振りはじめの向きを取る。いちばん強いところは、振り終わりに止める向きのことがある） */
+  private readonly accelVec: V3 = [0, 0, 0];
+  private readonly spinVec: V3 = [0, 0, 0];
+  private best = { a: 0, w: 0, dirA: [1, 0, 0] as V3, dirW: [0, 0, 1] as V3 };
 
-  apply(s: MotionSample | null, dt: number): MotionSample | null {
-    if (!s) {
-      // 値が来なくなった（揺れを使わない・デバッグの揺れが終わった）：閉じきるまでは、止まっているものとして続ける
-      if (this.level <= 0 && this.stirred < 0.01) {
-        this.energy = 0;
-        this.stirred = 0;
-        this.open = false;
-        this.gravity = null;
-        return null;
-      }
-      s = { ...neutralSample(), gravity: this.gravity ? [...this.gravity] : [0, -1, 0] };
-    }
+  /** 値を1回分入れる（null なら止まっている）。一回振ったと決まったら、その一回を返す */
+  push(s: MotionSample | null, dt: number): Kick | null {
     const d = Math.max(dt, 0);
-    const a = Math.hypot(s.accel[0], s.accel[1], s.accel[2]);
-    const w = Math.hypot(s.spin[0], s.spin[1], s.spin[2]);
-    this.energy += (a - this.energy) * (1 - Math.exp(-d / MOTION.shakeSmooth));
-    const tau = a > this.stirred ? MOTION.shakeStirAttack : MOTION.shakeStirRelease;
-    this.stirred += (a - this.stirred) * (1 - Math.exp(-d / tau));
-    if (this.energy > MOTION.shakeOpen || w > MOTION.shakeSpinOpen) {
-      if (!this.open && a > 1e-6) for (let i = 0; i < 3; i++) this.push[i] = s.accel[i]! / a;
-      this.open = true;
-      this.quiet = 0;
-    } else if (this.open && this.energy < MOTION.shakeClose && w < MOTION.shakeSpinOpen * 0.3) {
-      this.quiet += d;
-      if (this.quiet > MOTION.shakeHold) this.open = false;
-    } else this.quiet = 0;
-    this.level = this.open ? Math.min(1, this.level + d / MOTION.shakeRampIn) : Math.max(0, this.level - d / MOTION.shakeRampOut);
-    // ゆっくり立ち上がってから大きくなる
-    const L = this.level;
-    const k = L * L * (3 - 2 * L);
-    // 傾き：閉じている間はゆっくりした変化だけ、開くほど速くついていく
-    const gs = (this.gravity ??= [...s.gravity]);
-    const tg = MOTION.calmTiltSmooth + (MOTION.shakeTiltSmooth - MOTION.calmTiltSmooth) * k;
-    const kg = 1 - Math.exp(-d / tg);
-    for (let i = 0; i < 3; i++) gs[i]! += (s.gravity[i]! - gs[i]!) * kg;
-    const gl = Math.hypot(gs[0], gs[1], gs[2]) || 1;
-    for (let i = 0; i < 3; i++) gs[i]! /= gl;
-    return {
-      gravity: [gs[0], gs[1], gs[2]],
-      accel: [s.accel[0] * k, s.accel[1] * k, s.accel[2] * k],
-      spin: [s.spin[0] * k, s.spin[1] * k, s.spin[2] * k],
-      stir: this.stirred * k,
-      push: [this.push[0], this.push[1], this.push[2]],
+    const m = s ?? quietSample();
+    const k = 1 - Math.exp(-d / KICK.smooth);
+    const a = len(m.accel);
+    const w = len(m.spin);
+    this.accel += (a - this.accel) * k;
+    this.spin += (w - this.spin) * k;
+    for (let i = 0; i < 3; i++) {
+      this.accelVec[i]! += (m.accel[i]! - this.accelVec[i]!) * k;
+      this.spinVec[i]! += (m.spin[i]! - this.spinVec[i]!) * k;
+    }
+    this.peakAge += d;
+    if (this.peakAge > KICK.peakHold || this.accel > this.accelPeak || this.spin > this.spinPeak) {
+      if (this.peakAge > KICK.peakHold) {
+        this.accelPeak = 0;
+        this.spinPeak = 0;
+      }
+      this.accelPeak = Math.max(this.accelPeak, this.accel);
+      this.spinPeak = Math.max(this.spinPeak, this.spin);
+      this.peakAge = 0;
+    }
+    this.sinceLast += d;
+    this.rest -= d;
+    const over = this.accel >= KICK.accel || this.spin >= KICK.spin;
+    if (this.collecting < 0) {
+      if (!over || this.rest > 0) return null;
+      // 向きは越えた瞬間（振りはじめ）のもの
+      const unit = (v: V3, fb: V3): V3 => {
+        const l = len(v);
+        return l > 1e-6 ? [v[0] / l, v[1] / l, v[2] / l] : fb;
+      };
+      this.collecting = KICK.window;
+      this.best = { a: 0, w: 0, dirA: unit(this.accelVec, [1, 0, 0]), dirW: unit(this.spinVec, [0, 0, 1]) };
+    }
+    // 強さは、少しの間でいちばん強かったところ
+    const b = this.best;
+    b.a = Math.max(b.a, this.accel);
+    b.w = Math.max(b.w, this.spin);
+    this.collecting -= d;
+    if (this.collecting > 0) return null;
+    this.collecting = -1;
+    this.rest = KICK.refractory;
+    const byAccel = b.a / KICK.accel >= b.w / KICK.spin;
+    const t = byAccel ? (b.a - KICK.accel) / (KICK.full - KICK.accel) : (b.w - KICK.spin) / (KICK.spinFull - KICK.spin);
+    const kick: Kick = {
+      dir: byAccel ? b.dirA : b.dirW,
+      size: KICK.base + (1 - KICK.base) * Math.min(Math.max(t, 0), 1),
+      spin: !byAccel,
     };
+    this.last = kick;
+    this.sinceLast = 0;
+    return kick;
   }
-}
-
-/**
- * 画面の傾き（度、左右。正で右が下がる）から、瓶の座標の重力の向き。デバッグの「傾けたままにする」つまみ
- */
-export function gravityForRoll(deg: number): V3 {
-  const a = (deg * Math.PI) / 180;
-  return [Math.sin(a), -Math.cos(a), 0];
 }
 
 export class MotionFilter {
@@ -255,14 +249,12 @@ export class MotionFilter {
     }
   }
 
-  /** 瓶の座標の、今の動き。まだ値がなければ null */
+  /** 瓶の座標の、今の揺れ。まだ値がなければ null */
   sample(): MotionSample | null {
     if (!this.down || this.pitch0 === null) return null;
     const back = -this.pitch0;
-    const maxTilt = (MOTION.maxTilt * Math.PI) / 180;
-    const g = clampTilt(tiltDeadZone(rotX(this.down, back), (MOTION.tiltDeadZone * Math.PI) / 180), maxTilt);
     const accel = clampLen(deadZone(rotX(this.linear, back), MOTION.accelDeadZone), MOTION.maxAccel);
     const spin = clampLen(deadZone(rotX(this.spin, back), MOTION.spinDeadZone), MOTION.maxSpin);
-    return { gravity: g, accel, spin };
+    return { accel, spin };
   }
 }
