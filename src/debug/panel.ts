@@ -48,8 +48,8 @@ export interface DebugPanelOptions {
   onSediment(value: number): void;
   /** 日誌をすべて未読に戻す */
   onUnread(): void;
-  /** 揺れ：表示中の瓶を一回揺らす（弱・強）、傾けたままにする（度。null でやめる）、泳ぐ個体を逆さまにして起き直るところを見る */
-  onShake(kind: 'weak' | 'strong'): void;
+  /** 揺れ：表示中の瓶を一回揺らす（弱・中・強。弱は反応しないくらい）、傾けたままにする（度。null でやめる）、泳ぐ個体を逆さまにして起き直るところを見る */
+  onShake(kind: 'weak' | 'medium' | 'strong'): void;
   onTilt(deg: number | null): void;
   onFlip(): void;
 }
@@ -186,6 +186,7 @@ export class DebugPanel {
         <div class="motion sub"></div>
         <div class="row buttons">
           <button type="button" data-shake="weak">一回揺らす（弱）</button>
+          <button type="button" data-shake="medium">（中）</button>
           <button type="button" data-shake="strong">（強）</button>
           <button type="button" class="flip">逆さま→起き直り</button>
         </div>
@@ -234,7 +235,7 @@ export class DebugPanel {
     root.querySelector('.unread')!.addEventListener('click', () => this.opts.onUnread());
     this.motionEl = root.querySelector('.motion')!;
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-shake]')) {
-      b.addEventListener('click', () => this.opts.onShake(b.dataset.shake as 'weak' | 'strong'));
+      b.addEventListener('click', () => this.opts.onShake(b.dataset.shake as 'weak' | 'medium' | 'strong'));
     }
     root.querySelector('.flip')!.addEventListener('click', () => this.opts.onFlip());
     const tiltOn = root.querySelector<HTMLInputElement>('.tilt-on')!;

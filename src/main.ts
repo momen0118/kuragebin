@@ -18,6 +18,7 @@ import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
+import { ShakeGate } from './ui/motionFilter';
 import { CreatureTag } from './ui/tag';
 import { registerServiceWorker } from './pwa/register';
 
@@ -151,6 +152,8 @@ async function main(): Promise<void> {
   // iOS は許可が要る：瓶をつついた最初のタップと、設定で「使う」を入れ直したときに訊く。断られたら設定をオフにして、以後は訊かない
   const motion = new DeviceMotionSource();
   const debugMotion = new DebugMotion();
+  /** 揺らしたいときだけ揺れる（手のぶれや軽い揺れは水に渡さない） */
+  const shakeGate = new ShakeGate();
   motion.setListening(game.state.settings.motion);
   const askMotion = (): void => {
     void motion.request().then((p) => {
@@ -174,7 +177,7 @@ async function main(): Promise<void> {
     // 読み込みやリセットで設定が変わっても合うように（許可がなければ受け取らない）
     motion.setListening(game.state.settings.motion);
     const sensor = game.state.settings.motion ? motion.sample(MOTION.staleSeconds) : null;
-    app.setMotion(debugMotion.apply(sensor));
+    app.setMotion(shakeGate.apply(debugMotion.apply(sensor), dt));
     const now = performance.now();
     for (let j = 0; j < stirReported.length; j++) {
       if (!app.takeStirred(j) || now - stirReported[j]! < SLOSH.recordInterval * 1000) continue;
@@ -481,8 +484,8 @@ async function main(): Promise<void> {
       setPhoto: (only: Parameters<App['setPhotoDebug']>[0], overlay: Parameters<App['setPhotoDebug']>[1]) =>
         app.setPhotoDebug(only, overlay),
       setLamp: (on: boolean) => app.setLampOn(on),
-      // 揺れ：一回揺らす（'weak' | 'strong'）、傾けたままにする（度。null でやめる）、逆さまにして起き直るところを見る、水の様子
-      shake: (kind: 'weak' | 'strong') => debugMotion.start(kind),
+      // 揺れ：一回揺らす（'weak' | 'medium' | 'strong'）、傾けたままにする（度。null でやめる）、逆さまにして起き直るところを見る、水の様子
+      shake: (kind: 'weak' | 'medium' | 'strong') => debugMotion.start(kind),
       tilt: (deg: number | null) => debugMotion.setTilt(deg),
       flip: () => app.flipForDebug(),
       water: () => app.waterState,

@@ -72,6 +72,57 @@ export function clampTilt(g: V3, max: number): V3 {
   return [g[0] * s, -Math.cos(max), g[2] * s];
 }
 
+/** 真下から dz ラジアンまでの傾きは真下に、越えた分だけ傾ける（持っている手のぶれ） */
+export function tiltDeadZone(g: V3, dz: number): V3 {
+  const h = Math.hypot(g[0], g[2]);
+  if (h < 1e-9) return g;
+  const angle = Math.atan2(h, -g[1]);
+  const a = Math.max(0, angle - dz);
+  const s = Math.sin(a) / h;
+  return [g[0] * s, -Math.cos(a), g[2] * s];
+}
+
+/**
+ * 揺らしたいときだけ揺れる。揺れの強さ（ならしたもの）か回す速さがしきい値を越えたときだけ開き、
+ * 揺れと回す速さを通す。弱まってしばらくしたら閉じる。開け閉めはなめらかに。傾き（重力の向き）はいつも通す
+ */
+export class ShakeGate {
+  private energy = 0;
+  private open = false;
+  private quiet = 0;
+  /** 通す割合（0〜1） */
+  level = 0;
+
+  apply(s: MotionSample | null, dt: number): MotionSample | null {
+    if (!s) {
+      this.energy = 0;
+      this.open = false;
+      this.level = 0;
+      return null;
+    }
+    const d = Math.max(dt, 0);
+    const a = Math.hypot(s.accel[0], s.accel[1], s.accel[2]);
+    const w = Math.hypot(s.spin[0], s.spin[1], s.spin[2]);
+    this.energy += (a - this.energy) * (1 - Math.exp(-d / MOTION.shakeSmooth));
+    if (this.energy > MOTION.shakeOpen || w > MOTION.shakeSpinOpen) {
+      this.open = true;
+      this.quiet = 0;
+    } else if (this.open && this.energy < MOTION.shakeClose && w < MOTION.shakeSpinOpen * 0.3) {
+      this.quiet += d;
+      if (this.quiet > MOTION.shakeHold) this.open = false;
+    } else this.quiet = 0;
+    const step = d / MOTION.shakeRamp;
+    this.level = this.open ? Math.min(1, this.level + step) : Math.max(0, this.level - step);
+    const k = this.level;
+    if (k >= 1) return s;
+    return {
+      gravity: s.gravity,
+      accel: [s.accel[0] * k, s.accel[1] * k, s.accel[2] * k],
+      spin: [s.spin[0] * k, s.spin[1] * k, s.spin[2] * k],
+    };
+  }
+}
+
 /**
  * 画面の傾き（度、左右。正で右が下がる）から、瓶の座標の重力の向き。デバッグの「傾けたままにする」つまみ
  */
@@ -182,7 +233,7 @@ export class MotionFilter {
     if (!this.down || this.pitch0 === null) return null;
     const back = -this.pitch0;
     const maxTilt = (MOTION.maxTilt * Math.PI) / 180;
-    const g = clampTilt(rotX(this.down, back), maxTilt);
+    const g = clampTilt(tiltDeadZone(rotX(this.down, back), (MOTION.tiltDeadZone * Math.PI) / 180), maxTilt);
     const accel = clampLen(deadZone(rotX(this.linear, back), MOTION.accelDeadZone), MOTION.maxAccel);
     const spin = clampLen(deadZone(rotX(this.spin, back), MOTION.spinDeadZone), MOTION.maxSpin);
     return { gravity: g, accel, spin };
