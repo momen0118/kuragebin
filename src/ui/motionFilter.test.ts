@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { MOTION } from '../config';
-import { clampTilt, gravityForRoll, MotionFilter, type V3 } from './motionFilter';
+import { clampTilt, gravityForRoll, MotionFilter, ShakeGate, type MotionSample, type V3 } from './motionFilter';
 
 const G = 9.80665;
 const deg = (d: number): number => (d * Math.PI) / 180;
@@ -39,12 +39,14 @@ describe('端末の動きを瓶の座標へ', () => {
     expect(f.sample()!.gravity[2]).toBeCloseTo(0, 2);
   });
 
-  test('左右の傾きはそのまま（慣れない）。上限の角度まで', () => {
+  test('左右の傾きはそのまま（慣れない）。手のぶれほどの傾きは除き、上限の角度まで', () => {
     const f = new MotionFilter();
-    feed(f, atRest(40, 10), MOTION.pitchAdapt * 5);
+    feed(f, atRest(40, 3), MOTION.pitchAdapt * 5);
+    expect(f.sample()!.gravity[0]).toBeCloseTo(0, 6);
+    feed(f, atRest(40, 12), 2);
     const g = f.sample()!.gravity;
-    expect(Math.atan2(g[0], -g[1]) * (180 / Math.PI)).toBeCloseTo(10, 1);
-    feed(f, atRest(40, 60), 1);
+    expect(Math.atan2(g[0], -g[1]) * (180 / Math.PI)).toBeCloseTo(12 - MOTION.tiltDeadZone, 1);
+    feed(f, atRest(40, 60), 2);
     const h = f.sample()!.gravity;
     expect(Math.atan2(h[0], -h[1]) * (180 / Math.PI)).toBeCloseTo(MOTION.maxTilt, 1);
   });
@@ -81,5 +83,38 @@ describe('端末の動きを瓶の座標へ', () => {
     expect(Math.atan2(g[0], -g[1])).toBeCloseTo(deg(20), 6);
     const r = gravityForRoll(15);
     expect(Math.atan2(r[0], -r[1])).toBeCloseTo(deg(15), 6);
+  });
+});
+
+describe('揺らしたいときだけ揺れる', () => {
+  const shake = (amp: number, freq: number, seconds: number, gate: ShakeGate): number => {
+    let peak = 0;
+    for (let t = 0; t < seconds; t += 1 / 60) {
+      const s: MotionSample = { gravity: [0, -1, 0], accel: [amp * Math.sin(2 * Math.PI * freq * t), 0, 0], spin: [0, 0, 0] };
+      const out = gate.apply(s, 1 / 60)!;
+      peak = Math.max(peak, Math.abs(out.accel[0]));
+      expect(out.gravity).toEqual([0, -1, 0]);
+    }
+    return peak;
+  };
+
+  test('手のぶれや軽い揺れは通さない', () => {
+    const gate = new ShakeGate();
+    expect(shake(0.3, 5, 3, gate)).toBe(0);
+    expect(shake(0.6, 3.5, 0.6, gate)).toBe(0);
+  });
+
+  test('しっかり振ると通し、収まるとしばらくして閉じる', () => {
+    const gate = new ShakeGate();
+    expect(shake(1.5, 3, 1, gate)).toBeGreaterThan(1);
+    expect(gate.level).toBe(1);
+    shake(0, 1, MOTION.shakeHold + MOTION.shakeSmooth * 6 + MOTION.shakeRamp + 0.1, gate);
+    expect(gate.level).toBe(0);
+  });
+
+  test('速く回したときも通す', () => {
+    const gate = new ShakeGate();
+    const out = gate.apply({ gravity: [0, -1, 0], accel: [0, 0, 0], spin: [0, 0, MOTION.shakeSpinOpen + 1] }, 0.5)!;
+    expect(out.spin[2]).toBeGreaterThan(MOTION.shakeSpinOpen);
   });
 });
