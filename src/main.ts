@@ -1,6 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { HANDLING, MOTION, NOTEBOOK, SIM, SLOSH } from './config';
+import { HANDLING, KICK, MOTION, NOTEBOOK, SIM, SLOSH } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -18,7 +18,7 @@ import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
-import { ShakeGate } from './ui/motionFilter';
+import { ShakeDetector } from './ui/motionFilter';
 import { CreatureTag } from './ui/tag';
 import { registerServiceWorker } from './pwa/register';
 
@@ -152,8 +152,8 @@ async function main(): Promise<void> {
   // iOS は許可が要る：瓶をつついた最初のタップと、設定で「使う」を入れ直したときに訊く。断られたら設定をオフにして、以後は訊かない
   const motion = new DeviceMotionSource();
   const debugMotion = new DebugMotion();
-  /** 揺らしたいときだけ揺れる（手のぶれや軽い揺れは水に渡さない） */
-  const shakeGate = new ShakeGate();
+  /** 振ったことの検出。閾値を越えたときだけ、振った一回ぶんの勢いを水に与える（端末の傾きは使わない） */
+  const shakes = new ShakeDetector();
   motion.setListening(game.state.settings.motion);
   const askMotion = (): void => {
     void motion.request().then((p) => {
@@ -177,7 +177,8 @@ async function main(): Promise<void> {
     // 読み込みやリセットで設定が変わっても合うように（許可がなければ受け取らない）
     motion.setListening(game.state.settings.motion);
     const sensor = game.state.settings.motion ? motion.sample(MOTION.staleSeconds) : null;
-    app.setMotion(shakeGate.apply(debugMotion.apply(sensor), dt));
+    const kick = shakes.push(debugMotion.apply(sensor), dt);
+    if (kick) app.kick(kick);
     const now = performance.now();
     for (let j = 0; j < stirReported.length; j++) {
       if (!app.takeStirred(j) || now - stirReported[j]! < SLOSH.recordInterval * 1000) continue;
@@ -299,7 +300,6 @@ async function main(): Promise<void> {
           onSediment: (v) => game.edit((s) => setSediment(s, slider.index, v)),
           onUnread: () => game.edit((s) => (s.journalSeen = 0)),
           onShake: (kind) => debugMotion.start(kind),
-          onTilt: (deg) => debugMotion.setTilt(deg),
           onFlip: () => app.flipForDebug(),
         })
       : null;
@@ -335,7 +335,12 @@ async function main(): Promise<void> {
     const until = s.jars[slider.index]!.stirredUntil;
     const left = until !== null ? until - (s.time + s.pending) : 0;
     const sim = left > 0 ? `水が動いている 残り${Math.ceil(left / 60)}分` : '水は静か';
-    return `${sensor}　流れ ${w.stir.toFixed(2)}・傾き ${w.tiltDeg.toFixed(1)}°・縁 ${w.rim.toFixed(2)}${w.splash ? '・飛沫' : ''}${w.dust > 0 ? `・舞う ${w.dust.toFixed(2)}` : ''}${w.righting ? `・起き直り中 ${w.righting}` : ''}　${sim}`;
+    // 今の値（少し前までのいちばん大きかった値）と閾値。閾値を越えたときだけ、振った一回になる
+    const k = shakes.last;
+    const last = k ? `最後に振った ${shakes.sinceLast < 60 ? `${Math.floor(shakes.sinceLast)}秒前` : '1分以上前'}・${k.spin ? '回した' : '振った'}・勢い ${k.size.toFixed(2)}` : 'まだ振っていない';
+    const now = `加速度 ${shakes.accel.toFixed(2)}g（最大 ${shakes.accelPeak.toFixed(2)}）／閾値 ${KICK.accel}g　回転 ${shakes.spin.toFixed(1)}（最大 ${shakes.spinPeak.toFixed(1)}）／閾値 ${KICK.spin}`;
+    const water = `流れ ${w.stir.toFixed(2)}・水面 ${w.tiltDeg.toFixed(1)}°・縁 ${w.rim.toFixed(2)}${w.splash ? '・飛沫' : ''}${w.dust > 0 ? `・舞う ${w.dust.toFixed(2)}` : ''}${w.righting ? `・起き直り中 ${w.righting}` : ''}`;
+    return `${sensor}\n${now}\n${last}\n${water}　${sim}`;
   };
   if (panel) {
     refreshPanel = (): void => {
@@ -484,9 +489,8 @@ async function main(): Promise<void> {
       setPhoto: (only: Parameters<App['setPhotoDebug']>[0], overlay: Parameters<App['setPhotoDebug']>[1]) =>
         app.setPhotoDebug(only, overlay),
       setLamp: (on: boolean) => app.setLampOn(on),
-      // 揺れ：一回揺らす（'weak' | 'medium' | 'strong'）、傾けたままにする（度。null でやめる）、逆さまにして起き直るところを見る、水の様子
+      // 揺れ：一回揺らす（'weak' | 'medium' | 'strong'。弱は閾値を越えない）、逆さまにして起き直るところを見る、水の様子
       shake: (kind: 'weak' | 'medium' | 'strong') => debugMotion.start(kind),
-      tilt: (deg: number | null) => debugMotion.setTilt(deg),
       flip: () => app.flipForDebug(),
       water: () => app.waterState,
       motionText: () => motionText(),

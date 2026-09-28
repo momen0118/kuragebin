@@ -25,7 +25,7 @@ import { BELL, CUP, FOOD, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SLOSH, STIRRE
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState } from '../sim/state';
-import type { MotionSample } from '../ui/motionFilter';
+import type { Kick } from '../ui/motionFilter';
 import { Bloom } from './bloom';
 import { coverTransform, solvePhotoCamera, type PhotoCamera } from './camera';
 import { createComposite } from './composite';
@@ -140,8 +140,6 @@ export class App {
   private readonly feeding: Feeding;
   /** 瓶ごとの、揺らされた水（水面の傾き・流れ）。動かすのは見えている瓶だけ */
   private readonly waters: WaterMotion[];
-  /** 端末の動き（瓶の座標）。揺れを使わないとき・センサーがないときは null */
-  private motion: MotionSample | null = null;
   /** 揺らしたときだけ出るもの（飛沫と舞い上がる堆積）。表示中の瓶の分だけ */
   private readonly splash: Splash;
   private readonly dust: StirredSediment;
@@ -636,11 +634,13 @@ export class App {
   }
 
   /**
-   * 端末の動き（瓶の座標の重力の向き・揺れ・回す速さ）。null なら端末は止まっていて、まっすぐ立っている。
-   * 傾きは見えている瓶すべてに、揺れは表示中の瓶だけにかかる。カップかスポイトを使っている間は、どちらもかけない
+   * 振った一回ぶんの勢いを、表示中の瓶の水に与える（ほかの瓶は揺れない）。
+   * カップかスポイトを使っている間と、瓶を切り替えている途中は何もしない。与えたら true
    */
-  setMotion(sample: MotionSample | null): void {
-    this.motion = sample;
+  kick(k: Kick): boolean {
+    if (this.handsBusy || !this.atRest) return false;
+    this.waters[this.jarIndex]!.kick(k);
+    return true;
   }
 
   /** 瓶 jar が揺らされたか（読むと消える）。sim に記録する */
@@ -684,17 +684,15 @@ export class App {
     this.shared.uTime.value = this.time;
     // 動かすのは見えている瓶だけ。ほかの瓶の個体は止めておく（状態はシミュレーションで進む）
     const vis = this.visibleJars();
-    const hands = this.handsBusy;
     const shown = this.jarIndex;
     this.waters.forEach((w, i) => {
       if (!vis.includes(i)) w.reset();
     });
     for (const i of vis) {
       const creatures = this.jars[i]!;
-      // 揺らされた水：傾きは見えている瓶すべてに、揺れは表示中の瓶だけに
+      // 揺らされた水（振った勢いは表示中の瓶だけが受ける）
       const water = this.waters[i]!;
-      const m = hands ? null : this.motion;
-      water.update(d, m && i !== shown ? { gravity: m.gravity, accel: [0, 0, 0], spin: [0, 0, 0] } : m);
+      water.update(d);
       if (water.field.stir >= SLOSH.recordAt) this.stirred[i] = true;
       const field = water.still ? null : water.field;
       creatures.update(d, this.placeJarCamera(i), field);
