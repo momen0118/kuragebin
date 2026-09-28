@@ -800,6 +800,15 @@ body {
   margin-bottom: 14px;
 }
 
+/* 版（新しい版が届いているかを見分ける）。小さく淡く */
+.leaf .settings .version {
+  margin-top: 10px;
+  font-size: 10px;
+  opacity: 0.45;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
 /* 選んでいないほうは淡く、下線なし */
 .data-buttons.choice button[aria-pressed='false'] {
   opacity: 0.45;

@@ -14,6 +14,10 @@ export interface MotionSample {
   accel: V3;
   /** 回す速さのうち、水が取り残される分（ラジアン/秒） */
   spin: V3;
+  /** 振ってかき混ぜられている強さ（g、ならしたもの。ShakeGate が入れる）。瓶の中を回る流れのもと */
+  stir?: number;
+  /** 振りはじめの向き（単位ベクトル。ShakeGate が入れる）。回る流れの向きを決める */
+  push?: V3;
 }
 
 /** センサーの1回分の値（DeviceMotionEvent のまま。単位は m/s² と 度/秒） */
@@ -84,41 +88,53 @@ export function tiltDeadZone(g: V3, dz: number): V3 {
 
 /**
  * 揺らしたいときだけ揺れる。揺れの強さ（ならしたもの）か回す速さがしきい値を越えたときだけ開き、
- * 揺れと回す速さを通す。弱まってしばらくしたら閉じる。開け閉めはなめらかに。傾き（重力の向き）はいつも通す
+ * 揺れと回す速さを通す。開くときはゆっくり立ち上がり、弱まってしばらくしたら閉じる。傾き（重力の向き）はいつも通す。
+ * 振ってかき混ぜられている強さ（stir）と振りはじめの向き（push）も添える
  */
 export class ShakeGate {
   private energy = 0;
+  private stirred = 0;
   private open = false;
   private quiet = 0;
-  /** 通す割合（0〜1） */
+  private readonly push: V3 = [1, 0, 0];
+  /** 開いている度合い（0〜1、なめらかにする前） */
   level = 0;
 
   apply(s: MotionSample | null, dt: number): MotionSample | null {
     if (!s) {
-      this.energy = 0;
-      this.open = false;
-      this.level = 0;
-      return null;
+      // 値が来なくなった（揺れを使わない・デバッグの揺れが終わった）：閉じきるまでは、止まっているものとして続ける
+      if (this.level <= 0 && this.stirred < 0.01) {
+        this.energy = 0;
+        this.stirred = 0;
+        this.open = false;
+        return null;
+      }
+      s = neutralSample();
     }
     const d = Math.max(dt, 0);
     const a = Math.hypot(s.accel[0], s.accel[1], s.accel[2]);
     const w = Math.hypot(s.spin[0], s.spin[1], s.spin[2]);
     this.energy += (a - this.energy) * (1 - Math.exp(-d / MOTION.shakeSmooth));
+    const tau = a > this.stirred ? MOTION.shakeStirAttack : MOTION.shakeStirRelease;
+    this.stirred += (a - this.stirred) * (1 - Math.exp(-d / tau));
     if (this.energy > MOTION.shakeOpen || w > MOTION.shakeSpinOpen) {
+      if (!this.open && a > 1e-6) for (let i = 0; i < 3; i++) this.push[i] = s.accel[i]! / a;
       this.open = true;
       this.quiet = 0;
     } else if (this.open && this.energy < MOTION.shakeClose && w < MOTION.shakeSpinOpen * 0.3) {
       this.quiet += d;
       if (this.quiet > MOTION.shakeHold) this.open = false;
     } else this.quiet = 0;
-    const step = d / MOTION.shakeRamp;
-    this.level = this.open ? Math.min(1, this.level + step) : Math.max(0, this.level - step);
-    const k = this.level;
-    if (k >= 1) return s;
+    this.level = this.open ? Math.min(1, this.level + d / MOTION.shakeRampIn) : Math.max(0, this.level - d / MOTION.shakeRampOut);
+    // ゆっくり立ち上がってから大きくなる
+    const L = this.level;
+    const k = L * L * (3 - 2 * L);
     return {
       gravity: s.gravity,
       accel: [s.accel[0] * k, s.accel[1] * k, s.accel[2] * k],
       spin: [s.spin[0] * k, s.spin[1] * k, s.spin[2] * k],
+      stir: this.stirred * k,
+      push: [this.push[0], this.push[1], this.push[2]],
     };
   }
 }

@@ -87,6 +87,7 @@ describe('端末の動きを瓶の座標へ', () => {
 });
 
 describe('揺らしたいときだけ揺れる', () => {
+  /** 横に振る（amp g、freq Hz、seconds 秒）。通した揺れのいちばん大きいところを返す */
   const shake = (amp: number, freq: number, seconds: number, gate: ShakeGate): number => {
     let peak = 0;
     for (let t = 0; t < seconds; t += 1 / 60) {
@@ -97,24 +98,59 @@ describe('揺らしたいときだけ揺れる', () => {
     }
     return peak;
   };
+  const still = (seconds: number, gate: ShakeGate): void => void shake(0, 1, seconds, gate);
 
-  test('手のぶれや軽い揺れは通さない', () => {
+  test('手のぶれ・歩きながら持つ・軽く揺らすくらいでは通さない', () => {
     const gate = new ShakeGate();
     expect(shake(0.3, 5, 3, gate)).toBe(0);
-    expect(shake(0.6, 3.5, 0.6, gate)).toBe(0);
+    expect(shake(0.45, 2, 5, gate)).toBe(0);
+    expect(shake(0.7, 3.5, 0.6, gate)).toBe(0);
   });
 
-  test('しっかり振ると通し、収まるとしばらくして閉じる', () => {
+  test('机に置いたときの一瞬の衝撃では通さない', () => {
     const gate = new ShakeGate();
-    expect(shake(1.5, 3, 1, gate)).toBeGreaterThan(1);
-    expect(gate.level).toBe(1);
-    shake(0, 1, MOTION.shakeHold + MOTION.shakeSmooth * 6 + MOTION.shakeRamp + 0.1, gate);
+    const hit: MotionSample = { gravity: [0, -1, 0], accel: [0, 3, 0], spin: [0, 0, 0] };
+    gate.apply(hit, 1 / 60);
+    gate.apply(hit, 1 / 60);
+    still(1, gate);
     expect(gate.level).toBe(0);
+  });
+
+  test('手首で一回ぐっと振ると開き、少し遅れて水が回りだすほどかき混ぜる', () => {
+    const gate = new ShakeGate();
+    shake(2.2, 4, 0.25, gate);
+    expect(gate.level).toBeGreaterThan(0);
+    let stir = 0;
+    for (let t = 0; t < 1; t += 1 / 60) stir = Math.max(stir, gate.apply({ gravity: [0, -1, 0], accel: [0, 0, 0], spin: [0, 0, 0] }, 1 / 60)!.stir!);
+    expect(stir).toBeGreaterThan(0.3);
+  });
+
+  test('開いたときはゆっくり立ち上がる。収まるとしばらくして閉じる', () => {
+    const gate = new ShakeGate();
+    const first = { value: -1 };
+    for (let t = 0; t < 1.5; t += 1 / 60) {
+      const out = gate.apply({ gravity: [0, -1, 0], accel: [1.5 * Math.sin(2 * Math.PI * 3 * t), 0, 0], spin: [0, 0, 0] }, 1 / 60)!;
+      if (gate.level > 0 && first.value < 0) first.value = Math.abs(out.accel[0]) / Math.max(Math.abs(1.5 * Math.sin(2 * Math.PI * 3 * t)), 1e-6);
+    }
+    expect(first.value).toBeLessThan(0.05);
+    expect(gate.level).toBe(1);
+    still(MOTION.shakeHold + MOTION.shakeSmooth * 6 + MOTION.shakeRampOut + 0.1, gate);
+    expect(gate.level).toBe(0);
+  });
+
+  test('値が来なくなっても（デバッグの揺れが終わっても）、閉じきるまで続ける', () => {
+    const gate = new ShakeGate();
+    shake(2.2, 4, 0.25, gate);
+    const out = gate.apply(null, 1 / 60);
+    expect(out).not.toBeNull();
+    for (let t = 0; t < 5; t += 1 / 60) gate.apply(null, 1 / 60);
+    expect(gate.apply(null, 1 / 60)).toBeNull();
   });
 
   test('速く回したときも通す', () => {
     const gate = new ShakeGate();
-    const out = gate.apply({ gravity: [0, -1, 0], accel: [0, 0, 0], spin: [0, 0, MOTION.shakeSpinOpen + 1] }, 0.5)!;
-    expect(out.spin[2]).toBeGreaterThan(MOTION.shakeSpinOpen);
+    let out: MotionSample | null = null;
+    for (let t = 0; t < 1; t += 1 / 60) out = gate.apply({ gravity: [0, -1, 0], accel: [0, 0, 0], spin: [0, 0, MOTION.shakeSpinOpen + 1] }, 1 / 60);
+    expect(out!.spin[2]).toBeGreaterThan(MOTION.shakeSpinOpen);
   });
 });

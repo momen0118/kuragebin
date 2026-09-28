@@ -1206,15 +1206,23 @@ export const MOTION = {
   /**
    * 揺らしたいときだけ揺れる：揺れの強さ（g、shakeSmooth 秒でならしたもの）が shakeOpen を越えるか、
    * 回す速さが shakeSpinOpen（ラジアン/秒）を越えたときだけ、揺れと回す速さを水に渡す。
-   * shakeClose を下回って shakeHold 秒たったら閉じる。開け閉めは shakeRamp 秒でなめらかに。
-   * 持って眺めているときの手のぶれや、軽く揺れたくらいでは水は動かない
+   * 手首で一回ぐっと振ったくらいで開き、歩きながら持つ・机に置くくらいでは開かない。
+   * shakeClose を下回って shakeHold 秒たったら閉じる。
+   * 開いたときは、shakeRampIn 秒かけてゆっくり立ち上がってから大きくなる（いきなり傾くとスイッチが入ったように見えるので）。閉じるのは shakeRampOut 秒
    */
   shakeSmooth: 0.15,
-  shakeOpen: 0.5,
-  shakeClose: 0.2,
-  shakeHold: 0.3,
-  shakeSpinOpen: 3,
-  shakeRamp: 0.12,
+  shakeOpen: 0.75,
+  shakeClose: 0.3,
+  shakeHold: 0.6,
+  shakeSpinOpen: 3.5,
+  shakeRampIn: 0.5,
+  shakeRampOut: 0.35,
+  /**
+   * 振ったあとも水はしばらくかき混ぜられている：揺れの強さを、上がるのは shakeStirAttack 秒、下がるのは shakeStirRelease 秒でならし、
+   * 瓶の中を回る流れのもとにする（SLOSH.energySwirl）。一回ぐっと振っただけでも、少し遅れて水が回りだす
+   */
+  shakeStirAttack: 0.08,
+  shakeStirRelease: 0.9,
   /** しばらく値が来なければ、センサーはないものとする（秒） */
   staleSeconds: 0.5,
   /** 画面が上下逆さの向きに重力が続いたら、加速度の符号が逆の端末とみなす（秒）。縦画面で逆さに持つことはまずない */
@@ -1237,10 +1245,9 @@ export const SLOSH = {
   swirlGain: 4.5,
   swirlDecay: 2.2,
   /**
-   * 何往復も振ったとき：往復の揺れは打ち消しあって水をあまり動かさないので、揺れの強さ（g、ならしたもの）から回る流れを作る。
-   * energyFloor（g）より強い分に energySwirl を掛けた速さ（ラジアン/秒）で、振りはじめの向きに回る。ならす時間（秒）
+   * 振ったとき：往復の揺れは打ち消しあって水をあまり動かさないので、揺れの強さ（g、MotionSample.stir）から回る流れを作る。
+   * energyFloor（g）より強い分に energySwirl を掛けた速さ（ラジアン/秒）で、振りはじめの向きに回る
    */
-  energySmooth: 0.3,
   energyFloor: 0.25,
   energySwirl: 3.2,
   /** 端末を回したとき、水が取り残されて逆へ回る割合 */
@@ -1341,12 +1348,12 @@ export const DEBUG = {
   /** ボタンで一気に進める時間（秒） */
   jumps: [3600, 86400, 7 * 86400, 30 * 86400],
   /**
-   * センサーなしで揺れを試す：一回揺らす（弱・中・強。弱は反応しないくらいの揺れ）。向き（瓶の座標）、強さ（g）、往復の速さ（Hz）、続く時間（秒）。
+   * センサーなしで揺れを試す：一回揺らす（弱・中・強。弱は反応しないくらいの揺れ、中は手首で一回ぐっと振る）。向き（瓶の座標）、強さ（g）、往復の速さ（Hz）、続く時間（秒）。
    * 強いほうは斜め下へも振る（瓶を急に下げる動きを含む）
    */
   shakes: {
     weak: { dir: [1, 0.1, 0] as Vec3, accel: 0.7, freq: 3.5, seconds: 0.6 },
-    medium: { dir: [1, -0.2, 0.1] as Vec3, accel: 1.4, freq: 3.2, seconds: 0.9 },
+    medium: { dir: [1, -0.2, 0.1] as Vec3, accel: 2.2, freq: 4, seconds: 0.25 },
     strong: { dir: [1, -0.6, 0.25] as Vec3, accel: 2.4, freq: 3, seconds: 1.4 },
   },
   /** 傾けたままにするつまみの範囲（度）と、傾ける速さ（度/秒。手で傾けるくらい） */

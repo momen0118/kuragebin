@@ -242,7 +242,8 @@ export class Notebook {
         <div class="confirm" hidden><p>今の瓶は、読み込んだ中身に置き換わる。</p><div class="data-buttons"><button type="button" class="import-yes">読み込む</button><button type="button" class="import-no">やめる</button></div></div>
         <p class="note" aria-live="polite"></p>
         <input type="file" class="file" accept="application/json,.json" hidden>
-      </div></div></div>`;
+      </div>
+      <p class="version">版 ${esc(__APP_VERSION__)}</p></div></div>`;
   }
 
   /** ページの傾き（0 で平ら、180 でリングの向こうへめくれている）。90 を越えると裏になって見えない */
