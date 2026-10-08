@@ -6,7 +6,7 @@ import { Game } from './game';
 import { App } from './render/app';
 import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
-import { clearFed, clearMeals, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature } from './sim/edit';
+import { clearFed, clearMeals, editGenes, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, type GeneEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
 import type { GameState, Stage } from './sim/state';
 import { Carry } from './ui/carry';
@@ -292,6 +292,7 @@ async function main(): Promise<void> {
           onDiscs: (id, n) => game.edit((s, rules) => setDiscs(s, id, n, rules)),
           onRemove: (id) => game.edit((s, rules) => removeCreature(s, id, rules)),
           onFill: (n) => game.edit((s, rules) => fillAdults(s, slider.index, n, rules)),
+          onGenes: (id, e) => game.edit((s) => editGenes(s, id, e)),
           onCap: (n) => game.setRules({ maxSwimmers: n }),
           onRealSize: (on) => setRealSize(on),
           onFeed: () => void feedNow(true),
@@ -451,6 +452,8 @@ async function main(): Promise<void> {
       settle: () => slider.release(0),
       jarIndex: () => slider.index,
       setStage: (id: number, stage: Stage) => edit((s, rules) => setStage(s, id, stage, rules)),
+      // 遺伝子：'base'（基準）・'generations'（6世代ばらす）・{ set: { hue: 1, leaves: 5, ... } }
+      genes: (id: number, e: GeneEdit) => edit((s) => editGenes(s, id, e)),
       setProgress: (id: number, p: number) => edit((s) => setProgress(s, id, p)),
       setDiscs: (id: number, n: number) => edit((s, rules) => setDiscs(s, id, n, rules)),
       remove: (id: number) => edit((s, rules) => removeCreature(s, id, rules)),

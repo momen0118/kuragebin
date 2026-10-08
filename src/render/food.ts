@@ -19,6 +19,7 @@ import {
 import { BELL, FOOD, JAR, WATER } from '../config';
 import type { Rng } from '../sim/rng';
 import type { Jellyfish } from './jelly/jellyfish';
+import { angleDiff } from './jelly/individual';
 import type { Polyp } from './jelly/polyp';
 import { LAMP_GLSL, lampUniforms } from './lamp';
 import common from './shaders/common.glsl?raw';
@@ -32,7 +33,7 @@ const WALL_R = INNER_R - 0.008;
 const FLOOR_Y = JAR.bottomThickness + 0.003;
 const TOP_Y = JAR.waterLevel - 0.006;
 /** 四つ葉（胃のふくろ）の向き（縁弁の間）と、傘のローカルでの四つ葉の中心・輪郭の半径（bell.ts の形から） */
-const POUCH = [0.25, 0.75, 1.25, 1.75].map((k) => k * Math.PI);
+/** 四つ葉の中心までの距離と、蹄鉄の半径（傘の半径 = 1、個体差の倍率 1 のとき。bell.ts の生殖腺と同じ） */
 const POUCH_CENTER = 0.157;
 const POUCH_RING = 0.087;
 /** 小さな個体でも、寄せる範囲と捕まえる距離はこれより小さくしない（瓶の高さ単位） */
@@ -410,17 +411,17 @@ export class Food {
       g.a.set(f.mr * 0.97 * dx, f.my, f.mr * 0.97 * dz);
     }
     g.b.set(0.42 * dx, f.my - 0.08, 0.42 * dz);
-    // いちばん近い四つ葉の、輪郭の外側の弧の上（色づくのは輪郭だけ）。四つ葉のまだないエフィラは真ん中の胃
+    // いちばん近い四つ葉（個体によって3つ・5つ、少し不揃い）の、輪郭の外側の弧の上（色づくのは輪郭だけ）。
+    // 四つ葉のまだないエフィラは真ん中の胃
     const th = Math.atan2(dz, dx);
-    let best = POUCH[0]!;
-    for (const a of POUCH) if (Math.abs(Math.atan2(Math.sin(th - a), Math.cos(th - a))) < Math.abs(Math.atan2(Math.sin(th - best), Math.cos(th - best)))) best = a;
+    const leaves = f.jelly.leaves;
+    let best = leaves[0]!;
+    for (const l of leaves) if (Math.abs(angleDiff(th, l.angle)) < Math.abs(angleDiff(th, best.angle))) best = l;
     const k = f.jelly.gonads;
-    const along = best + r.range(-1, 1);
-    g.c.set(
-      k * (POUCH_CENTER * Math.cos(best) + POUCH_RING * Math.cos(along)),
-      0.29,
-      k * (POUCH_CENTER * Math.sin(best) + POUCH_RING * Math.sin(along)),
-    );
+    const along = best.angle + r.range(-1, 1);
+    const center = POUCH_CENTER * best.offset;
+    const ring = POUCH_RING * best.size;
+    g.c.set(k * (center * Math.cos(best.angle) + ring * Math.cos(along)), 0.29, k * (center * Math.sin(best.angle) + ring * Math.sin(along)));
     f.eater.stomach.catch();
   }
 

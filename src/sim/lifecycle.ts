@@ -4,6 +4,7 @@
 // advance.ts の1刻みごとに呼ぶ（状態をその場で書き換える）。
 import { LIFE, type LifeRules } from '../config';
 import { stepCare } from './care';
+import { BASE_GENES, inheritGenes } from './genes';
 import { growthRate } from './growth';
 import { record } from './journal';
 import type { Rng } from './rng';
@@ -75,6 +76,7 @@ export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: 
     spot: null,
     discs: 0,
     meal: null,
+    genes: { ...BASE_GENES },
     ...extra,
   };
 }
@@ -143,6 +145,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
         if (c.progress >= 1 && counts.polyps < rules.maxPolyps) {
           const polyp = createCreature(state, 'polyp', rng, rules, {
             parent: c.id,
+            genes: inheritGenes(c.genes, rng, false),
             spot: pickSpot(spotsIn(jar, born), rng, rules),
             arrivedWallTime: wall,
           });
@@ -178,7 +181,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
           counts.pending -= c.discs;
           const ids: number[] = [];
           for (let k = 0; k < n; k++) {
-            const e = createCreature(state, 'ephyra', rng, rules, { parent: c.id, arrivedWallTime: wall });
+            const e = createCreature(state, 'ephyra', rng, rules, { parent: c.id, arrivedWallTime: wall, genes: inheritGenes(c.genes, rng, true) });
             born.push(e);
             ids.push(e.id);
           }

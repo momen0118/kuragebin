@@ -5,6 +5,7 @@
 // 状態の表示・リセット・書き出し・読み込み。
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
+import type { GeneEdit } from '../sim/edit';
 import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
 import { downloadText, exportFilename } from '../ui/download';
 import { STAGE_LABELS } from '../ui/labels';
@@ -32,6 +33,8 @@ export interface DebugPanelOptions {
   onProgress(id: number, progress: number): void;
   onDiscs(id: number, discs: number): void;
   onRemove(id: number): void;
+  /** 遺伝子を書き換える（選んでいる個体） */
+  onGenes(id: number, edit: GeneEdit): void;
   /** 泳ぐ個体を成体 n 匹にする（混み具合の確認） */
   onFill(n: number): void;
   /** 泳ぐ個体の上限を差し替える（保存しない） */
@@ -114,6 +117,7 @@ export class DebugPanel {
   private readonly progressEl: HTMLInputElement;
   private readonly capSel: HTMLSelectElement;
   private readonly feedEl: HTMLDivElement;
+  private readonly genesEl: HTMLDivElement;
   private readonly motionEl: HTMLDivElement;
   /** 選んでいる個体と、進みのつまみを動かしている最中か */
   private selected: number | null = null;
@@ -158,6 +162,19 @@ export class DebugPanel {
           <button type="button" class="remove">消す</button>
         </div>
         <input class="progress" type="range" min="0" max="1" step="0.001" value="0" aria-label="進み">
+        <div class="genes sub"></div>
+        <div class="row buttons">
+          <button type="button" data-genes="base">基準</button>
+          <button type="button" data-genes="generations">6世代ばらす</button>
+          <button type="button" data-genes='{"hue":-1}'>うす青</button>
+          <button type="button" data-genes='{"hue":1}'>うす桃</button>
+        </div>
+        <div class="row buttons">
+          <button type="button" data-genes='{"leaves":3}'>三つ葉</button>
+          <button type="button" data-genes='{"leaves":4}'>四つ葉</button>
+          <button type="button" data-genes='{"leaves":5}'>五つ葉</button>
+          <button type="button" data-genes='{"warp":1,"ragged":1,"leafJitter":1}'>崩し最大</button>
+        </div>
         <div class="row buttons">
           <button type="button" data-fill="4">成体4</button>
           <button type="button" data-fill="5">5</button>
@@ -270,6 +287,14 @@ export class DebugPanel {
       b.addEventListener('click', () => this.opts.onFill(Number(b.dataset.fill)));
     }
     this.capSel.addEventListener('change', () => this.opts.onCap(Number(this.capSel.value)));
+    this.genesEl = root.querySelector('.genes')!;
+    for (const b of root.querySelectorAll<HTMLButtonElement>('[data-genes]')) {
+      b.addEventListener('click', () => {
+        if (this.selected === null) return;
+        const v = b.dataset.genes!;
+        this.opts.onGenes(this.selected, v === 'base' || v === 'generations' ? v : { set: JSON.parse(v) });
+      });
+    }
     const real = root.querySelector<HTMLInputElement>('.real')!;
     real.addEventListener('change', () => this.opts.onRealSize(real.checked));
 
@@ -373,6 +398,10 @@ export class DebugPanel {
     });
     const c = jar.creatures.find((x) => x.id === this.selected);
     if (c) {
+      const g = c.genes;
+      const f = (v: number): string => (v >= 0 ? '+' : '') + v.toFixed(2);
+      const genes = `色 ${f(g.hue)}（−青 +桃）・透け ${f(g.clarity)}・触手 ${f(g.tentacle)}・拍動 ${f(g.tempo)}　崩し いびつ ${g.warp.toFixed(2)}・欠け ${g.ragged.toFixed(2)}・葉 ${g.leafJitter.toFixed(2)}　${g.leaves}つ葉`;
+      if (this.genesEl.textContent !== genes) this.genesEl.textContent = genes;
       this.stageSel.value = c.stage;
       this.discsSel.disabled = c.stage !== 'strobila';
       if (c.stage === 'strobila') this.discsSel.value = String(c.discs);

@@ -3,6 +3,7 @@
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
 import { Group, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
 import { EPHYRA, SWIM } from '../config';
+import { genesKey } from '../sim/genes';
 import { createRng } from '../sim/rng';
 import { isSwimmer, type Creature, type JarState } from '../sim/state';
 import type { Eater } from './food';
@@ -14,6 +15,8 @@ import type { SharedUniforms } from './uniforms';
 
 interface SwimmerView {
   kind: 'swimmer';
+  /** 作ったときの遺伝子（変わったら作り直す。確認用に書き換えたとき） */
+  genes: string;
   jelly: Jellyfish;
   neighbor: Neighbor;
   /** 皿から離れるのを待っている（まだ描かない） */
@@ -22,6 +25,7 @@ interface SwimmerView {
 
 interface PolypView {
   kind: 'polyp';
+  genes: string;
   polyp: Polyp;
 }
 
@@ -70,7 +74,7 @@ export class Creatures {
       if (this.carried.has(c.id)) continue;
       let v = this.views.get(c.id);
       const kind = isSwimmer(c.stage) ? 'swimmer' : 'polyp';
-      if (v && v.kind !== kind) {
+      if (v && (v.kind !== kind || v.genes !== genesKey(c.genes))) {
         this.remove(c.id);
         v = undefined;
       }
@@ -84,9 +88,9 @@ export class Creatures {
     const rng = createRng(c.seed);
     let v: View;
     if (isSwimmer(c.stage)) {
-      const jelly = new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius());
+      const jelly = new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius(), c.genes, c.seed);
       jelly.group.traverse((o) => o.layers.enable(this.glowLayer));
-      const view: SwimmerView = { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false };
+      const view: SwimmerView = { kind: 'swimmer', genes: genesKey(c.genes), jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false };
       // 皿を放しているストロビラの子なら、その皿が離れるまで待ってから泳ぎ出す
       const parent = c.parent !== null ? this.views.get(c.parent) : undefined;
       if (c.stage === 'ephyra' && parent?.kind === 'polyp' && parent.polyp.isReleasing) {
@@ -104,8 +108,8 @@ export class Creatures {
       v = view;
       this.group.add(jelly.group);
     } else {
-      const polyp = new Polyp(this.shared, rng, c.spot ?? [0, 0]);
-      v = { kind: 'polyp', polyp };
+      const polyp = new Polyp(this.shared, rng, c.spot ?? [0, 0], c.genes.hue);
+      v = { kind: 'polyp', genes: genesKey(c.genes), polyp };
       this.group.add(polyp.group);
     }
     this.views.set(c.id, v);
@@ -333,7 +337,7 @@ export class Creatures {
   /** カップから出ていった個体を、この瓶の個体にする（動きはそのまま） */
   adopt(id: number, jelly: Jellyfish): void {
     this.carried.delete(id);
-    this.views.set(id, { kind: 'swimmer', jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false });
+    this.views.set(id, { kind: 'swimmer', genes: jelly.genesKey, jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false });
     this.group.add(jelly.group);
   }
 

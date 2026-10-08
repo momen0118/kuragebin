@@ -1,6 +1,7 @@
 // 保存データの版とマイグレーション。古い版のデータは1版ずつ順に今の形へ直す。
 // 形が合わないデータは読み込まない（呼び出し側で新しい状態から始める）。
 import { CARE, LIFE } from '../config';
+import { BASE_GENES, sanitizeGenes } from '../sim/genes';
 import { DEFAULT_SETTINGS, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Stage } from '../sim/state';
 
 type Raw = Record<string, unknown>;
@@ -80,6 +81,17 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
     const jars = Array.isArray(d.jars) ? d.jars : [];
     return { ...d, jars: jars.map((jar: unknown) => (isObject(jar) ? { stirredUntil: null, ...jar } : jar)) };
   },
+  // 6：個体差（遺伝子）。それまでの個体は基準のまま（今の見た目）
+  5: (d) => {
+    const jars = Array.isArray(d.jars) ? d.jars : [];
+    return {
+      ...d,
+      jars: jars.map((jar: unknown) => {
+        if (!isObject(jar) || !Array.isArray(jar.creatures)) return jar;
+        return { ...jar, creatures: jar.creatures.map((c: unknown) => (isObject(c) ? { genes: { ...BASE_GENES }, ...c } : c)) };
+      }),
+    };
+  },
 };
 
 export class SchemaError extends Error {}
@@ -149,6 +161,8 @@ function validate(d: Raw): GameState {
       }
       // 餌は読めなければ食べていないことにする（胃の色と成長の早まりだけなので）
       if (!isMeal(c.meal)) c.meal = null;
+      // 遺伝子は読めない値だけ基準にする
+      c.genes = sanitizeGenes(c.genes);
       // 来た日が読めなければ、始めた日にする
       if (!isNumber(c.arrivedWallTime)) c.arrivedWallTime = d.createdAt;
     }
