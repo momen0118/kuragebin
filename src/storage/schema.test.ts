@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { advance } from '../sim/advance';
+import { BASE_GENES } from '../sim/genes';
 import { createInitialState, SCHEMA_VERSION } from '../sim/state';
 import { exportState, importState } from './io';
 import { migrate, SchemaError } from './schema';
@@ -38,6 +39,18 @@ describe('書き出し・読み込み', () => {
   test('ほかのデータは読み込まない', () => {
     expect(() => importState('not json')).toThrow(SchemaError);
     expect(() => importState(JSON.stringify({ app: 'other', state: {} }))).toThrow(SchemaError);
+  });
+});
+
+describe('版5からのマイグレーション', () => {
+  test('3-5 までの保存データを、個体がみな基準の遺伝子（今の見た目）として読める', () => {
+    const s = advance(createInitialState(T0), 3 * 86400);
+    const v5 = JSON.parse(JSON.stringify(s)) as Record<string, unknown> & { jars: Array<{ creatures: Array<Record<string, unknown>> }> };
+    v5.schema = 5;
+    for (const jar of v5.jars) for (const c of jar.creatures) delete c.genes;
+    const m = migrate(v5);
+    expect(m.schema).toBe(SCHEMA_VERSION);
+    for (const jar of m.jars) for (const c of jar.creatures) expect(c.genes).toEqual(BASE_GENES);
   });
 });
 

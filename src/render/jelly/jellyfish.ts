@@ -2,12 +2,14 @@
 // 育ち具合（0 で放されたばかりのエフィラ、1 で成体）で形と動きが変わる（form.ts）。
 import { Group, Matrix4, Vector3, type BufferGeometry, type Material } from 'three';
 import { BELL, EPHYRA, JELLY_LOOK, ORAL_ARMS, POKE, RENDER, TENTACLES } from '../../config';
+import { BASE_GENES, genesKey, type Genes } from '../../sim/genes';
 import type { Rng } from '../../sim/rng';
 import type { WaterField } from '../slosh';
 import { Stomach } from '../stomach';
 import type { SharedUniforms } from '../uniforms';
 import { createBell, type Bell, type BellLook } from './bell';
 import { ADULT_FORM, armReach, formAt, pulseParams, shapeParams, type JellyForm } from './form';
+import { individualOf, type Individual, type Leaf } from './individual';
 import { OralArms } from './oralArms';
 import { BellShape, LOBES, lobeBlend, scallop } from './profile';
 import { Pulse } from './pulse';
@@ -60,19 +62,41 @@ export class Jellyfish {
   private readonly rootReach: Float32Array;
   private readonly rootScallop: Float32Array;
 
-  constructor(shared: SharedUniforms, rng: Rng, growth = 1, startRadius: number = EPHYRA.radius) {
-    this.pulse = new Pulse(rng);
+  /** 個体差（遺伝子から作った見た目と動き）と、その遺伝子（変わったら作り直す） */
+  readonly individual: Individual;
+  readonly genesKey: string;
+
+  /** genes は遺伝子（個体差）、seed は個体の種（崩しの場所を決める） */
+  constructor(shared: SharedUniforms, rng: Rng, growth = 1, startRadius: number = EPHYRA.radius, genes: Readonly<Genes> = BASE_GENES, seed = 0) {
+    const ind = individualOf(genes, seed);
+    this.individual = ind;
+    this.genesKey = genesKey(genes);
+    this.pulse = new Pulse(rng, ind.tempo);
     this.swimmer = new Swimmer(rng);
     this.shape = new BellShape(rng);
+    this.shape.setLobeScale(ind.lobeScale);
+    const leaf = (i: number): Vector3 => {
+      const l = ind.leaves[i];
+      return l ? new Vector3(l.angle, l.offset, l.size) : new Vector3();
+    };
+    const nick = (i: number): Vector3 => {
+      const n = ind.nicks[i];
+      return n ? new Vector3(n[0], n[1], n[2]) : new Vector3();
+    };
     this.look = {
       uOpacity: { value: 1 },
-      uBody: { value: new Vector3(...JELLY_LOOK.body) },
+      uBody: { value: new Vector3(...ind.body) },
       uGlow: { value: new Vector3(...JELLY_LOOK.glow) },
       uGonad: { value: new Vector3(...JELLY_LOOK.gonad) },
+      uGonadTint: { value: new Vector3(...ind.gonad) },
+      uDensity: { value: ind.density },
+      uLeafCount: { value: ind.leaves.length },
+      uLeaf: { value: [0, 1, 2, 3, 4].map(leaf) },
+      uNick: { value: [0, 1, 2].map(nick) },
     };
     this.bell = createBell(shared, this.look);
-    this.tentacles = new Tentacles(shared, this.look, rng);
-    this.arms = new OralArms(shared, this.look, rng);
+    this.tentacles = new Tentacles(shared, this.look, rng, ind);
+    this.arms = new OralArms(shared, this.look, rng, ind.leaves);
     this.group.add(this.tentacles.mesh, this.arms.mesh, ...this.bell.meshes);
     const n = this.tentacles.count;
     this.rootCos = new Float32Array(n);
@@ -105,6 +129,11 @@ export class Jellyfish {
   /** 傘の半径（瓶の高さ単位、腕の先まで） */
   get radius(): number {
     return this.form.radius;
+  }
+
+  /** 生殖腺（ふだんは四つ葉）の向き・中心からの距離・大きさ（食べた餌を運ぶ先） */
+  get leaves(): readonly Leaf[] {
+    return this.individual.leaves;
   }
 
   /** 四つ葉の濃さ（0〜1。エフィラが育つにつれて浮かぶ） */

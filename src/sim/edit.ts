@@ -2,6 +2,7 @@
 // 上限は見ない（見た目の確認のために、何匹でも出せる）。
 import { LIFE, type LifeRules } from '../config';
 import { createCreature, enterStage, pickSpot, updateResting } from './lifecycle';
+import { BASE_GENES, inheritGenes, sanitizeGenes, type Genes } from './genes';
 import { createRng, type Rng } from './rng';
 import { isSwimmer, type Creature, type GameState, type Stage } from './state';
 
@@ -108,4 +109,22 @@ export function fillAdults(state: GameState, jarIndex: number, n: number, rules:
   });
   jar.creatures = [...bottom, ...adults];
   updateResting(state, jar, jarIndex, rules, null);
+}
+
+/** 確認用の遺伝子の書き換え：基準に戻す・何世代か受け継いだようにばらす・色味や葉の数を決めて置く */
+export type GeneEdit = 'base' | 'generations' | { set: Partial<Genes> };
+
+export function editGenes(state: GameState, id: number, edit: GeneEdit): void {
+  const c = findCreature(state, id)?.creature;
+  if (!c) return;
+  if (edit === 'base') c.genes = { ...BASE_GENES };
+  else if (edit === 'generations') {
+    withRng(state, (rng) => {
+      // 6世代ぶん受け継いだように（葉の数は今のまま）
+      const leaves = c.genes.leaves;
+      let g = c.genes;
+      for (let i = 0; i < 6; i++) g = inheritGenes(g, rng, false);
+      c.genes = { ...g, leaves };
+    });
+  } else c.genes = sanitizeGenes({ ...c.genes, ...edit.set });
 }

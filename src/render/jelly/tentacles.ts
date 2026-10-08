@@ -21,6 +21,7 @@ import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
 import { CLIP_GLSL } from '../shaders/clip';
 import type { BellLook } from './bell';
+import { tentacleMissing, type Individual } from './individual';
 import { frag } from '../shaders/glsl';
 import { flowAt, type WaterField } from '../slosh';
 
@@ -235,7 +236,8 @@ export class Tentacles {
   /** 傘の半径（瓶の高さ単位）。触手の長さと、水の流れの強さの目安 */
   private radius: number = BELL.radius;
 
-  constructor(shared: SharedUniforms, look: BellLook, rng: Rng) {
+  /** ind は個体差（触手の長さと、むらや欠けで抜けている所）。なければ基準 */
+  constructor(shared: SharedUniforms, look: BellLook, rng: Rng, ind: Individual | null = null) {
     const n = this.count;
     const m = this.nodes;
     this.angles = new Float32Array(n);
@@ -253,6 +255,10 @@ export class Tentacles {
       const u = this.angles[i]! / lobe;
       const d = Math.abs(u - Math.round(u));
       this.sproutAt[i] = 0.85 * (0.4 * rng.next() + 0.6 * (1 - 2 * d));
+    }
+    if (ind) {
+      // 個体差：長さと、ところどころ抜けている所（そこは生えない）
+      for (let i = 0; i < n; i++) this.baseLen[i] = tentacleMissing(ind, this.angles[i]!) ? 0 : this.baseLen[i]! * ind.tentacleScale;
     }
     this.setForm(BELL.radius, 1);
     this.x = new Float32Array(n * m * 3);

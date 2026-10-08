@@ -25,6 +25,7 @@ import {
   type Side,
 } from 'three';
 import { EPHYRA, JAR, JELLY_LOOK, POLYP, STOMACH, STROBILA } from '../../config';
+import { polypTint } from './individual';
 import type { Rng } from '../../sim/rng';
 import { Stomach } from '../stomach';
 import type { SharedUniforms } from '../uniforms';
@@ -252,10 +253,12 @@ export class Polyp {
   private readonly queue: Launch[] = [];
   private synced = false;
 
+  /** hue は遺伝子の色味（-1 でうす青、+1 でうす桃）。ポリプも傘と同じ割合だけ色づく */
   constructor(
     shared: SharedUniforms,
     private readonly rng: Rng,
     spot: readonly [number, number],
+    hue = 0,
   ) {
     const n = POLYP.tentacleCount;
     const yaw = rng.range(0, Math.PI * 2);
@@ -304,7 +307,7 @@ export class Polyp {
       uLobePhase: { value: yaw },
       uMeal: { value: 0 },
     };
-    const tint = { value: new Vector3(...POLYP.body) };
+    const tint = { value: new Vector3(...polypTint(POLYP.body, hue)) };
     const geo = latheGrid(RINGS, SEGMENTS);
     const make = (side: Side): Mesh => {
       const m = new Mesh(

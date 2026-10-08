@@ -19,6 +19,7 @@ import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
 import { CLIP_GLSL } from '../shaders/clip';
 import type { BellLook } from './bell';
+import type { Leaf } from './individual';
 import type { RootFrame } from './tentacles';
 import { flowAt, type WaterField } from '../slosh';
 import common from '../shaders/common.glsl?raw';
@@ -53,6 +54,8 @@ uniform float uOpacity;
 uniform float uGlowPass;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
+// 個体差：濃さの倍率
+uniform float uDensity;
 uniform sampler2D tRoom;
 uniform vec2 uResolution;
 in vec3 vWorldPos;
@@ -78,7 +81,7 @@ void main() {
   light += uLampColor * lampSpot(vWorldPos) * (0.2 * wrapL + 0.35 * transL);
   // 厚みのある、乳白色の半透明
   vec3 tint = mix(uBody, uGonad, 0.2 + 0.3 * edge);
-  float density = (0.018 + 0.1 * fres + 0.08 * edge) * tip * root;
+  float density = (0.018 + 0.1 * fres + 0.08 * edge) * tip * root * uDensity;
   vec2 suv = gl_FragCoord.xy / uResolution;
   vec3 bg = texture(tRoom, suv + N.xy * 0.008 * fres).rgb;
   float refr = fres * 0.1 * tip;
@@ -97,7 +100,8 @@ void main() {
 
 export class OralArms {
   readonly mesh: Mesh;
-  readonly count = ORAL_ARMS.count;
+  /** 本数（生殖腺と同じ数。ふだん4本） */
+  readonly count: number;
   readonly nodes = ORAL_ARMS.nodes;
   /** 根元の角度（傘のローカル） */
   readonly angles: Float32Array;
@@ -112,13 +116,16 @@ export class OralArms {
   private initialized = false;
   private readonly radials: Vector3[] = [];
 
-  constructor(shared: SharedUniforms, look: BellLook, rng: Rng) {
+  /** leaves は生殖腺の向き（口腕も同じ数・同じ向き）。なければ基準の4本 */
+  constructor(shared: SharedUniforms, look: BellLook, rng: Rng, leaves: readonly Leaf[] | null = null) {
+    this.count = leaves?.length ?? ORAL_ARMS.count;
     const n = this.count;
     const m = this.nodes;
     this.angles = new Float32Array(n);
     this.phase = new Float32Array(n);
     for (let i = 0; i < n; i++) {
-      this.angles[i] = Math.PI * 0.25 + (i * Math.PI * 2) / n + rng.range(-0.08, 0.08);
+      const base = leaves?.[i]?.angle ?? Math.PI * 0.25 + (i * Math.PI * 2) / n;
+      this.angles[i] = base + rng.range(-0.08, 0.08);
       this.phase[i] = rng.range(0, Math.PI * 2);
       this.radials.push(new Vector3(1, 0, 0));
     }
@@ -183,6 +190,7 @@ export class OralArms {
           uGlow: look.uGlow,
           uGonad: look.uGonad,
           uOpacity: look.uOpacity,
+          uDensity: look.uDensity,
         },
       }),
     );

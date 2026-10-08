@@ -1,10 +1,11 @@
 // ゲームの状態。瓶・個体・日誌・標本・設定を1つの状態として持ち、そのまま保存する。
 // 描画・DOM・three.js には依存しない。
 import { CARE, LIFE, SIM } from '../config';
+import { BASE_GENES, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -16,7 +17,7 @@ export interface Creature {
   id: number;
   species: Species;
   stage: Stage;
-  /** 見た目と動きの種（個体差はフェーズ4で遺伝子に広げる） */
+  /** 見た目と動きの種（揺れ方や形の細かいところ。受け継ぐ個体差は genes） */
   seed: number;
   /** 生まれてからの時間と、今の段階になってからの時間（秒、ゲーム内） */
   age: number;
@@ -41,6 +42,8 @@ export interface Creature {
   discs: number;
   /** 最後に食べた餌（まだなら null）。胃の橙色と、成長の早まりに使う */
   meal: Meal | null;
+  /** 遺伝子（見た目と動きの個体差）。最初の1匹と、版5までにいた個体は基準のまま */
+  genes: Genes;
 }
 
 export interface Meal {
@@ -205,6 +208,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     spot: null,
     discs: 0,
     meal: null,
+    genes: { ...BASE_GENES },
   };
   const jars: JarState[] = Array.from({ length: SIM.jarCount }, (_, i) => ({
     creatures: i === 0 ? [first] : [],

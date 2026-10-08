@@ -123,6 +123,8 @@ export class BellShape {
   private time = 0;
   private params: ShapeParams = ADULT_SHAPE;
   private wasContracting = false;
+  /** 縁弁ごとの大きさ（個体差の、輪郭のいびつさ。基準で 1） */
+  private readonly lobeScale = new Float32Array(LOBES).fill(1);
 
   constructor(private readonly rng: Rng) {
     const [pMin, pMax] = BELL.lobeSwayPeriod;
@@ -143,6 +145,12 @@ export class BellShape {
         foldTimer: rng.range(iMin * 0.2, iMax),
       });
     }
+    this.integrate(() => 0);
+  }
+
+  /** 縁弁ごとの大きさ（輪郭のいびつさ） */
+  setLobeScale(scale: ArrayLike<number>): void {
+    for (let k = 0; k < LOBES; k++) this.lobeScale[k] = scale[k] ?? 1;
     this.integrate(() => 0);
   }
 
@@ -226,6 +234,7 @@ export class BellShape {
       const fold = b ? b.fold : 0;
       if (perLobe) fillBase(b ? b.lag * P.lobeLag : 0);
       const o = k * stride;
+      const scale = this.lobeScale[k]!;
       let r = 0;
       let y = BELL.apexY;
       p[o] = 0;
@@ -235,7 +244,7 @@ export class BellShape {
         const th = base[i]! + flex * flexWeight(s) + fold * foldWeight(s);
         r += ds * Math.cos(th);
         y -= ds * Math.sin(th);
-        p[o + (i + 1) * 2] = r;
+        p[o + (i + 1) * 2] = r * (1 + (scale - 1) * s);
         p[o + (i + 1) * 2 + 1] = y;
       }
     }

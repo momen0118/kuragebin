@@ -60,6 +60,8 @@ uniform float uSMax;
 uniform float uInset;
 // エフィラの腕の形（form.ts の armReach と同じ）。成体では uArmDepth = uLappet = 0
 uniform float uArmDepth, uArmBase, uArmTip, uLappet;
+// 縁の欠け（個体差）：向き・深さ・幅。深さ 0 は無し
+uniform vec3 uNick[3];
 out vec3 vWorldPos;
 out vec3 vWorldNormal;
 out vec3 vViewNormal;
@@ -90,6 +92,13 @@ float scallop(float th, float s) {
   float w = smoothstep(0.8, 1.0, s);
   float round_ = LOBE_ROUND * pow(2.0 * d, 3.0);
   float cut = NOTCH_DEPTH * exp(-pow((0.5 - d) / NOTCH_WIDTH, 2.0));
+  // 個体ごとの欠け
+  for (int k = 0; k < 3; k++) {
+    vec3 n = uNick[k];
+    if (n.y <= 0.0) continue;
+    float a = atan(sin(th - n.x), cos(th - n.x));
+    cut += n.y * exp(-pow(a / n.z, 2.0));
+  }
   return 1.0 - (round_ + cut) * w;
 }
 
@@ -172,6 +181,10 @@ uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody, uGlow, uGonad;
 // 生殖腺そのものの色（uGonad は発光の強さを掛けた色なので、昼はほぼ黒になる）
 uniform vec3 uGonadTint;
+// 個体差：濃さの倍率と、生殖腺の数（ふだん4）・1つずつの向き・中心からの距離の倍率・大きさの倍率
+uniform float uDensity;
+uniform int uLeafCount;
+uniform vec3 uLeaf[5];
 uniform sampler2D tRoom;
 uniform vec2 uResolution;
 in vec3 vWorldPos;
@@ -194,20 +207,24 @@ float canals(float s, float th) {
   return max(max(c, b1 * 0.8 * uCanals), max(b2 * 0.6 * uCanals, ring * uCanals));
 }
 
-// 四つ葉の生殖腺。中心に口を開いた蹄鉄形が4つ。ring は蹄鉄の輪郭だけ、fill はその内側のうっすらした面
+// 四つ葉の生殖腺。中心に口を開いた蹄鉄形が4つ（個体によってまれに3つ・5つ、向きや大きさが少し不揃い）。
+// ring は蹄鉄の輪郭だけ、fill はその内側のうっすらした面
 void gonadParts(float s, float th, out float ring, out float fill) {
   vec2 q = vec2(cos(th), sin(th)) * (s / GONAD_S);
   ring = 0.0;
   fill = 0.0;
-  for (int k = 0; k < 4; k++) {
-    float ang = PI * 0.25 + float(k) * PI * 0.5;
-    vec2 c = 0.43 * vec2(cos(ang), sin(ang));
+  for (int k = 0; k < 5; k++) {
+    if (k >= uLeafCount) break;
+    vec3 lf = uLeaf[k];
+    float ang = lf.x;
+    vec2 c = 0.43 * lf.y * vec2(cos(ang), sin(ang));
+    float sz = lf.z;
     vec2 d = q - c;
     float r = length(d);
-    float rk = exp(-pow((r - 0.24) / 0.075, 2.0));
+    float rk = exp(-pow((r - 0.24 * sz) / (0.075 * sz), 2.0));
     float facing = dot(d / max(r, 1e-4), -normalize(c));
     ring += rk * (1.0 - 0.85 * smoothstep(0.55, 0.9, facing));
-    fill += exp(-pow(r / 0.24, 3.0)) * 0.3;
+    fill += exp(-pow(r / (0.24 * sz), 3.0)) * 0.3;
   }
   float edge = 1.0 - smoothstep(0.85, 1.0, s / GONAD_S);
   ring *= edge;
@@ -275,6 +292,7 @@ void main() {
   } else {
     density = 0.006 + 0.17 * rim + 0.025 * margin * (1.0 + uYoung) + 0.014 * uYoung;
   }
+  density *= uDensity;
   vec3 col = tint * light * density * 1.6;
   float refr = gonad ? 0.0 : rim * (inner ? 0.12 : 0.22);
   col += bg * refr;
@@ -356,6 +374,12 @@ export interface BellLook {
   uBody: { value: Vector3 };
   uGlow: { value: Vector3 };
   uGonad: { value: Vector3 };
+  /** 個体差：四つ葉の色、傘と口腕の濃さの倍率、生殖腺の数と1つずつの形（向き・距離・大きさ）、縁の欠け（向き・深さ・幅） */
+  uGonadTint: { value: Vector3 };
+  uDensity: { value: number };
+  uLeafCount: { value: number };
+  uLeaf: { value: Vector3[] };
+  uNick: { value: Vector3[] };
 }
 
 export interface Bell {
@@ -432,7 +456,11 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
         uGlow: look.uGlow,
         uGonad: look.uGonad,
         uOpacity: look.uOpacity,
-        uGonadTint: { value: new Vector3(...JELLY_LOOK.gonad) },
+        uGonadTint: look.uGonadTint,
+        uDensity: look.uDensity,
+        uLeafCount: look.uLeafCount,
+        uLeaf: look.uLeaf,
+        uNick: look.uNick,
       },
     });
     const m = new Mesh(geo, mat);
