@@ -11,7 +11,7 @@ import { createBell, type Bell, type BellLook } from './bell';
 import { ADULT_FORM, armReach, formAt, pulseParams, shapeParams, type JellyForm } from './form';
 import { individualOf, type Individual, type Leaf } from './individual';
 import { OralArms } from './oralArms';
-import { BellShape, LOBES, lobeBlend, scallop } from './profile';
+import { BellShape, lobeBlend, scallop } from './profile';
 import { Pulse } from './pulse';
 import { Swimmer, type Neighbor } from './swim';
 import { Tentacles, type RootFrame } from './tentacles';
@@ -73,7 +73,7 @@ export class Jellyfish {
     this.genesKey = genesKey(genes);
     this.pulse = new Pulse(rng, ind.tempo);
     this.swimmer = new Swimmer(rng);
-    this.shape = new BellShape(rng);
+    this.shape = new BellShape(rng, ind.lobes);
     this.shape.setLobeScale(ind.lobeScale);
     const leaf = (i: number): Vector3 => {
       const l = ind.leaves[i];
@@ -94,7 +94,7 @@ export class Jellyfish {
       uLeaf: { value: [0, 1, 2, 3, 4].map(leaf) },
       uNick: { value: [0, 1, 2].map(nick) },
     };
-    this.bell = createBell(shared, this.look);
+    this.bell = createBell(shared, this.look, ind.lobes);
     this.tentacles = new Tentacles(shared, this.look, rng, ind);
     this.arms = new OralArms(shared, this.look, rng, ind.leaves);
     this.group.add(this.tentacles.mesh, this.arms.mesh, ...this.bell.meshes);
@@ -110,7 +110,7 @@ export class Jellyfish {
       const th = this.tentacles.angles[i]!;
       this.rootCos[i] = Math.cos(th);
       this.rootSin[i] = Math.sin(th);
-      const [l0, l1, w] = lobeBlend(th);
+      const [l0, l1, w] = lobeBlend(th, ind.lobes);
       this.rootL0[i] = l0;
       this.rootL1[i] = l1;
       this.rootW[i] = w;
@@ -178,9 +178,10 @@ export class Jellyfish {
     // 触手の根元：エフィラの腕の間では縁が傘の途中にある
     for (let i = 0; i < this.tentacles.count; i++) {
       const th = this.tentacles.angles[i]!;
-      const reach = armReach(th, f, LOBES);
+      const lobes = this.individual.lobes;
+      const reach = armReach(th, f, lobes);
       this.rootReach[i] = reach;
-      this.rootScallop[i] = scallop(th, reach);
+      this.rootScallop[i] = scallop(th, reach, lobes);
     }
     this.tentacles.mesh.visible = f.tentacles > 0;
     this.arms.setForm(f.radius, f.oralArms);

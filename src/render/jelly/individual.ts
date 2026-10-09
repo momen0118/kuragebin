@@ -3,7 +3,6 @@
 import { GENE_LOOK, JELLY_LOOK, TENTACLES, type Vec3 } from '../../config';
 import { BASE_GENES, type Genes } from '../../sim/genes';
 import { createRng } from '../../sim/rng';
-import { LOBES } from './profile';
 
 export interface Leaf {
   /** 向き（傘のローカル、ラジアン） */
@@ -22,6 +21,8 @@ export interface Individual {
   /** 触手の長さと拍動の速さの倍率 */
   tentacleScale: number;
   tempo: number;
+  /** 縁弁の数（葉の数の2倍：四つ葉で8枚、三つ葉で6枚、五つ葉で10枚。エフィラの腕の数も同じ） */
+  lobes: number;
   /** 縁弁ごとの大きさ（輪郭のいびつさ） */
   lobeScale: Float32Array;
   /** 縁の欠け：[向き, 深さ, 幅]（ラジアン） */
@@ -54,8 +55,10 @@ export function individualOf(genes: Readonly<Genes> = BASE_GENES, seed = 0): Ind
   const L = GENE_LOOK;
   // 崩しの場所は個体の種で決める（遺伝子の乱数とは別に）
   const rng = createRng((seed ^ 0x6a09e667) >>> 0);
-  const lobeScale = new Float32Array(LOBES);
-  for (let k = 0; k < LOBES; k++) lobeScale[k] = 1 + genes.warp * L.warp * (rng.next() * 2 - 1);
+  // 縁弁は葉の数の2倍（実物の三つ葉・五つ葉も、縁弁が6枚・10枚になる）
+  const lobes = genes.leaves * 2;
+  const lobeScale = new Float32Array(lobes);
+  for (let k = 0; k < lobes; k++) lobeScale[k] = 1 + genes.warp * L.warp * (rng.next() * 2 - 1);
   const nicks: Array<[number, number, number]> = [];
   const gaps: Array<[number, number]> = [];
   // 欠けは崩しが大きいほど多く深い
@@ -74,7 +77,8 @@ export function individualOf(genes: Readonly<Genes> = BASE_GENES, seed = 0): Ind
   for (let k = 0; k < n; k++) {
     const j = genes.leafJitter;
     leaves.push({
-      angle: Math.PI * 0.25 + (k * Math.PI * 2) / n + j * L.leafAngle * (rng.next() * 2 - 1),
+      // 葉は縁弁1枚おきの向き（四つ葉で 45°, 135°, ...）
+      angle: Math.PI / n + (k * Math.PI * 2) / n + j * L.leafAngle * (rng.next() * 2 - 1),
       offset: 1 + j * L.leafOffset * (rng.next() * 2 - 1),
       size: (n === 4 ? 1 : 4 / n) ** 0.5 * (1 + j * L.leafSize * (rng.next() * 2 - 1)),
     });
@@ -85,6 +89,7 @@ export function individualOf(genes: Readonly<Genes> = BASE_GENES, seed = 0): Ind
     density: 1 - L.clarity * genes.clarity,
     tentacleScale: 1 + L.tentacle * genes.tentacle,
     tempo: 1 + L.tempo * genes.tempo,
+    lobes,
     lobeScale,
     nicks,
     gaps,

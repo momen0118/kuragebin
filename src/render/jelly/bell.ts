@@ -32,7 +32,6 @@ const GONAD_S = 0.52;
 
 const DEFINES = /* glsl */ `
 #define PROFILE_N ${PROFILE_SEGMENTS}
-#define LOBES ${LOBES}
 #define THICK_APEX ${BELL.thicknessApex.toFixed(5)}
 #define THICK_MARGIN ${BELL.thicknessMargin.toFixed(5)}
 #define LOBE_ROUND ${BELL.lobeRound.toFixed(5)}
@@ -60,6 +59,8 @@ uniform float uSMax;
 uniform float uInset;
 // エフィラの腕の形（form.ts の armReach と同じ）。成体では uArmDepth = uLappet = 0
 uniform float uArmDepth, uArmBase, uArmTip, uLappet;
+// 縁弁の数（ふだん8枚。三つ葉は6枚、五つ葉は10枚）。エフィラの腕の数も同じ
+uniform float uLobes;
 // 縁の欠け（個体差）：向き・深さ・幅。深さ 0 は無し
 uniform vec3 uNick[3];
 out vec3 vWorldPos;
@@ -77,17 +78,17 @@ vec2 lobeProfile(int lobe, float s) {
 
 // 隣り合う2枚の縁弁を角度で混ぜる。縁弁の真ん中あたりはその縁弁だけ（profile.ts の lobeBlend と同じ式）
 vec2 profileAt(float s, float th) {
-  float u = th / (TAU / float(LOBES));
+  float u = th / (TAU / uLobes);
   float k = floor(u);
   float w = smoothstep(0.32, 0.68, u - k);
-  int l0 = int(mod(k, float(LOBES)));
-  int l1 = int(mod(k + 1.0, float(LOBES)));
+  int l0 = int(mod(k, uLobes));
+  int l1 = int(mod(k + 1.0, uLobes));
   return mix(lobeProfile(l0, s), lobeProfile(l1, s), w);
 }
 
 // 縁弁の形：花びらの丸みと、切れ込み（profile.ts の scallop と同じ式）
 float scallop(float th, float s) {
-  float u = th / (TAU / float(LOBES));
+  float u = th / (TAU / uLobes);
   float d = abs(u - floor(u + 0.5));
   float w = smoothstep(0.8, 1.0, s);
   float round_ = LOBE_ROUND * pow(2.0 * d, 3.0);
@@ -109,13 +110,13 @@ float smin(float a, float b, float k) {
 
 // 角度 θ での、傘の縁までの断面の長さの割合。腕の先で 1、腕の間の切れ込みの底で 1 - uArmDepth
 float armR(float th) {
-  float u = th / (TAU / float(LOBES));
+  float u = th / (TAU / uLobes);
   float d = abs(u - floor(u + 0.5));
   float notch = uLappet * exp(-pow(d / LAPPET_W, 2.0));
   if (uArmDepth <= 1e-4) return 1.0 - notch;
   float fl = 1.0 - uArmDepth;
   float taper = (uArmBase - uArmTip) / uArmDepth;
-  float side = (uArmBase + taper * fl) / (sin(d * TAU / float(LOBES)) + taper);
+  float side = (uArmBase + taper * fl) / (sin(d * TAU / uLobes) + taper);
   return min(1.0, -smin(-smin(1.0, side, 0.05), -fl, 0.06)) - notch;
 }
 
@@ -175,6 +176,8 @@ uniform float uGlowPass, uLayer, uContract;
 // 放射管の枝分かれと環状管、四つ葉の濃さ（エフィラが育つにつれて 0 → 1）。
 // uYoung はエフィラの若さ（1 で放されたばかり）：小さな体は少し濃く、胃から腕へ伸びる管が見える
 uniform float uCanals, uGonads, uYoung;
+// 縁弁の数（放射管の数とエフィラの胃から伸びる管の数も合わせる）
+uniform float uLobes;
 // 胃の中の餌の濃さ（0 で空。食べた餌がうっすら橙色に透ける）
 uniform float uMeal;
 uniform vec3 uKey, uKeyDir, uAmbient;
@@ -192,11 +195,11 @@ in vec3 vWorldNormal;
 in vec3 vViewNormal;
 in vec2 vST;
 
-// 放射管：16本が縁へ向かって枝分かれし、縁で環状管につながる
+// 放射管：縁弁の数の2倍（ふだん16本）が縁へ向かって枝分かれし、縁で環状管につながる
 float canals(float s, float th) {
   float r = max(s, 0.05);
   float w = 0.012;
-  float seg = TAU / 16.0;
+  float seg = TAU / (2.0 * uLobes);
   float a = mod(th + seg * 0.5, seg) - seg * 0.5;
   float c = exp(-pow(a * r / w, 2.0)) * smoothstep(0.22, 0.4, s);
   float d1 = seg * 0.5 * smoothstep(0.5, 1.0, s) * 0.62;
@@ -241,7 +244,7 @@ float gonads(float s, float th) {
 // 育って四つ葉が浮かぶにつれて消える（成体は四つ葉の輪郭だけが色づく）
 float bellStomach(float s, float th) {
   float core = exp(-pow(s / 0.17, 2.0));
-  float arms = pow(0.5 + 0.5 * cos(8.0 * th), 8.0) * smoothstep(0.08, 0.16, s) * (1.0 - smoothstep(0.26, 0.42, s));
+  float arms = pow(0.5 + 0.5 * cos(uLobes * th), 8.0) * smoothstep(0.08, 0.16, s) * (1.0 - smoothstep(0.26, 0.42, s));
   return (core + arms * 0.7) * (1.0 - uGonads);
 }
 
@@ -400,11 +403,14 @@ export interface Bell {
     uYoung: { value: number };
     /** 胃の中の餌の濃さ（0〜1） */
     uMeal: { value: number };
+    /** 縁弁の数 */
+    uLobes: { value: number };
   };
 }
 
-export function createBell(shared: SharedUniforms, look: BellLook): Bell {
-  const profile = new DataTexture(new Float32Array(LOBES * (PROFILE_SEGMENTS + 1) * 2), PROFILE_SEGMENTS + 1, LOBES, RGFormat, FloatType);
+/** lobes は縁弁の数（ふだん8枚） */
+export function createBell(shared: SharedUniforms, look: BellLook, lobes: number = LOBES): Bell {
+  const profile = new DataTexture(new Float32Array(lobes * (PROFILE_SEGMENTS + 1) * 2), PROFILE_SEGMENTS + 1, lobes, RGFormat, FloatType);
   profile.minFilter = NearestFilter;
   profile.magFilter = NearestFilter;
   profile.generateMipmaps = false;
@@ -420,6 +426,7 @@ export function createBell(shared: SharedUniforms, look: BellLook): Bell {
     uGonads: { value: 1 },
     uYoung: { value: 0 },
     uMeal: { value: 0 },
+    uLobes: { value: lobes },
   };
   const bellGeo = grid(BELL.ringSegments, BELL.radialSegments, 1.35);
   const gonadGeo = grid(14, 64, 1);
