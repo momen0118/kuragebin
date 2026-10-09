@@ -10,8 +10,8 @@ import type { Pulse } from './pulse';
 /** 断面の分割数（点は +1 個） */
 export const PROFILE_SEGMENTS = 32;
 /** 縁弁の数。縁弁の真ん中は角度 k·π/4、切れ込みはその間 */
+/** 縁弁の数（ふだん。四つ葉で8枚。三つ葉は6枚、五つ葉は10枚：葉の数の2倍） */
 export const LOBES = 8;
-const LOBE_ANGLE = (Math.PI * 2) / LOBES;
 
 /** 緩んだときの断面の傾き（水平から下向きへのラジアン）。上は平たく、縁で少し下がる */
 function relaxedAngle(s: number): number {
@@ -70,12 +70,12 @@ function arcLength(): number {
  * 角度 θ での、隣り合う2枚の縁弁とその混ぜ具合。
  * 縁弁の真ん中あたりはその縁弁だけ、切れ込みのあたりで隣へなめらかに移る（bell.ts と同じ式）
  */
-export function lobeBlend(theta: number): [number, number, number] {
-  const u = theta / LOBE_ANGLE;
+export function lobeBlend(theta: number, lobes: number = LOBES): [number, number, number] {
+  const u = theta / ((Math.PI * 2) / lobes);
   const k = Math.floor(u);
   const t = u - k;
-  const l0 = ((k % LOBES) + LOBES) % LOBES;
-  const l1 = (l0 + 1) % LOBES;
+  const l0 = ((k % lobes) + lobes) % lobes;
+  const l1 = (l0 + 1) % lobes;
   const w = smooth((t - 0.32) / 0.36);
   return [l0, l1, w];
 }
@@ -84,8 +84,8 @@ export function lobeBlend(theta: number): [number, number, number] {
  * 縁弁の形による半径の減り（花びらの丸みと、切れ込み）。s が縁に近いほど効く。θ はラジアン。
  * bell.ts の scallop() と同じ式
  */
-export function scallop(theta: number, s: number): number {
-  const u = theta / LOBE_ANGLE;
+export function scallop(theta: number, s: number, lobes: number = LOBES): number {
+  const u = theta / ((Math.PI * 2) / lobes);
   const d = Math.abs(u - Math.round(u));
   const w = smooth((s - 0.8) / 0.2);
   const round = BELL.lobeRound * (2 * d) ** 3;
@@ -114,22 +114,29 @@ interface Lobe {
 
 export class BellShape {
   /** 縁弁ごとの断面の点 (r, y) の並び（縁弁ごとに PROFILE_SEGMENTS+1 個）。傘の半径 = 1、頂点が y = BELL.apexY */
-  readonly points = new Float32Array(LOBES * (PROFILE_SEGMENTS + 1) * 2);
+  readonly points: Float32Array;
   private readonly length = arcLength();
   private readonly lobes: Lobe[] = [];
-  private readonly accel = new Float64Array(LOBES);
+  private readonly accel: Float64Array;
   private readonly base = new Float64Array(PROFILE_SEGMENTS);
   private prevMargin = 0;
   private time = 0;
   private params: ShapeParams = ADULT_SHAPE;
   private wasContracting = false;
   /** 縁弁ごとの大きさ（個体差の、輪郭のいびつさ。基準で 1） */
-  private readonly lobeScale = new Float32Array(LOBES).fill(1);
+  private readonly lobeScale: Float32Array;
 
-  constructor(private readonly rng: Rng) {
+  /** count は縁弁の数（ふだん8枚。三つ葉は6枚、五つ葉は10枚） */
+  constructor(
+    private readonly rng: Rng,
+    readonly count: number = LOBES,
+  ) {
+    this.points = new Float32Array(count * (PROFILE_SEGMENTS + 1) * 2);
+    this.accel = new Float64Array(count);
+    this.lobeScale = new Float32Array(count).fill(1);
     const [pMin, pMax] = BELL.lobeSwayPeriod;
     const [iMin, iMax] = BELL.foldInterval;
-    for (let k = 0; k < LOBES; k++) {
+    for (let k = 0; k < count; k++) {
       this.lobes.push({
         flex: 0,
         vel: 0,
@@ -150,7 +157,7 @@ export class BellShape {
 
   /** 縁弁ごとの大きさ（輪郭のいびつさ） */
   setLobeScale(scale: ArrayLike<number>): void {
-    for (let k = 0; k < LOBES; k++) this.lobeScale[k] = scale[k] ?? 1;
+    for (let k = 0; k < this.count; k++) this.lobeScale[k] = scale[k] ?? 1;
     this.integrate(() => 0);
   }
 
@@ -174,19 +181,20 @@ export class BellShape {
       const rate = (m - this.prevMargin) / dt;
       this.prevMargin = m;
       const L = this.lobes;
-      for (let k = 0; k < LOBES; k++) {
+      const n = this.count;
+      for (let k = 0; k < n; k++) {
         const b = L[k]!;
         const freq = BELL.flexFreq * (1 + P.flexSpread * b.freqJitter);
         const gain = P.flexGain * (1 + P.flexSpread * b.gainJitter);
         const w = freq * Math.PI * 2;
         // 緩んでいる間もゆっくり揺れる
         const sway = BELL.lobeSway * (0.6 * Math.sin(this.time * b.w1 + b.ph1) + 0.4 * Math.sin(this.time * b.w2 + b.ph2));
-        const left = L[(k + LOBES - 1) % LOBES]!.flex;
-        const right = L[(k + 1) % LOBES]!.flex;
+        const left = L[(k + n - 1) % n]!.flex;
+        const right = L[(k + 1) % n]!.flex;
         this.accel[k] =
           -w * w * (b.flex - sway) - 2 * BELL.flexDamping * w * b.vel - gain * w * w * rate + BELL.lobeCoupling * (left + right - 2 * b.flex);
       }
-      for (let k = 0; k < LOBES; k++) {
+      for (let k = 0; k < n; k++) {
         const b = L[k]!;
         b.vel += this.accel[k]! * dt;
         b.flex += b.vel * dt;
@@ -228,7 +236,7 @@ export class BellShape {
       }
     };
     if (!perLobe) fillBase(0);
-    for (let k = 0; k < LOBES; k++) {
+    for (let k = 0; k < this.count; k++) {
       const b = this.lobes[k];
       const flex = b ? b.flex : 0;
       const fold = b ? b.fold : 0;
@@ -265,9 +273,9 @@ export class BellShape {
    * エフィラの腕の間では縁が s < 1 の所にある（form.ts の armReach）
    */
   pointAt(theta: number, s: number, out: { r: number; y: number; tr: number; ty: number }): void {
-    const [l0, l1, w] = lobeBlend(theta);
+    const [l0, l1, w] = lobeBlend(theta, this.count);
     this.pointAtBlend(l0, l1, w, s, out);
-    out.r *= scallop(theta, s);
+    out.r *= scallop(theta, s, this.count);
   }
 
   /**
@@ -307,10 +315,11 @@ export class BellShape {
   margin(): [number, number] {
     let r = 0;
     let y = 0;
-    for (let k = 0; k < LOBES; k++) {
+    const n = this.count;
+    for (let k = 0; k < n; k++) {
       const [a, b] = this.lobePoint(k, PROFILE_SEGMENTS);
-      r += a / LOBES;
-      y += b / LOBES;
+      r += a / n;
+      y += b / n;
     }
     return [r, y];
   }

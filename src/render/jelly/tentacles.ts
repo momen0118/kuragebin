@@ -246,7 +246,8 @@ export class Tentacles {
     this.sproutAt = new Float32Array(n);
     this.alive = new Uint8Array(n);
     this.seeds = new Float32Array(n);
-    const lobe = (Math.PI * 2) / LOBES;
+    // 腕の先（縁弁の真ん中）からの角度で生える順を決める。縁弁の数は個体による（ふだん8枚）
+    const lobe = (Math.PI * 2) / (ind?.lobes ?? LOBES);
     for (let i = 0; i < n; i++) {
       this.seeds[i] = rng.next();
       this.angles[i] = ((i + 0.5 + rng.range(-0.3, 0.3)) / n) * Math.PI * 2;
