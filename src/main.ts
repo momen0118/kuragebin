@@ -6,7 +6,7 @@ import { Game } from './game';
 import { App } from './render/app';
 import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
-import { clearFed, clearMeals, editGenes, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, type GeneEdit } from './sim/edit';
+import { clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
 import type { GameState, Letter, Stage } from './sim/state';
 import { deliverReplyNow, resetFirstLetter } from './sim/uncle';
@@ -18,6 +18,7 @@ import { JournalButton } from './ui/journal/button';
 import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
+import { FindCarry, flyLight } from './ui/finds';
 import { Envelope, LetterReader } from './ui/letters';
 import { Loupe } from './ui/loupe';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
 
   // 瓶ごとの個体を描く（描いて動かすのは見えている瓶だけ）
   const showJars = (s: GameState): void => {
-    app.setJars(s.jars, s.time + s.pending);
+    app.setJars(s.jars, s.time + s.pending, s.specimens);
     tag.refresh();
   };
   showJars(game.state);
@@ -272,6 +273,7 @@ async function main(): Promise<void> {
       const l = game.state.letters.find((x) => x.id === id);
       if (l) reader.open(l);
     },
+    carrySpecimen: (id, photo, x, y, pointer) => findCarry.start(id, photo, x, y, pointer),
   });
   const journalButton = new JournalButton(() => notebook.open());
   const showJournal = (): void => {
@@ -352,6 +354,9 @@ async function main(): Promise<void> {
           onFlip: () => app.flipForDebug(),
           onFirstLetter: () => game.edit((s) => resetFirstLetter(s, slider.index)),
           onReplyNow: () => game.edit((s) => deliverReplyNow(s)),
+          onFindSpawn: (variant) => game.edit((s) => void spawnFind(s, slider.index, variant ?? undefined)),
+          onFindsClear: () => game.edit((s) => clearFinds(s, slider.index)),
+          onSpecimensClear: () => game.edit((s) => clearSpecimens(s)),
           onLoupeZoom: (z) => (loupe.zoom = z),
           onLoupeHome: () => loupe.returnToTable(),
         })
@@ -401,6 +406,7 @@ async function main(): Promise<void> {
       panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers);
       panel.showFeed(feedText());
       panel.showUncle(game.state);
+      panel.showFinds(game.state);
     };
     game.onChange(refreshPanel);
     refreshPanel();
@@ -414,13 +420,53 @@ async function main(): Promise<void> {
   const carry = new Carry(app, game, slider, toNdc, () => canvas.clientWidth, sendConfirm, () =>
     app.boxAnchor(canvas.clientWidth, canvas.clientHeight),
   );
-  /** 海月やポリプの上なら札を出し、瓶の空いたところならガラスをつつく */
+  /**
+   * 瓶底の拾いもの id を拾う：初めてなら写真を撮り、物は薄れて消え、小さな光になって日誌のアイコンへ吸い込まれる。
+   * 状態はここで変える（標本に移る）。日誌には書かない
+   */
+  const pickUpFind = (id: number): void => {
+    const s = game.state.specimens.find((x) => x.id === id);
+    if (!s?.at) return;
+    tag.hide();
+    const at = app.findScreen(id, canvas.clientWidth, canvas.clientHeight);
+    const photo = s.photo ? null : app.photoFind(id);
+    if (!game.pickFind(id, photo)) return;
+    if (at) flyLight(at, journalButton.center(), () => journalButton.glow());
+  };
+  /** 泳ぐ個体の上なら札、瓶底の拾いものの上なら拾う、ポリプの上なら札、瓶の空いたところならガラスをつつく */
   const tapAt = (p: Point): void => {
     const [x, y] = toNdc(p);
+    const swimmer = app.pickAt(x, y, fingerNdc(), true);
+    if (swimmer !== null) {
+      tag.show(swimmer);
+      return;
+    }
+    const find = app.handsBusy ? null : app.pickFind(x, y, fingerNdc());
+    if (find !== null) {
+      pickUpFind(find);
+      return;
+    }
     const id = app.pickAt(x, y, fingerNdc());
     if (id !== null) tag.show(id);
     else app.poke(x, y);
   };
+
+  /** 標本から瓶へ戻す：瓶底の上で離すと、表示中の瓶に置く（水面のすぐ下から沈む）。置けなければ標本へ戻る */
+  const placeAt = (id: number, x: number, y: number): boolean => {
+    if (app.handsBusy || slider.moving || !app.atRest) return false;
+    const spot = app.floorSpotAt(...toNdc({ x, y }));
+    const j = slider.index;
+    if (!spot || game.canPlaceFind(id, j) !== 'placed') return false;
+    app.dropFind(j, id);
+    const yaw = (((id * 2654435761) >>> 0) / 4294967296) * Math.PI * 2;
+    return game.placeFind(id, j, spot, yaw) === 'placed';
+  };
+  const findCarry = new FindCarry({
+    drop: placeAt,
+    over: (x, y) => app.atRest && !app.handsBusy && app.floorSpotAt(...toNdc({ x, y })) !== null,
+    home: () => journalButton.center(),
+    returned: () => journalButton.glow(),
+  });
   /** 長押しでつまめる個体（指を置いたときに、その下にいた泳ぐ個体） */
   let holdable: number | null = null;
   new Gestures(canvas, {
@@ -566,6 +612,19 @@ async function main(): Promise<void> {
       send: (id: number) => game.send(id),
       replyNow: () => edit((s) => deliverReplyNow(s)),
       firstLetter: () => edit((s) => resetFirstLetter(s, slider.index)),
+      // 拾いもの：表示中の瓶に出す（variant を決めなければ重みで選ぶ。番号を返す）、瓶底の物の画面上の位置、拾う（タップと同じ）、
+      // 標本から置く（画面の CSS px。置けたら true）、瓶底の物を消す、標本を空に
+      spawnFind: (variant?: string) => {
+        let id = 0;
+        edit((s) => (id = spawnFind(s, slider.index, variant)));
+        return id;
+      },
+      findWhere: (id: number) => app.findScreen(id, canvas.clientWidth, canvas.clientHeight),
+      pickFind: (id: number) => pickUpFind(id),
+      placeFind: (id: number, x: number, y: number) => placeAt(id, x, y),
+      floorSpot: (x: number, y: number) => app.floorSpotAt(...toNdc({ x, y })),
+      clearFinds: () => edit((s) => clearFinds(s, null)),
+      clearSpecimens: () => edit((s) => clearSpecimens(s)),
       // 虫眼鏡：今の様子、「よく見る」、倍率、天板へ戻す、画質「低」（引き伸ばし）、レンズの中を画像に（一辺 px）
       loupe: () => loupe.state,
       look: (id: number) => loupe.lookAt(id),

@@ -1,10 +1,11 @@
 // 確認用の書き換え（デバッグパネルから）。状態をその場で書き換える。
 // 上限は見ない（見た目の確認のために、何匹でも出せる）。
 import { LIFE, type LifeRules } from '../config';
+import { addFind, findSpots } from './finds';
 import { createCreature, enterStage, pickSpot, updateResting } from './lifecycle';
 import { BASE_GENES, inheritGenes, sanitizeGenes, type Genes } from './genes';
 import { createRng, type Rng } from './rng';
-import { isSwimmer, type Creature, type GameState, type Stage } from './state';
+import { isSwimmer, wallAt, type Creature, type GameState, type Stage } from './state';
 
 function withRng<T>(state: GameState, fn: (rng: Rng) => T): T {
   const rng = createRng(state.rng);
@@ -14,7 +15,7 @@ function withRng<T>(state: GameState, fn: (rng: Rng) => T): T {
 }
 
 function spots(state: GameState, jarIndex: number): Array<[number, number]> {
-  return state.jars[jarIndex]!.creatures.flatMap((c) => (c.spot ? [c.spot] : []));
+  return [...state.jars[jarIndex]!.creatures.flatMap((c) => (c.spot ? [c.spot] : [])), ...findSpots(state, jarIndex)];
 }
 
 export function findCreature(state: GameState, id: number): { jar: number; creature: Creature } | null {
@@ -127,4 +128,19 @@ export function editGenes(state: GameState, id: number, edit: GeneEdit): void {
       c.genes = { ...g, leaves };
     });
   } else c.genes = sanitizeGenes({ ...c.genes, ...edit.set });
+}
+
+/** 確認用：瓶 jar の瓶底に拾いものを1つ出す（variant を決めなければ重みで選ぶ）。上限は見ない */
+export function spawnFind(state: GameState, jarIndex: number, variant?: string): number {
+  return withRng(state, (rng) => addFind(state, jarIndex, rng, wallAt(state, state.time + state.pending), variant).id);
+}
+
+/** 確認用：瓶 jar の瓶底の物をすべて消す（null ならすべての瓶）。標本はそのまま */
+export function clearFinds(state: GameState, jarIndex: number | null): void {
+  state.specimens = state.specimens.filter((s) => !s.at || (jarIndex !== null && s.at.jar !== jarIndex));
+}
+
+/** 確認用：標本を空にする（瓶底の物はそのまま） */
+export function clearSpecimens(state: GameState): void {
+  state.specimens = state.specimens.filter((s) => s.at !== null);
 }

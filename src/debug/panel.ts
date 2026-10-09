@@ -2,14 +2,14 @@
 // 時刻の上書き（光の確認用）、背景写真の切り替えと重ね表示（位置合わせの確認用）、FPS、
 // 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、餌（1日1回を無視してやる・記録を消す）、
 // 揺れ（今の値と閾値、センサーなしで一回揺らす・逆さまから起き直るところを見る）、
-// おじさん（最初の手紙を出し直す・返事を今すぐ届ける）、虫眼鏡（倍率・天板へ戻す）、
+// おじさん（最初の手紙を出し直す・返事を今すぐ届ける）、拾いもの（表示中の瓶に出す・消す、標本を空に）、虫眼鏡（倍率・天板へ戻す）、
 // 状態の表示・リセット・書き出し・読み込み。
-import { DEBUG, LOUPE, type PhotoName } from '../config';
+import { DEBUG, FIND_VARIANTS, LOUPE, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
 import type { GeneEdit } from '../sim/edit';
 import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
 import { downloadText, exportFilename } from '../ui/download';
-import { STAGE_LABELS } from '../ui/labels';
+import { FIND_NAMES, STAGE_LABELS } from '../ui/labels';
 
 export interface DebugPanelOptions {
   /** 時刻の上書き。null なら端末の時計に従う */
@@ -58,6 +58,10 @@ export interface DebugPanelOptions {
   /** おじさん：最初の手紙を封筒のまま表示中の瓶の横に出し直す、返事を今すぐ届ける */
   onFirstLetter(): void;
   onReplyNow(): void;
+  /** 拾いもの：表示中の瓶の瓶底に出す（null なら重みで選ぶ。上限は見ない）、表示中の瓶の瓶底の物を消す、標本を空にする */
+  onFindSpawn(variant: string | null): void;
+  onFindsClear(): void;
+  onSpecimensClear(): void;
   /** 虫眼鏡：倍率を変える、天板へ戻す */
   onLoupeZoom(zoom: number): void;
   onLoupeHome(): void;
@@ -127,6 +131,7 @@ export class DebugPanel {
   private readonly genesEl: HTMLDivElement;
   private readonly motionEl: HTMLDivElement;
   private readonly uncleEl: HTMLDivElement;
+  private readonly findsEl: HTMLDivElement;
   /** 選んでいる個体と、進みのつまみを動かしている最中か */
   private selected: number | null = null;
   private pickNewest = false;
@@ -224,6 +229,18 @@ export class DebugPanel {
         </div>
       </details>
       <details>
+        <summary>拾いもの</summary>
+        <div class="finds sub"></div>
+        <label class="row">種類 <select class="find-variant" aria-label="種類"><option value="">重みで選ぶ</option>${Object.keys(FIND_VARIANTS)
+          .map((k) => `<option value="${k}">${FIND_NAMES[k] ?? k}</option>`)
+          .join('')}</select></label>
+        <div class="row buttons">
+          <button type="button" class="find-spawn">瓶底に出す</button>
+          <button type="button" class="finds-clear">瓶底の物を消す</button>
+          <button type="button" class="specimens-clear">標本を空に</button>
+        </div>
+      </details>
+      <details>
         <summary>虫眼鏡</summary>
         <label class="row">倍率 <input class="zoom" type="range" min="${LOUPE.zoomRange[0]}" max="${LOUPE.zoomRange[1]}" step="0.1" value="${LOUPE.zoom}" aria-label="倍率"> <span class="zoom-v">×${LOUPE.zoom.toFixed(1)}</span></label>
         <div class="row buttons"><button type="button" class="loupe-home">天板へ戻す</button></div>
@@ -276,6 +293,11 @@ export class DebugPanel {
     this.uncleEl = root.querySelector('.uncle')!;
     root.querySelector('.first-letter')!.addEventListener('click', () => this.opts.onFirstLetter());
     root.querySelector('.reply-now')!.addEventListener('click', () => this.opts.onReplyNow());
+    this.findsEl = root.querySelector('.finds')!;
+    const variant = root.querySelector<HTMLSelectElement>('.find-variant')!;
+    root.querySelector('.find-spawn')!.addEventListener('click', () => this.opts.onFindSpawn(variant.value || null));
+    root.querySelector('.finds-clear')!.addEventListener('click', () => this.opts.onFindsClear());
+    root.querySelector('.specimens-clear')!.addEventListener('click', () => this.opts.onSpecimensClear());
     const zoom = root.querySelector<HTMLInputElement>('.zoom')!;
     const zoomV = root.querySelector<HTMLSpanElement>('.zoom-v')!;
     zoom.addEventListener('input', () => {
@@ -458,6 +480,18 @@ export class DebugPanel {
     const sealed = state.letters.filter((l) => l.sealed).length;
     const text = `送った ${state.sent.length}匹　${reply}　手紙 ${state.letters.length}通${sealed ? `（封筒 ${sealed}）` : ''}`;
     if (this.uncleEl.textContent !== text) this.uncleEl.textContent = text;
+  }
+
+  /** 拾いもの：瓶ごとの瓶底の物（置いた物）と、標本の数 */
+  showFinds(state: GameState): void {
+    const jars = state.jars.map((_, j) => {
+      const here = state.specimens.filter((s) => s.at?.jar === j);
+      const placed = here.filter((s) => s.at!.placed).length;
+      return `瓶${j + 1} ${here.length}${placed ? `（置いた ${placed}）` : ''}`;
+    });
+    const book = state.specimens.filter((s) => s.at === null).length;
+    const text = `${jars.join('・')}　標本 ${book}`;
+    if (this.findsEl.textContent !== text) this.findsEl.textContent = text;
   }
 
   tick(dt: number): void {

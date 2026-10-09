@@ -5,8 +5,9 @@
 import { JOURNAL, SUN } from '../../config';
 import { feedDay } from '../../sim/feed';
 import { sunTimes, type SunTimes } from '../../sim/sun';
+import { bookSpecimens } from '../../sim/finds';
 import type { GameState, JournalEntry, JournalKind, Letter, Stage } from '../../sim/state';
-import { STAGE_LABELS } from '../labels';
+import { FIND_NAMES, STAGE_LABELS } from '../labels';
 
 export type Daypart = 'dawn' | 'day' | 'dusk' | 'night';
 
@@ -252,5 +253,25 @@ function rosterJars(state: GameState): RosterPage[] {
         stage: STAGE_LABELS[c.stage as Stage],
         arrived: dayTitle(feedDay(c.arrivedWallTime)),
       })),
+  }));
+}
+
+export interface SpecimenItem {
+  id: number;
+  /** 種類と色（「青いシーグラス」） */
+  name: string;
+  /** 初めて拾った日（「9月27日」。日は朝4時で区切る） */
+  found: string;
+  /** 初めて拾ったときの写真（なければ null） */
+  photo: string | null;
+}
+
+/** 標本：標本にある物を拾った順に。名前と拾った日だけ（どの瓶かは書かない） */
+export function specimenItems(state: GameState): SpecimenItem[] {
+  return bookSpecimens(state).map((s) => ({
+    id: s.id,
+    name: FIND_NAMES[s.variant] ?? s.variant,
+    found: dayTitle(feedDay(s.foundWallTime ?? s.appearedWallTime)),
+    photo: s.photo,
   }));
 }

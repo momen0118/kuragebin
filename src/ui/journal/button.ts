@@ -13,6 +13,7 @@ const ICON = `
 export class JournalButton {
   private readonly el: HTMLButtonElement;
   private unread = false;
+  private glowTimer = 0;
 
   constructor(onOpen: () => void) {
     const el = document.createElement('button');
@@ -24,6 +25,21 @@ export class JournalButton {
     keepToSelf(el);
     document.body.appendChild(el);
     this.el = el;
+  }
+
+  /** アイコンの真ん中（画面の CSS px）。拾った物の光が吸い込まれる先 */
+  center(): { x: number; y: number } {
+    const r = this.el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
+  /** 光を受け取った：アイコンが少しのあいだ明るくなる */
+  glow(): void {
+    this.el.classList.remove('absorb');
+    void this.el.offsetWidth;
+    this.el.classList.add('absorb');
+    clearTimeout(this.glowTimer);
+    this.glowTimer = window.setTimeout(() => this.el.classList.remove('absorb'), 900);
   }
 
   /** 未読の点 */

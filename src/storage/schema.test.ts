@@ -63,8 +63,9 @@ describe('版4からのマイグレーション', () => {
     const m = migrate(v4);
     expect(m.schema).toBe(SCHEMA_VERSION);
     expect(m.jars.every((j) => j.stirredUntil === null)).toBe(true);
-    // 版6より前のデータには、版7で最初の手紙と日誌の一行が足される（それ以外はそのまま）
-    expect({ ...m, letters: s.letters, journal: s.journal }).toEqual(s);
+    // 版6より前のデータには、版7で最初の手紙と日誌の一行が足される。版8で標本は空から（それ以外はそのまま）
+    expect({ ...m, letters: s.letters, journal: s.journal, specimens: s.specimens }).toEqual(s);
+    expect(m.specimens).toEqual([]);
     expect(m.journal.slice(0, s.journal.length)).toEqual(s.journal);
   });
 
@@ -120,8 +121,9 @@ describe('版2からのマイグレーション', () => {
     expect(m.schema).toBe(SCHEMA_VERSION);
     expect(m.jars.every((j) => j.fedWallTime === null)).toBe(true);
     expect(m.jars[0]!.creatures.every((c) => c.meal === null)).toBe(true);
-    // 版6より前のデータには、版7で最初の手紙と日誌の一行が足される（それ以外はそのまま）
-    expect({ ...m, letters: s.letters, journal: s.journal }).toEqual(s);
+    // 版6より前のデータには、版7で最初の手紙と日誌の一行が足される。版8で標本は空から（それ以外はそのまま）
+    expect({ ...m, letters: s.letters, journal: s.journal, specimens: s.specimens }).toEqual(s);
+    expect(m.specimens).toEqual([]);
     expect(m.journal.slice(0, s.journal.length)).toEqual(s.journal);
   });
 

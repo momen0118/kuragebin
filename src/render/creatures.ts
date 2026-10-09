@@ -7,6 +7,7 @@ import { genesKey } from '../sim/genes';
 import { createRng } from '../sim/rng';
 import { isSwimmer, type Creature, type JarState } from '../sim/state';
 import type { Eater } from './food';
+import type { FloorSortable } from './finds';
 import { Jellyfish } from './jelly/jellyfish';
 import { Polyp } from './jelly/polyp';
 import { swimBounds, type Neighbor } from './jelly/swim';
@@ -45,6 +46,8 @@ export class Creatures {
   private obstructed = false;
   private realSize = false;
   private readonly tmp = new Vector3();
+  /** 瓶底の拾いもの（ポリプと一緒に奥から並べる）。finds.ts が持つ配列をそのまま使う */
+  floorExtras: readonly FloorSortable[] = [];
   /** 見せ場で食べる個体（毎フレーム作り直さないよう使い回す） */
   private readonly eaterList: Eater[] = [];
 
@@ -233,8 +236,10 @@ export class Creatures {
     const far = (o: Vector3): number => -o.distanceToSquared(cam);
     swim.sort((a, b) => far(a.jelly.swimmer.pos) - far(b.jelly.swimmer.pos));
     swim.forEach((v, i) => v.jelly.setRenderOrder(30 + i));
-    polyps.sort((a, b) => far(a.polyp.base) - far(b.polyp.base));
-    polyps.forEach((v, i) => v.polyp.setRenderOrder(12 + i * 0.5));
+    // 瓶底の個体と拾いものを、奥から順に
+    const floor: FloorSortable[] = [...polyps.map((v) => v.polyp), ...this.floorExtras];
+    floor.sort((a, b) => far(a.base) - far(b.base));
+    floor.forEach((f, i) => f.setRenderOrder(12 + i * 0.5));
   }
 
   /** ガラスをつつかれた。近くの個体が反応したら true */

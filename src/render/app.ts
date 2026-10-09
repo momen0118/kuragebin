@@ -19,15 +19,16 @@ import {
   Vector2,
   Vector3,
   Vector4,
+  UnsignedByteType,
+  WebGLRenderTarget,
   WebGLRenderer,
   type Object3D,
   type Texture,
-  type WebGLRenderTarget,
 } from 'three';
-import { BELL, BOX, CUP, FOOD, JAR, LAMP, LOUPE, PHOTO, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
-import type { JarState } from '../sim/state';
+import type { JarState, Specimen } from '../sim/state';
 import type { Kick } from '../ui/motionFilter';
 import { Bloom } from './bloom';
 import { Box } from './box';
@@ -37,10 +38,11 @@ import { FullscreenPass } from './fullscreen';
 import { Creatures } from './creatures';
 import { Cup } from './cup';
 import { Feeding } from './feeding';
+import { Finds } from './finds';
 import { Food } from './food';
 import { LoupeLens, type LensView } from './loupe';
 import { createJar, type Jar } from './jar';
-import { apparentNdc } from './lensMap';
+import { apparentNdc, contentsAt } from './lensMap';
 import { lightAt, type LightState } from './lighting';
 import { Bubble, createSnow, type Snow } from './particles';
 import { Pipette } from './pipette';
@@ -91,6 +93,10 @@ export class App {
   private readonly jar: Jar;
   /** 瓶ごとの個体（1番の瓶から） */
   readonly jars: Creatures[];
+  /** 瓶ごとの瓶底の拾いもの */
+  readonly finds: Finds[];
+  /** 置いた物が沈んでいる間、その瓶の泳ぐ個体によけさせている */
+  private readonly findObstructing: boolean[];
   private readonly bubbles: Bubble[];
   private readonly snow: Snow;
   private readonly tableJars: TableJars;
@@ -211,6 +217,12 @@ export class App {
     this.jar = createJar(this.shared, RIM_WARM.color);
     this.jars = Array.from({ length: SIM.jarCount }, () => new Creatures(this.shared, GLOW_LAYER, this.carried));
     this.ripples = this.jars.map(() => [0, 1, 2, 3].map(() => new Vector4()));
+    this.finds = this.jars.map((c, i) => {
+      const f = new Finds(this.shared, (x, z) => this.addRipple(i, x, z, FIND_LOOK.dropRipple, FIND_LOOK.dropRippleRadius));
+      c.floorExtras = f.sortables;
+      return f;
+    });
+    this.findObstructing = this.jars.map(() => false);
     this.cup = new Cup(this.shared);
     this.cupScene.add(this.cup.group);
     const app = this;
@@ -279,6 +291,7 @@ export class App {
       this.snow.points,
       this.dust.points,
       this.food.points,
+      ...this.finds.map((f) => f.group),
       ...this.jars.map((c) => c.group),
       ...this.bubbles.map((b) => b.points),
       this.jar.surface,
@@ -439,6 +452,7 @@ export class App {
     this.dust.points.visible = i === this.effectsJar && this.dust.active;
     this.snow.shift.value = i;
     this.jars.forEach((c, k) => (c.group.visible = k === i && !c.hidden));
+    this.finds.forEach((f, k) => (f.group.visible = k === i));
     this.bubbles.forEach((b, k) => (b.points.visible = k === i && b.isActive));
     this.food.points.visible = this.feeding.active && i === this.feeding.jar;
     return cam;
@@ -502,10 +516,11 @@ export class App {
     this.roomDirty = this.wideDirty = true;
   }
 
-  /** 瓶ごとの個体を状態に合わせる。time はゲーム内の今（胃の餌の薄れ方に使う） */
-  setJars(jars: readonly JarState[], time: number): void {
+  /** 瓶ごとの個体と瓶底の拾いものを状態に合わせる。time はゲーム内の今（胃の餌の薄れ方に使う） */
+  setJars(jars: readonly JarState[], time: number, specimens: readonly Specimen[] = []): void {
     jars.forEach((jar, i) => {
       this.jars[i]?.sync(jar, time);
+      this.finds[i]?.sync(specimens.filter((s) => s.at?.jar === i));
       if (i < this.sediments.length) this.sediments[i] = jar.sediment;
     });
   }
@@ -618,9 +633,9 @@ export class App {
     return this.scoop.busy;
   }
 
-  /** カップかスポイトを使っているところか。その間は、どちらも新しく使わない */
+  /** カップかスポイトを使っているところか（と、標本から置いた物が沈んでいる間）。その間は、どれも新しく使わない */
   get handsBusy(): boolean {
-    return this.scoop.busy || this.feeding.busy;
+    return this.scoop.busy || this.feeding.busy || this.finds.some((f) => f.busy);
   }
 
   /** スポイトを使っているところか（現れてから消えるまで） */
@@ -696,6 +711,109 @@ export class App {
     const shot = this.lensShot;
     if (!v || !shot) return null;
     return this.lens.capture(this.renderer, v, shot.src, shot.origin, shot.size, this.renderer.getPixelRatio(), this.height, px);
+  }
+
+  /** 表示中の瓶で、画面上の点（ndc）にある瓶底の拾いものの番号。瓶が止まっているときだけ。minNdc は指で押せる大きさ */
+  pickFind(ndcX: number, ndcY: number, minNdc: number): number | null {
+    if (!this.atRest) return null;
+    const i = this.jarIndex;
+    return this.finds[i]!.pick(ndcX, ndcY, this.placeJarCamera(i), minNdc);
+  }
+
+  /** 表示中の瓶の拾いもの id が画面のどこに見えるか（CSS px、レンズ越し）。なければ null */
+  findScreen(id: number, cssWidth: number, cssHeight: number): { x: number; y: number; r: number } | null {
+    const i = this.jarIndex;
+    const a = this.finds[i]!.apparent(id, this.placeJarCamera(i));
+    if (!a) return null;
+    return { x: ((a.x + 1) / 2) * cssWidth, y: ((1 - a.y) / 2) * cssHeight, r: (a.r * cssHeight) / 2 };
+  }
+
+  /**
+   * 表示中の瓶の拾いもの id の写真（標本に貼る）。その所を狭い画角で描き直して小さな画像にする（そのときの光のまま、
+   * 暗すぎるときだけ少し明るさを持ち上げる）。JPEG の data URL。撮れなければ null
+   */
+  photoFind(id: number): string | null {
+    if (!this.atRest) return null;
+    const r = this.renderer;
+    const ratio = r.getPixelRatio();
+    const cssW = this.width / ratio;
+    const cssH = this.height / ratio;
+    const at = this.findScreen(id, cssW, cssH);
+    if (!at) return null;
+    const hs = Math.max(at.r * FIND_PHOTO.frame, FIND_PHOTO.minHalfPx);
+    const vis = this.visibleJars();
+    const xs = vis.map((i) => this.jarX(i));
+    const px = FIND_PHOTO.px;
+    this.renderRegion(vis, xs, at.x - hs, at.y - hs, 2 * hs, px);
+    const rt = new WebGLRenderTarget(px, px, { type: UnsignedByteType, depthBuffer: false });
+    this.copy.uniforms.tSrc.value = this.lens.out.texture;
+    this.copy.render(r, rt);
+    const data = new Uint8Array(px * px * 4);
+    r.readRenderTargetPixels(rt, 0, 0, px, px, data);
+    rt.dispose();
+    r.setRenderTarget(null);
+    // 暗すぎるときだけ持ち上げる（拾いもののあたり、真ん中の明るさで測る）
+    let sum = 0;
+    let count = 0;
+    const lo = Math.floor(px * (0.5 - FIND_PHOTO.meter / 2));
+    const hi = Math.ceil(px * (0.5 + FIND_PHOTO.meter / 2));
+    for (let y = lo; y < hi; y++) {
+      for (let x = lo; x < hi; x++) {
+        const k = (y * px + x) * 4;
+        sum += 0.2126 * data[k]! + 0.7152 * data[k + 1]! + 0.0722 * data[k + 2]!;
+        count++;
+      }
+    }
+    const mean = sum / (count * 255);
+    const gain = mean < FIND_PHOTO.liftBelow ? Math.min(FIND_PHOTO.liftBelow / Math.max(mean, 1e-3), FIND_PHOTO.maxLift) : 1;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = px;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const img = ctx.createImageData(px, px);
+    // 読み出しは下の行から。上下を返す
+    for (let y = 0; y < px; y++) {
+      const src = (px - 1 - y) * px * 4;
+      const dst = y * px * 4;
+      for (let x = 0; x < px * 4; x += 4) {
+        img.data[dst + x] = data[src + x]! * gain;
+        img.data[dst + x + 1] = data[src + x + 1]! * gain;
+        img.data[dst + x + 2] = data[src + x + 2]! * gain;
+        img.data[dst + x + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    try {
+      return canvas.toDataURL('image/jpeg', FIND_PHOTO.quality);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 画面上の点（ndc）が、表示中の瓶の瓶底のどこに見えるか（瓶底の内側の半径を 1 とした [x, z]、水とガラスのレンズ越し）。
+   * 瓶底の上でなければ（瓶の外、瓶底より上の水の中に見える所）null
+   */
+  floorSpotAt(ndcX: number, ndcY: number): [number, number] | null {
+    if (!this.atRest) return null;
+    const cam = this.placeJarCamera(this.jarIndex);
+    // 手前のガラスがそこに映している中身の点。カメラからその点へ向かう線が、瓶底の面と交わる所
+    const s = contentsAt(cam, ndcX, ndcY, this.tmpV);
+    if (!s) return null;
+    const o = this.tmpV2.setFromMatrixPosition(cam.matrixWorld);
+    const dy = s.y - o.y;
+    if (dy > -1e-4) return null;
+    const t = (JAR.bottomThickness - o.y) / dy;
+    const x = o.x + (s.x - o.x) * t;
+    const z = o.z + (s.z - o.z) * t;
+    const inner = JAR.radius - JAR.glassThickness;
+    const spot: [number, number] = [x / inner, z / inner];
+    return Math.hypot(spot[0], spot[1]) <= FIND_LOOK.dropReach ? spot : null;
+  }
+
+  /** 標本から置いた物 id を、瓶 jar に次に現れるとき水面のすぐ下から沈める（状態を変える前に呼ぶ） */
+  dropFind(jar: number, id: number): void {
+    this.finds[jar]?.drop(id);
   }
 
   /** 運んでいる間、指が画面の下のほう（箱のあたり）にあるか。あると箱がせり上がる */
@@ -843,6 +961,13 @@ export class App {
       water.update(d);
       if (water.field.stir >= SLOSH.recordAt) this.stirred[i] = true;
       const field = water.still ? null : water.field;
+      // 標本から置いた物が沈んでいる間は、泳ぐ個体がよける
+      const finds = this.finds[i]!;
+      finds.update(d);
+      const sinking = finds.sinking(this.tmpV);
+      if (sinking) creatures.setObstacle(sinking, FIND_LOOK.sinkAvoid);
+      else if (this.findObstructing[i]) creatures.setObstacle(null);
+      this.findObstructing[i] = sinking !== null;
       creatures.update(d, this.placeJarCamera(i), field);
       this.bubbles[i]!.update(d, field);
       // 拍動が水面を揺らす（水面に近いほど強い。小さな個体ほど弱い）
@@ -932,8 +1057,6 @@ export class App {
     const v = this.loupe!;
     const r = this.renderer;
     const ratio = r.getPixelRatio();
-    const cssW = this.width / ratio;
-    const cssH = this.height / ratio;
     // 描き直す所（CSS px、左上が原点）：レンズの真ん中のまわり、倍率で割った広さ
     const hs = (v.radius * LOUPE.margin) / v.zoom;
     const x0 = v.x - hs;
@@ -946,18 +1069,33 @@ export class App {
       this.lens.draw(r, v, this.lens.grabbed!, at, this.lens.grabSize, ratio, this.height);
       return;
     }
-    this.lens.ensure(2 * v.radius * LOUPE.margin * Math.min(ratio, LOUPE.maxDpr));
+    this.renderRegion(vis, xs, x0, y0, 2 * hs, 2 * v.radius * LOUPE.margin * Math.min(ratio, LOUPE.maxDpr));
+    this.lensShot = { src: this.lens.out.texture, origin, size };
+    r.setRenderTarget(null);
+    this.lens.draw(r, v, this.lens.out.texture, origin, size, ratio, this.height);
+  }
+
+  /**
+   * 画面の一部（CSS px、左上 x0, y0、一辺 side）だけを、カメラの視野の一部として描き直す（狭い画角）。
+   * できあがりは this.lens.out（一辺 px 画素）。虫眼鏡のレンズと、標本の写真に使う
+   */
+  private renderRegion(vis: number[], xs: number[], x0: number, y0: number, side: number, px: number): void {
+    const r = this.renderer;
+    const ratio = r.getPixelRatio();
+    const cssW = this.width / ratio;
+    const cssH = this.height / ratio;
+    this.lens.ensure(px);
     const n = this.lens.out.width;
     const s = this.shared;
     const fu = this.jar.frontUniforms;
     const saved = { scale: fu.uCoverScale.value.clone(), offset: fu.uCoverOffset.value.clone() };
-    this.camera.setViewOffset(cssW, cssH, x0, y0, 2 * hs, 2 * hs);
-    this.jarCam.setViewOffset(cssW, cssH, x0, y0, 2 * hs, 2 * hs);
+    this.camera.setViewOffset(cssW, cssH, x0, y0, side, side);
+    this.jarCam.setViewOffset(cssW, cssH, x0, y0, side, side);
     s.uResolution.value.set(n, n);
     // 画素で決めている太さ（触手）も、拡大したぶん太く
-    s.uPixelRatio.value = n / (2 * hs);
+    s.uPixelRatio.value = n / side;
     s.tRoom.value = this.lens.room.texture;
-    const rect = [x0 / cssW, 1 - (y0 + 2 * hs) / cssH, (2 * hs) / cssW, (2 * hs) / cssH] as const;
+    const rect = [x0 / cssW, 1 - (y0 + side) / cssH, side / cssW, side / cssH] as const;
     fu.uCoverScale.value.set(saved.scale.x * rect[2], saved.scale.y * rect[3]);
     fu.uCoverOffset.value.set(saved.offset.x + saved.scale.x * rect[0], saved.offset.y + saved.scale.y * rect[1]);
     const [wall, table] = this.parallaxStep;
@@ -972,9 +1110,6 @@ export class App {
     fu.uCoverScale.value.copy(saved.scale);
     fu.uCoverOffset.value.copy(saved.offset);
     this.jar.floorBg.value = this.bgRT.texture;
-    this.lensShot = { src: this.lens.out.texture, origin, size };
-    r.setRenderTarget(null);
-    this.lens.draw(r, v, this.lens.out.texture, origin, size, ratio, this.height);
   }
 
   /**

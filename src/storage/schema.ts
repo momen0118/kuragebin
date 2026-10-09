@@ -1,6 +1,6 @@
 // 保存データの版とマイグレーション。古い版のデータは1版ずつ順に今の形へ直す。
 // 形が合わないデータは読み込まない（呼び出し側で新しい状態から始める）。
-import { CARE, LIFE } from '../config';
+import { CARE, FIND_VARIANTS, LIFE } from '../config';
 import { BASE_GENES, sanitizeGenes } from '../sim/genes';
 import { DEFAULT_SETTINGS, firstLetter, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Stage } from '../sim/state';
 
@@ -107,9 +107,14 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
       journal: [...journal, { kind: 'firstLetter', jar: -1, count: 1, ids: [], time: t, wallTime: now, name: null }],
     };
   },
+  // 8：拾いもの。それまでの標本の欄は使っていなかった（空のまま）
+  7: (d) => ({ ...d, specimens: [] }),
 };
 
 export class SchemaError extends Error {}
+
+/** 標本の写真として受け付ける形 */
+const PHOTO_URL = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 
 /** 保存データを今の版の状態にする。読めなければ SchemaError */
 export function migrate(input: unknown): GameState {
@@ -221,6 +226,26 @@ function validate(d: Raw): GameState {
     reply,
     lastReplyAt: isNumber(u.lastReplyAt) ? u.lastReplyAt : null,
   };
+  // 拾いもの：読めない物だけを除く。瓶底の場所が読めなければ標本にあることにする（まだ拾っていなければ除く）
+  d.specimens = (d.specimens as unknown[]).filter(
+    (s: unknown) => isObject(s) && isNumber(s.id) && typeof s.variant === 'string' && FIND_VARIANTS[s.variant] !== undefined && isNumber(s.seed),
+  );
+  for (const s of d.specimens as Raw[]) {
+    s.kind = FIND_VARIANTS[s.variant as string]!.kind;
+    if (!isNumber(s.appearedAt)) s.appearedAt = 0;
+    if (!isNumber(s.appearedWallTime)) s.appearedWallTime = d.createdAt;
+    if (!(isNumber(s.foundAt) && isNumber(s.foundWallTime))) {
+      s.foundAt = null;
+      s.foundWallTime = null;
+    }
+    // 写真は画像の data URL だけ（読み込んだデータから、ページに別のものが入らないように）
+    if (typeof s.photo !== 'string' || !PHOTO_URL.test(s.photo)) s.photo = null;
+    const at = s.at;
+    const ok =
+      isObject(at) && isNumber(at.jar) && at.jar >= 0 && at.jar < (d.jars as unknown[]).length && isSpot(at.spot) && at.spot !== null && isNumber(at.yaw);
+    s.at = ok ? { jar: at.jar, spot: at.spot, yaw: at.yaw, placed: at.placed === true } : null;
+  }
+  d.specimens = (d.specimens as Raw[]).filter((s) => s.at !== null || s.foundAt !== null);
   // 設定は足りない項目を初期値で埋める（あとから設定が増えても読める）
   const settings = isObject(d.settings) ? d.settings : {};
   const merged = { ...DEFAULT_SETTINGS, ...settings };

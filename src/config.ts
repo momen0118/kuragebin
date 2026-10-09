@@ -950,6 +950,137 @@ export const LOUPE = {
   tableY: 0.87,
 } as const;
 
+/**
+ * 拾いもの（4-2）。貝殻のかけら・シーグラス・小石が、見ていない間にまれに瓶底に現れる（入れ替えた水に混じっていたもの）。
+ * タップで拾うと日誌の標本に移り、標本から瓶へ戻して飾れる。1瓶に合わせて maxPerJar まで、そのうち自分で置いた物は maxPlaced まで
+ * （自分で置いた物がある瓶では、勝手に現れる物はその分少なくなる）。日誌には書かない
+ */
+export const FINDS = {
+  /** 1瓶あたり平均この日数に1つ現れる（見ていない間だけ。水換えとは関係なく、日数で決める） */
+  meanDays: 7,
+  maxPerJar: 3,
+  maxPlaced: 1,
+  /** 種類の出やすさ（重み） */
+  kinds: { glass: 0.4, shell: 0.3, pebble: 0.3 } as Readonly<Record<'glass' | 'shell' | 'pebble', number>>,
+  /**
+   * 現れる場所（瓶底の内側の半径を 1）：軸からの距離と左右の上限（瓶の縁の近くは像が詰まって見えにくい）、
+   * ポリプやほかの物との間（奥行きの差は軽く数える）、選び直す回数
+   */
+  spotRadius: 0.68,
+  spotMaxX: 0.6,
+  spacing: 0.24,
+  depthWeight: 0.4,
+  tries: 16,
+  /** 自分で置くとき、ポリプやほかの物にこれより近ければ、近くの空いた所へずらす。置ける範囲（軸からの距離）。瓶底の半径 1 */
+  placeSpacing: 0.16,
+  placeRadius: 0.8,
+} as const;
+
+/** 拾いものの色と模様。kind ごとの重みで選ぶ。色はリニア。pattern は 0 なし・1 縞・2 細かい斑 */
+export interface FindVariant {
+  kind: 'glass' | 'shell' | 'pebble';
+  weight: number;
+  color: Vec3;
+  color2: Vec3;
+  pattern: 0 | 1 | 2;
+}
+
+export const FIND_VARIANTS: Readonly<Record<string, FindVariant>> = {
+  // シーグラス：色の幅を広く。青・薄紫は珍しく、赤はごくまれ
+  'glass-white': { kind: 'glass', weight: 5, color: [0.74, 0.8, 0.8], color2: [0.74, 0.8, 0.8], pattern: 0 },
+  'glass-green': { kind: 'glass', weight: 5, color: [0.36, 0.66, 0.36], color2: [0.36, 0.66, 0.36], pattern: 0 },
+  'glass-brown': { kind: 'glass', weight: 4, color: [0.36, 0.15, 0.04], color2: [0.36, 0.15, 0.04], pattern: 0 },
+  'glass-aqua': { kind: 'glass', weight: 4, color: [0.38, 0.72, 0.76], color2: [0.38, 0.72, 0.76], pattern: 0 },
+  'glass-amber': { kind: 'glass', weight: 3, color: [0.8, 0.46, 0.08], color2: [0.8, 0.46, 0.08], pattern: 0 },
+  'glass-blue': { kind: 'glass', weight: 1.2, color: [0.06, 0.16, 0.78], color2: [0.06, 0.16, 0.78], pattern: 0 },
+  'glass-lavender': { kind: 'glass', weight: 0.8, color: [0.56, 0.44, 0.8], color2: [0.56, 0.44, 0.8], pattern: 0 },
+  'glass-red': { kind: 'glass', weight: 0.15, color: [0.72, 0.04, 0.05], color2: [0.72, 0.04, 0.05], pattern: 0 },
+  // 貝殻のかけら
+  'shell-white': { kind: 'shell', weight: 5, color: [0.8, 0.76, 0.67], color2: [0.7, 0.64, 0.55], pattern: 0 },
+  'shell-pink': { kind: 'shell', weight: 2, color: [0.86, 0.5, 0.52], color2: [0.9, 0.7, 0.7], pattern: 0 },
+  'shell-striped': { kind: 'shell', weight: 2.5, color: [0.78, 0.71, 0.6], color2: [0.32, 0.2, 0.13], pattern: 1 },
+  'shell-purple': { kind: 'shell', weight: 1.5, color: [0.3, 0.2, 0.36], color2: [0.7, 0.66, 0.72], pattern: 1 },
+  // 小石
+  'pebble-gray': { kind: 'pebble', weight: 5, color: [0.3, 0.3, 0.29], color2: [0.2, 0.2, 0.2], pattern: 2 },
+  'pebble-black': { kind: 'pebble', weight: 3, color: [0.05, 0.05, 0.055], color2: [0.12, 0.12, 0.12], pattern: 2 },
+  'pebble-white': { kind: 'pebble', weight: 2.5, color: [0.72, 0.7, 0.66], color2: [0.6, 0.58, 0.55], pattern: 2 },
+  'pebble-rust': { kind: 'pebble', weight: 2, color: [0.42, 0.18, 0.09], color2: [0.3, 0.13, 0.07], pattern: 2 },
+  'pebble-banded': { kind: 'pebble', weight: 0.8, color: [0.26, 0.24, 0.22], color2: [0.78, 0.75, 0.7], pattern: 1 },
+};
+
+/**
+ * 拾いものの見え方（瓶の高さ単位。瓶の高さはおよそ30cm、拾いものは実物大の1〜2cm）。
+ * 自分では光らず、部屋・窓・デスクライトの光を受けたぶんだけ見える
+ */
+export const FIND_LOOK = {
+  /** 長いほうの差し渡しの半分：シーグラス、貝殻のかけら、小石 */
+  size: { glass: [0.017, 0.028], shell: [0.016, 0.025], pebble: [0.014, 0.022] } as Readonly<Record<'glass' | 'shell' | 'pebble', readonly [number, number]>>,
+  /** 厚み（長さの半分 = 1）：シーグラス、小石。貝殻のかけらの反りの深さ */
+  glassThickness: [0.16, 0.24] as const,
+  pebbleHeight: [0.42, 0.62] as const,
+  shellCurve: [0.22, 0.4] as const,
+  /** 光の受け方：まわりの明るさ、窓の光、デスクライト、水の中の光の揺らめき（窓の光が強い時間ほど） */
+  ambient: 0.8,
+  key: 0.45,
+  lamp: 0.55,
+  caustic: 0.35,
+  /** 瓶底に触れる所の暗さ（1 で暗くならない） */
+  contactDark: 0.45,
+  /** 瓶底に落ちる淡い影：濃さ、大きさ（差し渡しの半分に対する倍率）、右へのずれ、沈んでくるときに見えはじめる高さ */
+  shadow: 0.45,
+  shadowSize: 2.6,
+  shadowShift: 0.25,
+  shadowFadeHeight: 0.12,
+  /** 濡れた面の照り（小石・貝殻）と、シーグラスの曇った面の透け具合（0 で不透明）と縁の明るさ */
+  sheen: 0.18,
+  glassAlpha: 0.72,
+  glassRim: 0.6,
+  /** シーグラスの表面の曇り（白っぽさ） */
+  glassFrost: 0.35,
+  /** 瓶底の堆積に少し埋まる深さ（厚みに対する割合） */
+  sink: 0.12,
+  /** 拾ったとき：薄れて消えるまで（秒）と、その間に持ち上がる高さ */
+  leaveSeconds: 0.4,
+  leaveRise: 0.012,
+  /** 置いたとき：水面のすぐ下から瓶底まで沈む時間（秒）と、沈みはじめの深さ、揺れながら沈む揺れの大きさ（ラジアン）、海月がよける大きさ */
+  sinkSeconds: 3.4,
+  sinkStart: 0.03,
+  sinkRock: 0.35,
+  sinkAvoid: 0.06,
+  /** 置いた物が水面のすぐ下に現れるときの、水面の小さな波紋（強さと、広がりはじめる半径） */
+  dropRipple: 0.5,
+  dropRippleRadius: 0.02,
+  /** 指で押せる大きさ（見かけの半径に対する倍率） */
+  pickScale: 1.6,
+  /** 標本から運んできた物を離したとき、瓶底の上とみなす範囲（瓶底の半径 1。外側は置ける所まで寄せる） */
+  dropReach: 1.15,
+} as const;
+
+/** 標本の写真（初めて拾ったとき）。虫眼鏡と同じく、その所を狭い画角で描き直して小さな画像にする */
+export const FIND_PHOTO = {
+  /** 写真の一辺（画素）と、写す広さ（拾いものの見かけの半径に対する倍率。下限は画面px） */
+  px: 192,
+  frame: 2.6,
+  minHalfPx: 28,
+  /** 暗すぎる写真だけ明るさを持ち上げる：真ん中（一辺に対する割合）の平均の明るさがこれより低ければ、ここまで（倍率の上限まで） */
+  meter: 0.4,
+  liftBelow: 0.2,
+  maxLift: 4,
+  /** JPEG の質 */
+  quality: 0.85,
+} as const;
+
+/** 拾ったものが光になって日誌のアイコンへ吸い込まれる（秒・画面px） */
+export const FIND_FLIGHT = {
+  seconds: 0.95,
+  /** 途中で上へふくらむ高さ（画面px） */
+  arc: 70,
+  /** 光の大きさ（直径、画面px）：はじめと終わり */
+  size: [16, 6] as const,
+  /** 標本から瓶へ運ぶとき、運ぶ物を指のこれだけ上に出す（画面px） */
+  carryLift: 44,
+} as const;
+
 /** 育ちの早まりの上限（餌と揺れで分け合う。餌で上限に届いている日は、揺らしても何も足されない） */
 export const GROWTH = {
   cap: 0.2,

@@ -7,6 +7,7 @@ import { canMove, moveCreature, renameCreature, type MoveResult } from './sim/ac
 import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
 import { canFeed, feedJar, type FeedResult } from './sim/feed';
+import { canPlace, pickFind, placeFind, setFindPhoto, type PlaceResult } from './sim/finds';
 import { stirJar } from './sim/growth';
 import { canSend, openLetter, sendCreature, type SendResult } from './sim/uncle';
 import { hasUnread } from './sim/journal';
@@ -199,6 +200,37 @@ export class Game {
     this.current = next;
     this.emit();
     void this.save();
+  }
+
+  /**
+   * 瓶底の拾いもの id を拾って標本へ移す。初めて拾ったなら、拾った日と写真（photo、撮れなければ null）を残す。
+   * 日誌には書かない。拾えたら true
+   */
+  pickFind(id: number, photo: string | null): boolean {
+    this.catchUpNow(false, this.watching);
+    const next = structuredClone(this.current);
+    if (!pickFind(next, id, this.clock.now())) return false;
+    if (photo) setFindPhoto(next, id, photo);
+    this.current = next;
+    this.emit();
+    void this.save();
+    return true;
+  }
+
+  /** 標本の物 id を瓶 jar に置けるか（自分で置ける物は1瓶に1つまで） */
+  canPlaceFind(id: number, jar: number): PlaceResult {
+    return canPlace(this.current, id, jar);
+  }
+
+  /** 標本の物 id を瓶 jar の瓶底の spot に置く（近すぎればずらす）。日誌には書かない */
+  placeFind(id: number, jar: number, spot: readonly [number, number], yaw: number): PlaceResult {
+    const next = structuredClone(this.current);
+    const result = placeFind(next, id, jar, spot, yaw);
+    if (result !== 'placed') return result;
+    this.current = next;
+    this.emit();
+    void this.save();
+    return result;
   }
 
   /** 名前を付ける（null や空なら名無しに戻す） */

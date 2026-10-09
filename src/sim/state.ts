@@ -5,7 +5,7 @@ import { BASE_GENES, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -169,11 +169,42 @@ export interface UncleState {
   lastReplyAt: number | null;
 }
 
-/** 拾いもの（フェーズ4） */
+/** 拾いものの種類 */
+export type FindKind = 'glass' | 'shell' | 'pebble';
+
+/** 瓶底にあるときの場所 */
+export interface FindSpot {
+  /** 瓶の番号（0 から） */
+  jar: number;
+  /** 瓶底の場所。瓶底の内側の半径を 1 とした [x, z] */
+  spot: [number, number];
+  /** 向き（ラジアン） */
+  yaw: number;
+  /** 自分で置いた（飾り）。勝手に現れた物は false */
+  placed: boolean;
+}
+
+/**
+ * 拾いもの（4-2）。見ていない間に瓶底に現れ（入れ替えた水に混じっていたもの）、タップで拾うと日誌の標本に移る。
+ * 標本から瓶へ戻して飾れる（at に場所が入る）。日誌には書かない
+ */
 export interface Specimen {
   id: number;
-  kind: string;
-  foundAt: number;
+  kind: FindKind;
+  /** 色や模様（config の FIND_VARIANTS のキー） */
+  variant: string;
+  /** 形の種 */
+  seed: number;
+  /** 瓶底にあれば、その場所。標本にあれば null */
+  at: FindSpot | null;
+  /** 現れた時刻（ゲーム内の秒と端末のミリ秒） */
+  appearedAt: number;
+  appearedWallTime: number;
+  /** 初めて拾った時刻（ゲーム内の秒と端末のミリ秒、まだなら null）。標本の「拾った日」 */
+  foundAt: number | null;
+  foundWallTime: number | null;
+  /** 初めて拾ったときの写真（data URL、まだなら null）。標本に貼る */
+  photo: string | null;
 }
 
 export interface Settings {
