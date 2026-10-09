@@ -1,6 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { HANDLING, KICK, MOTION, NOTEBOOK, SIM, SLOSH } from './config';
+import { HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, SIM, SLOSH, UNCLE } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -8,7 +8,8 @@ import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
 import { clearFed, clearMeals, editGenes, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, type GeneEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
-import type { GameState, Stage } from './sim/state';
+import type { GameState, Letter, Stage } from './sim/state';
+import { deliverReplyNow, resetFirstLetter } from './sim/uncle';
 import { Carry } from './ui/carry';
 import { JarDots } from './ui/dots';
 import { FeedButton } from './ui/feedButton';
@@ -17,8 +18,11 @@ import { JournalButton } from './ui/journal/button';
 import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
+import { Envelope, LetterReader } from './ui/letters';
+import { Loupe } from './ui/loupe';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
 import { ShakeDetector } from './ui/motionFilter';
+import { SendConfirm } from './ui/sendConfirm';
 import { CreatureTag } from './ui/tag';
 import { registerServiceWorker } from './pwa/register';
 
@@ -130,6 +134,20 @@ async function main(): Promise<void> {
     },
     anchor: (id) => app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight),
     rename: (id, name) => game.rename(id, name),
+    look: (id) => loupe.lookAt(id),
+  });
+
+  // 虫眼鏡。見ている瓶の手前の天板に置いてある（瓶を切り替えている間は薄くなり、隣の瓶の手前に現れる）
+  const loupe = new Loupe({
+    rest: () => {
+      const v = app.viewPosition;
+      const i = Math.min(Math.max(Math.round(v), 0), SIM.jarCount - 1);
+      const p = app.tablePoint(i, LOUPE.rest[0], LOUPE.rest[1], canvas.clientWidth, canvas.clientHeight);
+      const d = Math.abs(v - i);
+      return { ...p, alpha: 1 - Math.min(Math.max((d - 0.1) / 0.35, 0), 1) };
+    },
+    target: (id) => (app.atRest ? app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight) : null),
+    lifted: () => tag.hide(),
   });
 
   // 瓶ごとの個体を描く（描いて動かすのは見えている瓶だけ）
@@ -212,6 +230,26 @@ async function main(): Promise<void> {
     jumpToSavedJar();
   };
 
+  // おじさんの手紙。机の上の封筒（最初の手紙）はタップで読み、読んだら日誌のその日のページに留まる。
+  // 留めた手紙は、日誌のページでタップすると少し大きく開く
+  const reader = new LetterReader();
+  /** 机の上にある封筒（まだ開いていない手紙） */
+  const sealedLetter = (): Letter | null => game.state.letters.find((l) => l.sealed) ?? null;
+  const envelope = new Envelope(() => {
+    const l = sealedLetter();
+    if (!l || reader.isOpen) return;
+    tag.hide();
+    reader.open(l, () => game.openLetter(l.id));
+  });
+  /** 封筒を、置いてある瓶の横の天板の上に（瓶と一緒に動く）。カップやスポイトを使っている間は出さない */
+  const placeEnvelope = (): void => {
+    const l = sealedLetter();
+    const show = l !== null && !app.handsBusy && !reader.isOpen;
+    envelope.place(show ? app.tablePoint(l.jar, UNCLE.envelope[0], UNCLE.envelope[1], canvas.clientWidth, canvas.clientHeight) : null);
+  };
+  /** おじさんへ送るかを確かめる札 */
+  const sendConfirm = new SendConfirm();
+
   // 観察日誌（左下）。日誌に一行増えたら点が付き、開いたら消える
   const notebook = new Notebook({
     state: () => game.state,
@@ -229,6 +267,10 @@ async function main(): Promise<void> {
       game.markJournalRead();
     },
     closed: () => game.markJournalRead(),
+    readLetter: (id) => {
+      const l = game.state.letters.find((x) => x.id === id);
+      if (l) reader.open(l);
+    },
   });
   const journalButton = new JournalButton(() => notebook.open());
   const showJournal = (): void => {
@@ -252,7 +294,12 @@ async function main(): Promise<void> {
     const light = lightAt(h, sun);
     app.setLight(light);
     lampToggle.setVisible(light.lamp > 0.5);
-    notebook.setLum(paperLum(light));
+    const lum = paperLum(light);
+    notebook.setLum(lum);
+    reader.setLum(lum);
+    loupe.setLum(lum);
+    envelope.setLum(lum);
+    sendConfirm.setLum(lum);
     panel?.showHour(h, sun.sunrise, sun.sunset);
   };
 
@@ -302,6 +349,10 @@ async function main(): Promise<void> {
           onUnread: () => game.edit((s) => (s.journalSeen = 0)),
           onShake: (kind) => debugMotion.start(kind),
           onFlip: () => app.flipForDebug(),
+          onFirstLetter: () => game.edit((s) => resetFirstLetter(s, slider.index)),
+          onReplyNow: () => game.edit((s) => deliverReplyNow(s)),
+          onLoupeZoom: (z) => (loupe.zoom = z),
+          onLoupeHome: () => loupe.returnToTable(),
         })
       : null;
   /** 確認用：表示中の瓶の餌の様子 */
@@ -348,6 +399,7 @@ async function main(): Promise<void> {
       panel.showState(game.state, game.info, clock.speed, clock.drift);
       panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers);
       panel.showFeed(feedText());
+      panel.showUncle(game.state);
     };
     game.onChange(refreshPanel);
     refreshPanel();
@@ -358,7 +410,9 @@ async function main(): Promise<void> {
   const toNdc = (p: Point): [number, number] => [(p.x / canvas.clientWidth) * 2 - 1, 1 - (p.y / canvas.clientHeight) * 2];
   /** 指で押せる大きさ（ndc、画面の高さの半分を 1 とした半径） */
   const fingerNdc = (): number => HANDLING.pickRadiusPx / (canvas.clientHeight / 2);
-  const carry = new Carry(app, game, slider, toNdc, () => canvas.clientWidth);
+  const carry = new Carry(app, game, slider, toNdc, () => canvas.clientWidth, sendConfirm, () =>
+    app.boxAnchor(canvas.clientWidth, canvas.clientHeight),
+  );
   /** 海月やポリプの上なら札を出し、瓶の空いたところならガラスをつつく */
   const tapAt = (p: Point): void => {
     const [x, y] = toNdc(p);
@@ -381,6 +435,8 @@ async function main(): Promise<void> {
     tap: tapAt,
     swipeStart: () => {
       tag.hide();
+      // 瓶を切り替えるときは、虫眼鏡を天板へ戻す
+      loupe.returnToTable();
       slider.grab();
     },
     swipeMove: (dx) => slider.drag(dx),
@@ -399,10 +455,17 @@ async function main(): Promise<void> {
     applyMotion(dt);
     slider.update(dt);
     app.setView(slider.position);
+    // 虫眼鏡：瓶を切り替えている間（運んで隣へ移るときも）は天板へ戻す。カップやスポイトを使っている間は、天板の虫眼鏡を出さない
+    if (!app.atRest && loupe.inUse) loupe.returnToTable();
+    loupe.setHidden(app.handsBusy);
+    loupe.update(dt);
+    app.loupeStretch = game.state.settings.quality === 'low';
+    app.setLoupe(loupe.lens);
     if (draw) app.frame(dt);
     else app.simulate(dt);
     dots.set(slider.position);
     tag.update(dt);
+    placeEnvelope();
     feedButton.setBusy(app.feedingBusy);
     feedButton.setReady(game.canFeed(slider.index) === 'fed');
   };
@@ -497,6 +560,23 @@ async function main(): Promise<void> {
       flip: () => app.flipForDebug(),
       water: () => app.waterState,
       motionText: () => motionText(),
+      // おじさん：状態だけで送る（カップの流れなし）、返事を今すぐ届ける、最初の手紙を出し直す
+      send: (id: number) => game.send(id),
+      replyNow: () => edit((s) => deliverReplyNow(s)),
+      firstLetter: () => edit((s) => resetFirstLetter(s, slider.index)),
+      // 虫眼鏡：今の様子、「よく見る」、倍率、天板へ戻す、画質「低」（引き伸ばし）、レンズの中を画像に（一辺 px）
+      loupe: () => loupe.state,
+      look: (id: number) => loupe.lookAt(id),
+      zoom: (z: number) => (loupe.zoom = z),
+      loupeHome: () => loupe.returnToTable(),
+      lowQuality: (on: boolean) => game.updateSettings({ quality: on ? 'low' : 'high' }),
+      lensImage: (px = 256) => {
+        const img = app.captureLens(px);
+        if (!img) return null;
+        let sum = 0;
+        for (let i = 0; i < img.data.length; i += 4) sum += img.data[i + 3]!;
+        return { w: img.width, h: img.height, alpha: sum / (img.width * img.height * 255) };
+      },
     };
     // 確認用：描画側の中身を直接見る
     w.__kurageApp = app;

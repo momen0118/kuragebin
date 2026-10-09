@@ -299,6 +299,8 @@ body {
  */
 .creature-note {
   position: fixed;
+  /* 虫眼鏡より手前（レンズの上の個体にも札を出す） */
+  z-index: 6;
   left: 0;
   top: 0;
   width: 0;
@@ -385,6 +387,43 @@ body {
   line-height: 1.3;
   letter-spacing: 0.03em;
   opacity: 0.66;
+}
+
+/* 「よく見る」：段階の下に小さく、下線で */
+.creature-note .look {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.3;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  opacity: 0.72;
+  text-decoration: underline;
+  text-decoration-color: rgba(238, 238, 238, 0.35);
+  text-underline-offset: 2px;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.55);
+  touch-action: manipulation;
+}
+
+.creature-note.shown .look {
+  pointer-events: auto;
+}
+
+.creature-note .look::after {
+  content: '';
+  position: absolute;
+  inset: -8px -8px -10px;
+}
+
+.creature-note.editing .look {
+  visibility: hidden;
 }
 
 /* 名前を入れているとき。16px 未満だと iOS が画面を拡大する */
@@ -895,4 +934,348 @@ body {
   .journal-scrim {
     transition: none;
   }
+}
+
+/*
+ * おじさんの手紙。机の上の封筒（最初の手紙）：瓶の手前の天板に寝かせて置いた茶封筒。位置と大きさは JS で合わせる
+ * （瓶と一緒に動く）。夜は部屋の明るさ（--lum）に合わせて暗くする
+ */
+.envelope {
+  --lum: 1;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  width: 64px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+  touch-action: manipulation;
+  will-change: transform, opacity;
+}
+
+.envelope.shown {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 天板に寝かせたように奥へ倒す */
+.envelope .paper {
+  position: absolute;
+  inset: 0;
+  border-radius: 1.5px;
+  background: linear-gradient(160deg, #b9a07b, #9c8462 70%, #8e7758);
+  box-shadow:
+    0 0 0 0.5px rgba(60, 44, 26, 0.4),
+    0 5px 7px rgba(0, 0, 0, 0.45);
+  transform: perspective(260px) rotateX(58deg) rotate(-5deg);
+  /* 天板の暗さに合わせて、少し落とす */
+  filter: brightness(calc(var(--lum) * 0.85));
+}
+
+.envelope .flap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 58%;
+  background: linear-gradient(180deg, #af9671, #9a8262);
+  box-shadow: inset 0 -1px 0 rgba(60, 44, 26, 0.25);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+.envelope:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 4px;
+}
+
+/* 手紙を読む紙。画面の真ん中に少し大きく。どこかをタップすると閉じる */
+.letter-reader {
+  --lum: 1;
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', 'Noto Serif CJK JP', serif;
+}
+
+.letter-reader.shown {
+  pointer-events: auto;
+}
+
+.letter-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.letter-reader.shown .letter-scrim {
+  opacity: 1;
+}
+
+.letter-paper {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  box-sizing: border-box;
+  width: min(88vw, 340px);
+  padding: 30px 22px 22px 24px;
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 27px, rgba(70, 82, 100, 0.14) 27px 28px) 0 24px / 100% calc(100% - 44px) no-repeat,
+    #e6e1d4;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+  color: #2a2723;
+  opacity: 0;
+  transform: translate(-50%, -46%) scale(0.92) rotate(-1deg);
+  transition:
+    opacity 0.3s ease,
+    transform 0.35s cubic-bezier(0.2, 0.8, 0.25, 1);
+  filter: brightness(var(--lum));
+  outline: none;
+}
+
+.letter-reader.shown .letter-paper {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1) rotate(-1deg);
+}
+
+.letter-paper p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 28px;
+  letter-spacing: 0.04em;
+}
+
+.letter-paper .sign {
+  margin-top: 6px;
+  text-align: right;
+  letter-spacing: 0.1em;
+}
+
+/*
+ * 日誌のページに留めた手紙。ページの右上に、たたんだ便箋をクリップで留めてある（何通か届いた日は少しずつずらす）。
+ * タップで読める
+ */
+.leaf .letter-clip {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  right: calc(16px + var(--i) * 26px);
+  width: 36px;
+  height: 46px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  background: #ede9de;
+  box-shadow: 0.5px 1px 2.5px rgba(0, 0, 0, 0.25);
+  transform: rotate(calc(4deg - var(--i) * 5deg));
+  touch-action: manipulation;
+}
+
+/* 押せる所は広めに */
+.leaf .letter-clip::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+/* 便箋の文字（読めない程度の線） */
+.leaf .letter-clip .scribble {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.leaf .letter-clip .scribble i {
+  display: block;
+  height: 1px;
+  background: rgba(42, 39, 35, 0.32);
+}
+
+.leaf .letter-clip .scribble i:nth-child(2) {
+  margin-right: 5px;
+}
+
+.leaf .letter-clip .scribble i:nth-child(3) {
+  margin-right: 11px;
+}
+
+/* クリップ：細い針金を折り返した形 */
+.leaf .letter-clip .clip {
+  position: absolute;
+  left: 9px;
+  top: -6px;
+  width: 7px;
+  height: 22px;
+  border: 1.2px solid #8d9096;
+  border-radius: 4px;
+}
+
+.leaf .letter-clip .clip::after {
+  content: '';
+  position: absolute;
+  left: 1.2px;
+  top: 3px;
+  width: 2.4px;
+  height: 13px;
+  border: 1.2px solid #8d9096;
+  border-top: 0;
+  border-radius: 0 0 3px 3px;
+}
+
+/* おじさんへ送るかを確かめる札。箱の上のカップの上に、札と同じ細い文字で */
+.send-confirm {
+  --lum: 1;
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+}
+
+.send-confirm.shown {
+  pointer-events: auto;
+}
+
+.send-card {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  color: rgba(238, 238, 238, 0.92);
+  text-align: center;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  white-space: nowrap;
+}
+
+.send-confirm.shown .send-card {
+  opacity: 1;
+}
+
+.send-card p {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  letter-spacing: 0.06em;
+}
+
+.send-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+}
+
+.send-buttons button {
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-decoration: underline;
+  text-decoration-color: rgba(238, 238, 238, 0.4);
+  text-underline-offset: 3px;
+  text-shadow: inherit;
+  touch-action: manipulation;
+}
+
+.send-buttons button:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .letter-paper,
+  .letter-scrim {
+    transition: none;
+  }
+}
+
+/*
+ * 虫眼鏡。枠（細い金属の輪）と柄（黒い樹脂、根元に金具）。レンズの中は描画側が描く。
+ * 天板に置いてあるときは小さく寝かせ（レンズの中はガラスの映り込みだけ）、持ち上げると起きる。位置と傾きは JS で合わせる
+ */
+.loupe {
+  --lum: 1;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.loupe-body {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  filter: brightness(var(--lum));
+}
+
+.loupe-ring {
+  position: absolute;
+  left: calc(-1 * (var(--r) + var(--frame)));
+  top: calc(-1 * (var(--r) + var(--frame)));
+  box-sizing: border-box;
+  width: calc(2 * (var(--r) + var(--frame)));
+  height: calc(2 * (var(--r) + var(--frame)));
+  border: var(--frame) solid #77797c;
+  border-radius: 50%;
+  /* 金属の輪：上が明るく下が暗い。内側の縁に細い影 */
+  border-top-color: #a3a5a8;
+  border-left-color: #8e9093;
+  border-bottom-color: #4f5154;
+  border-right-color: #626467;
+  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.06) 38%, rgba(160, 175, 190, 0.12) 70%, rgba(255, 255, 255, 0.2) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 4px 10px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+/* 起きてガラスの上にあるとき：レンズの中は描画側が描くので透明に */
+.loupe.up .loupe-ring {
+  background: transparent;
+}
+
+.loupe-handle {
+  position: absolute;
+  left: 0;
+  top: calc(-0.5 * var(--handle-w));
+  width: var(--handle);
+  height: var(--handle-w);
+  border-radius: 3px calc(var(--handle-w) / 2) calc(var(--handle-w) / 2) 3px;
+  /* 根元の金具と、黒い樹脂の柄 */
+  background:
+    linear-gradient(90deg, #8a8c8f 0 12px, #5b5d60 12px 14px, transparent 14px),
+    linear-gradient(180deg, #3a3634 0%, #1d1b1a 55%, #121110 100%);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.45);
+  transform-origin: 0 50%;
+  transform: rotate(45deg) translateX(calc(var(--r) + var(--frame) - 2px));
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+.loupe.off .loupe-ring,
+.loupe.off .loupe-handle {
+  pointer-events: none;
 }

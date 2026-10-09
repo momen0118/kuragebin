@@ -5,7 +5,7 @@ import { BASE_GENES, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -95,7 +95,13 @@ export type JournalKind =
   /** 空きができて、ポリプがまた動き出した */
   | 'wake'
   /** 見ていない夜中に水を替えた（瓶底が均された） */
-  | 'water';
+  | 'water'
+  /** おじさんのところへ送った（count 匹。瓶の行） */
+  | 'sent'
+  /** おじさんから手紙が届いた（瓶によらない行。jar は -1） */
+  | 'letter'
+  /** 手紙が届いていた（版6までに始めていた人の、最初の手紙。jar は -1） */
+  | 'firstLetter';
 
 /** 観察日誌の出来事。文にするのは日誌を開いたとき（ui） */
 export interface JournalEntry {
@@ -114,6 +120,53 @@ export interface JournalEntry {
    * くびれ始めた・成体になったは本人、離れたは放したストロビラ、休み・再開はポリプが1つのときだけ
    */
   name: string | null;
+}
+
+/** おじさんへ送った子（個体一覧に「送った子」として残る） */
+export interface SentRecord {
+  id: number;
+  name: string | null;
+  species: Species;
+  stage: Stage;
+  genes: Genes;
+  /** 送った瓶と、送った時刻（ゲーム内の秒と端末のミリ秒） */
+  jar: number;
+  sentAt: number;
+  sentWallTime: number;
+}
+
+/** 返事で触れる送った子の特徴（文面を選ぶ） */
+export type LetterTopic = 'five' | 'three' | 'pink' | 'blue' | 'flawed' | 'ephyra' | 'plain';
+
+/** おじさんからの手紙。文面は届いたときに決めた種類と番号から、日誌を開いたときに作る（ui/letters.ts） */
+export interface Letter {
+  id: number;
+  /** 最初の手紙か、送った子への返事か */
+  kind: 'first' | 'reply';
+  /** 返事で触れる特徴と、その中の何番目の文面か */
+  topic: LetterTopic | null;
+  pick: number;
+  /** 返事で触れる送った子（SentRecord の番号） */
+  about: number | null;
+  /** 届いた時刻（ゲーム内の秒と端末のミリ秒） */
+  arrivedAt: number;
+  wallTime: number;
+  /** 封筒のまま、机の上の瓶の横に置いてある（まだ読んでいない）。読んだら日誌のその日のページに留まる */
+  sealed: boolean;
+  /** 封筒を置いた瓶の横 */
+  jar: number;
+  /** 手紙に添えられた個体（新しい種を足すときに、手紙と一緒に一匹届く。今は使わない） */
+  gift: Creature | null;
+}
+
+/** おじさんとのやりとり */
+export interface UncleState {
+  /** 次の手紙の番号 */
+  nextLetterId: number;
+  /** 届くことになっている返事（なければ null）：届く時刻（ゲーム内の秒）と、触れる送った子と、その珍しさ */
+  reply: { dueAt: number; about: number; rarity: number } | null;
+  /** 最後に返事が届いた時刻（ゲーム内の秒、まだなら null） */
+  lastReplyAt: number | null;
 }
 
 /** 拾いもの（フェーズ4） */
@@ -153,6 +206,10 @@ export interface GameState {
   /** 日誌で読んだ出来事の数（これより後ろの出来事が未読。日誌のアイコンに点が付く） */
   journalSeen: number;
   specimens: Specimen[];
+  /** おじさんからの手紙と、送った子と、やりとり */
+  letters: Letter[];
+  sent: SentRecord[];
+  uncle: UncleState;
   settings: Settings;
 }
 
@@ -232,6 +289,15 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     journal: [],
     journalSeen: 0,
     specimens: [],
+    // 最初の成体1匹と一緒に、瓶の横に封筒が置いてある
+    letters: [firstLetter(1, 0, nowMs, 0)],
+    sent: [],
+    uncle: { nextLetterId: 2, reply: null, lastReplyAt: null },
     settings: { ...DEFAULT_SETTINGS },
   };
+}
+
+/** 最初の手紙（封筒のまま、瓶 jar の横に置いてある） */
+export function firstLetter(id: number, time: number, wallMs: number, jar: number): Letter {
+  return { id, kind: 'first', topic: null, pick: 0, about: null, arrivedAt: time, wallTime: wallMs, sealed: true, jar, gift: null };
 }
