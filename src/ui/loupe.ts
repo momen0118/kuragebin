@@ -56,7 +56,14 @@ export class Loupe {
   constructor(private readonly opts: LoupeOptions) {
     const el = document.createElement('div');
     el.className = 'loupe';
-    el.innerHTML = `<div class="loupe-body"><div class="loupe-handle"></div><div class="loupe-ring" role="button" aria-label="虫眼鏡"></div></div>`;
+    // 厚み：枠と柄の下に、少しずつ奥（寝かせたときは天板の側）へずらした面を重ねる。いちばん下に天板への影
+    const sides = (cls: string, n: number): string =>
+      Array.from({ length: n }, (_, k) => `<div class="${cls}" style="--z:${-(k + 1)}px"></div>`).join('');
+    el.innerHTML =
+      `<div class="loupe-body"><div class="loupe-shadow" style="--z:${-(LOUPE.handleThickness + 1)}px"></div>` +
+      sides('loupe-handle-side', LOUPE.handleThickness) +
+      sides('loupe-ring-side', LOUPE.thickness) +
+      `<div class="loupe-handle"></div><div class="loupe-ring" role="button" aria-label="虫眼鏡"></div></div>`;
     el.style.setProperty('--r', `${LOUPE.radius}px`);
     el.style.setProperty('--frame', `${LOUPE.frame}px`);
     el.style.setProperty('--handle', `${LOUPE.handle}px`);
@@ -173,7 +180,9 @@ export class Loupe {
     const turn = -28 * (1 - e);
     const alpha = this.mode === 'table' || this.mode === 'returning' ? rest.alpha + (1 - rest.alpha) * e : 1;
     this.el.style.transform = `translate(${this.x.toFixed(1)}px, ${this.y.toFixed(1)}px)`;
-    this.body.style.transform = `perspective(500px) rotateX(${tilt.toFixed(1)}deg) rotate(${turn.toFixed(1)}deg) scale(${scale.toFixed(3)})`;
+    this.body.style.transform = `perspective(500px) rotateX(${tilt.toFixed(1)}deg) rotate(${turn.toFixed(1)}deg) scale3d(${scale.toFixed(3)}, ${scale.toFixed(3)}, ${scale.toFixed(3)})`;
+    // 起きてガラスの上にあるときは、横の面と天板の影は（ほとんど）見えない
+    this.body.style.setProperty('--rest', (1 - e).toFixed(3));
     this.el.style.opacity = this.hidden && this.lift < 0.5 ? '0' : alpha.toFixed(3);
     this.el.classList.toggle('up', this.lift >= 0.5);
     this.el.classList.toggle('off', (this.hidden && this.lift < 0.5) || alpha < 0.05);

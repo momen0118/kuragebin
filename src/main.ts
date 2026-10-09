@@ -22,7 +22,7 @@ import { Envelope, LetterReader } from './ui/letters';
 import { Loupe } from './ui/loupe';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
 import { ShakeDetector } from './ui/motionFilter';
-import { SendConfirm } from './ui/sendConfirm';
+import { SendConfirm, SendHint } from './ui/sendConfirm';
 import { CreatureTag } from './ui/tag';
 import { registerServiceWorker } from './pwa/register';
 
@@ -247,8 +247,9 @@ async function main(): Promise<void> {
     const show = l !== null && !app.handsBusy && !reader.isOpen;
     envelope.place(show ? app.tablePoint(l.jar, UNCLE.envelope[0], UNCLE.envelope[1], canvas.clientWidth, canvas.clientHeight) : null);
   };
-  /** おじさんへ送るかを確かめる札 */
+  /** おじさんへ送るかを確かめる札と、運んでいる間の「おじさんに送る」 */
   const sendConfirm = new SendConfirm();
+  const sendHint = new SendHint();
 
   // 観察日誌（左下）。日誌に一行増えたら点が付き、開いたら消える
   const notebook = new Notebook({
@@ -466,6 +467,7 @@ async function main(): Promise<void> {
     dots.set(slider.position);
     tag.update(dt);
     placeEnvelope();
+    sendHint.set(app.scoopCarrying && !carry.atBox);
     feedButton.setBusy(app.feedingBusy);
     feedButton.setReady(game.canFeed(slider.index) === 'fed');
   };
