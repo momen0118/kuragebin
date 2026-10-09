@@ -2,7 +2,7 @@
 // 形が合わないデータは読み込まない（呼び出し側で新しい状態から始める）。
 import { CARE, LIFE } from '../config';
 import { BASE_GENES, sanitizeGenes } from '../sim/genes';
-import { DEFAULT_SETTINGS, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Stage } from '../sim/state';
+import { DEFAULT_SETTINGS, firstLetter, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Stage } from '../sim/state';
 
 type Raw = Record<string, unknown>;
 
@@ -92,6 +92,21 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
       }),
     };
   },
+  // 7：おじさん。すでに始めていた人にも、次に開いたとき瓶の横に最初の手紙が置いてあり、日誌に「手紙が届いていた」と一行
+  6: (d) => {
+    const now = isNumber(d.lastTick) ? d.lastTick : 0;
+    const t = (isNumber(d.time) ? d.time : 0) + (isNumber(d.pending) ? d.pending : 0);
+    const settings = isObject(d.settings) ? d.settings : {};
+    const jar = isNumber(settings.jar) ? settings.jar : 0;
+    const journal = Array.isArray(d.journal) ? d.journal : [];
+    return {
+      ...d,
+      letters: [firstLetter(1, t, now, jar)],
+      sent: [],
+      uncle: { nextLetterId: 2, reply: null, lastReplyAt: null },
+      journal: [...journal, { kind: 'firstLetter', jar: -1, count: 1, ids: [], time: t, wallTime: now, name: null }],
+    };
+  },
 };
 
 export class SchemaError extends Error {}
@@ -178,6 +193,34 @@ function validate(d: Raw): GameState {
     if (!Array.isArray(e.ids)) e.ids = [];
   }
   if ((d.journalSeen as number) > journal.length) d.journalSeen = journal.length;
+  // おじさん：読めない手紙と送った子だけを除く
+  d.letters = (Array.isArray(d.letters) ? d.letters : []).filter(
+    (l: unknown) => isObject(l) && isNumber(l.id) && (l.kind === 'first' || l.kind === 'reply') && isNumber(l.wallTime) && isNumber(l.arrivedAt),
+  );
+  for (const l of d.letters as Raw[]) {
+    if (typeof l.sealed !== 'boolean') l.sealed = false;
+    if (!isNumber(l.jar) || l.jar < 0 || l.jar >= d.jars.length) l.jar = 0;
+    if (!isNumber(l.pick)) l.pick = 0;
+    if (!(l.about === null || isNumber(l.about))) l.about = null;
+    if (typeof l.topic !== 'string') l.topic = l.kind === 'reply' ? 'plain' : null;
+    if (!isObject(l.gift)) l.gift = null;
+  }
+  d.sent = (Array.isArray(d.sent) ? d.sent : []).filter((r: unknown) => isObject(r) && isNumber(r.id) && isNumber(r.sentWallTime) && isStage(r.stage));
+  for (const r of d.sent as Raw[]) {
+    r.genes = sanitizeGenes(r.genes);
+    if (!(r.name === null || typeof r.name === 'string')) r.name = null;
+    if (typeof r.species !== 'string') r.species = 'aurelia';
+    if (!isNumber(r.jar)) r.jar = 0;
+    if (!isNumber(r.sentAt)) r.sentAt = 0;
+  }
+  const maxLetter = Math.max(0, ...(d.letters as Raw[]).map((l) => l.id as number));
+  const u = isObject(d.uncle) ? d.uncle : {};
+  const reply = isObject(u.reply) && isNumber(u.reply.dueAt) && isNumber(u.reply.about) && isNumber(u.reply.rarity) ? u.reply : null;
+  d.uncle = {
+    nextLetterId: isNumber(u.nextLetterId) && u.nextLetterId > maxLetter ? u.nextLetterId : maxLetter + 1,
+    reply,
+    lastReplyAt: isNumber(u.lastReplyAt) ? u.lastReplyAt : null,
+  };
   // 設定は足りない項目を初期値で埋める（あとから設定が増えても読める）
   const settings = isObject(d.settings) ? d.settings : {};
   const merged = { ...DEFAULT_SETTINGS, ...settings };

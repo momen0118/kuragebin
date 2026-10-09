@@ -2,6 +2,7 @@
 // 時刻の上書き（光の確認用）、背景写真の切り替えと重ね表示（位置合わせの確認用）、FPS、
 // 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、餌（1日1回を無視してやる・記録を消す）、
 // 揺れ（今の値と閾値、センサーなしで一回揺らす・逆さまから起き直るところを見る）、
+// おじさん（最初の手紙を出し直す・返事を今すぐ届ける）、
 // 状態の表示・リセット・書き出し・読み込み。
 import { DEBUG, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
@@ -54,6 +55,9 @@ export interface DebugPanelOptions {
   /** 揺れ：表示中の瓶を一回揺らす（弱・中・強。弱は閾値を越えない）、泳ぐ個体を逆さまにして起き直るところを見る */
   onShake(kind: 'weak' | 'medium' | 'strong'): void;
   onFlip(): void;
+  /** おじさん：最初の手紙を封筒のまま表示中の瓶の横に出し直す、返事を今すぐ届ける */
+  onFirstLetter(): void;
+  onReplyNow(): void;
 }
 
 const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
@@ -119,6 +123,7 @@ export class DebugPanel {
   private readonly feedEl: HTMLDivElement;
   private readonly genesEl: HTMLDivElement;
   private readonly motionEl: HTMLDivElement;
+  private readonly uncleEl: HTMLDivElement;
   /** 選んでいる個体と、進みのつまみを動かしている最中か */
   private selected: number | null = null;
   private pickNewest = false;
@@ -208,6 +213,14 @@ export class DebugPanel {
         </div>
       </details>
       <details>
+        <summary>おじさん</summary>
+        <div class="uncle sub"></div>
+        <div class="row buttons">
+          <button type="button" class="first-letter">最初の手紙を出し直す</button>
+          <button type="button" class="reply-now">返事を今すぐ届ける</button>
+        </div>
+      </details>
+      <details>
         <summary>状態</summary>
         <div class="state sub"></div>
         <div class="row buttons">
@@ -252,6 +265,9 @@ export class DebugPanel {
       b.addEventListener('click', () => this.opts.onShake(b.dataset.shake as 'weak' | 'medium' | 'strong'));
     }
     root.querySelector('.flip')!.addEventListener('click', () => this.opts.onFlip());
+    this.uncleEl = root.querySelector('.uncle')!;
+    root.querySelector('.first-letter')!.addEventListener('click', () => this.opts.onFirstLetter());
+    root.querySelector('.reply-now')!.addEventListener('click', () => this.opts.onReplyNow());
     this.motionEl.style.whiteSpace = 'pre-line';
 
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-spawn]')) {
@@ -417,6 +433,16 @@ export class DebugPanel {
   /** 揺れ：センサーの様子、今の値と閾値、最後に振った一回、表示中の瓶の水の様子、sim の「水が動いている」残り */
   showMotion(text: string): void {
     if (this.motionEl.textContent !== text) this.motionEl.textContent = text;
+  }
+
+  /** おじさん：送った数、届くことになっている返事、届いた手紙 */
+  showUncle(state: GameState): void {
+    const u = state.uncle;
+    const now = state.time + state.pending;
+    const reply = u.reply ? `返事 あと${span(u.reply.dueAt - now)}（#${u.reply.about}・珍しさ ${u.reply.rarity.toFixed(2)}）` : '返事 なし';
+    const sealed = state.letters.filter((l) => l.sealed).length;
+    const text = `送った ${state.sent.length}匹　${reply}　手紙 ${state.letters.length}通${sealed ? `（封筒 ${sealed}）` : ''}`;
+    if (this.uncleEl.textContent !== text) this.uncleEl.textContent = text;
   }
 
   tick(dt: number): void {

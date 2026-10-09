@@ -4,11 +4,15 @@ import { LIFE, SIM, type LifeRules } from '../config';
 import { stepLife } from './lifecycle';
 import { createRng, type Rng } from './rng';
 import type { GameState } from './state';
+import { stepUncle } from './uncle';
 
 /** 1刻み分進める（その場で書き換える）。wallBase + time·1000 がその時点の端末の時刻 */
 function step(state: GameState, dt: number, rng: Rng, rules: LifeRules, wallBase: number, watching: number | null): void {
   state.time += dt;
-  stepLife(state, dt, { rng, rules, wall: wallBase + state.time * 1000, watching });
+  const wall = wallBase + state.time * 1000;
+  stepLife(state, dt, { rng, rules, wall, watching });
+  // おじさんからの返事（届く時刻になったら）
+  stepUncle(state, { rng, wall });
 }
 
 /**

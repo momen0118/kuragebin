@@ -23,6 +23,8 @@ export interface NotebookOptions {
   /** 揺れを使うか（設定）と、それを変える（使うにしたときは、ここで許可を訊く） */
   motion(): boolean;
   setMotion(on: boolean): void;
+  /** 日誌のページに留めた手紙をタップした（手紙を読む紙を開く） */
+  readLetter(id: number): void;
   /** 開いた・閉じた（日誌を読んだことにする） */
   opened(): void;
   closed(): void;
@@ -174,10 +176,10 @@ export class Notebook {
   /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 設定（裏表紙の内側） */
   private build(): void {
     const s = this.opts.state();
-    const days: Leaf[] = journalPages(s.journal).map((page) => ({ kind: 'day', key: `d${page.key}`, page }));
+    const days: Leaf[] = journalPages(s.journal, { letters: s.letters }).map((page) => ({ kind: 'day', key: `d${page.key}`, page }));
     if (!days.length) {
       const key = feedDay(this.opts.now());
-      days.push({ kind: 'day', key: `d${key}`, page: { key, title: dayTitle(key), sections: [] } });
+      days.push({ kind: 'day', key: `d${key}`, page: { key, title: dayTitle(key), sections: [], letters: [] } });
     }
     const rosters: Leaf[] = rosterPages(s).map((page) => ({ kind: 'roster', key: `r${page.jar}`, page }));
     this.leaves = [...days, ...rosters, { kind: 'settings', key: 's' }];
@@ -209,18 +211,31 @@ export class Notebook {
 
   private leafHtml(leaf: Leaf): string {
     if (leaf.kind === 'day') {
+      // 瓶によらない行（おじさん）には見出しを付けない
       const sections = leaf.page.sections
-        .map((s) => `<h3 class="jar">${esc(s.title)}</h3>${s.lines.map((l) => `<p class="line">${esc(l)}</p>`).join('')}`)
+        .map((s) => `${s.title ? `<h3 class="jar">${esc(s.title)}</h3>` : ''}${s.lines.map((l) => `<p class="line">${esc(l)}</p>`).join('')}`)
         .join('');
-      return `<div class="leaf-body"><h2 class="date">${esc(leaf.page.title)}</h2>${sections}</div>`;
+      // その日に届いた手紙は、ページの右上にクリップで留める（タップで読める）
+      const clips = leaf.page.letters
+        .map(
+          (id, i) =>
+            `<button type="button" class="letter-clip" data-letter="${id}" style="--i:${i}" aria-label="手紙"><span class="clip" aria-hidden="true"></span><span class="scribble" aria-hidden="true"><i></i><i></i><i></i></span></button>`,
+        )
+        .join('');
+      return `<div class="leaf-body"><h2 class="date">${esc(leaf.page.title)}</h2>${sections}</div>${clips}`;
     }
     if (leaf.kind === 'roster') {
+      // 送った子のページは、名前を付け直せない（もういないので）。日は送った日
+      const sent = leaf.page.jar < 0;
       const rows = leaf.page.rows.length
-        ? `<div class="roster-head"><span>名前</span><span>段階</span><span>来た日</span></div>` +
+        ? `<div class="roster-head"><span>名前</span><span>段階</span><span>${sent ? '送った日' : '来た日'}</span></div>` +
           leaf.page.rows
             .map(
               (r) =>
-                `<div class="roster-row" data-id="${r.id}"><button type="button" class="name${r.name ? '' : ' unnamed'}">${esc(r.name ?? UNNAMED)}</button>` +
+                `<div class="roster-row" data-id="${r.id}">` +
+                (sent
+                  ? `<span class="name${r.name ? '' : ' unnamed'}">${esc(r.name ?? UNNAMED)}</span>`
+                  : `<button type="button" class="name${r.name ? '' : ' unnamed'}">${esc(r.name ?? UNNAMED)}</button>`) +
                 `<span class="what">${esc(r.species)}・${esc(r.stage)}</span><span class="when">${esc(r.arrived)}</span></div>`,
             )
             .join('')
@@ -406,7 +421,8 @@ export class Notebook {
   private click(e: MouseEvent): void {
     const t = (e.target as HTMLElement).closest<HTMLElement>('button');
     if (!t || !this.current.contains(t)) return;
-    if (t.classList.contains('to-journal')) void this.jumpTo(0);
+    if (t.classList.contains('letter-clip')) this.opts.readLetter(Number(t.dataset.letter));
+    else if (t.classList.contains('to-journal')) void this.jumpTo(0);
     else if (t.classList.contains('name')) this.editName(t);
     else if (t.classList.contains('export')) this.exportData();
     else if (t.classList.contains('import')) this.current.querySelector<HTMLInputElement>('.file')?.click();

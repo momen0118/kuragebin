@@ -6,7 +6,7 @@
 //   水の中でゆっくり傾け、海月がカップの縁から自分の拍動で出ていくのを待つ。出たら、空のカップがゆっくり上がって口から出て消える。
 // 位置はいつも、どれか1つの瓶（frame）の座標（その瓶の中心が原点）。隣の瓶へ運ぶ途中で、行き先の瓶の座標へ移す。
 import { Quaternion, Vector3 } from 'three';
-import { CUP, JAR, SCOOP } from '../config';
+import { BOX, CUP, JAR, SCOOP } from '../config';
 import { SPOUT_LIP, type Cup } from './cup';
 import type { Jellyfish } from './jelly/jellyfish';
 
@@ -23,10 +23,19 @@ export interface ScoopHost {
   obstruct(jar: number, center: Vector3 | null, radius: number): void;
   /** 放した個体を瓶 jar の個体にする（泳ぎつづける） */
   adopt(jar: number, id: number, jelly: Jellyfish): void;
+  /** おじさんへ送る箱の底の真ん中（瓶 jar の座標） */
+  boxBottom(jar: number, out: Vector3): Vector3;
+  /** 箱の中の袋の水へ放し終えた（送った個体の描画を片付ける） */
+  sent(id: number, jelly: Jellyfish): void;
 }
 
-type Phase = 'idle' | 'rise' | 'hover' | 'cross' | 'lower' | 'tilt' | 'wait' | 'leave';
+type Phase = 'idle' | 'rise' | 'hover' | 'cross' | 'lower' | 'tilt' | 'wait' | 'leave' | 'toBox' | 'boxHold' | 'fromBox' | 'boxLower' | 'boxWait' | 'boxLeave';
 
+/** 箱へ運ぶ・箱の中の段階（瓶のガラスより手前に描く） */
+const BOX_PHASES: ReadonlySet<Phase> = new Set(['toBox', 'boxHold', 'fromBox', 'boxLower', 'boxWait', 'boxLeave']);
+
+/** 箱の中のカップの注ぎ口の向き（奥の右の隅） */
+const BOX_YAW = Math.PI / 4;
 const UP = new Vector3(0, 1, 0);
 const Z = new Vector3(0, 0, 1);
 const RIM = JAR.height;
@@ -108,6 +117,11 @@ export class Scoop {
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
   private readonly mid = new Vector3();
+  /** 箱の上に着いたら呼ぶ（確かめる）。まだ上がっている・隣へ移っている途中なら、終わってから箱へ */
+  private onBoxArrive: (() => void) | null = null;
+  private pendingBox = false;
+  /** 箱の中の袋の水に浸かっている（袋の水面をカップのあとに描く） */
+  private inBoxWater = false;
 
   constructor(
     private readonly host: ScoopHost,
@@ -143,6 +157,9 @@ export class Scoop {
     this.jelly = jelly;
     this.pendingCross = null;
     this.pendingRelease = null;
+    this.pendingBox = false;
+    this.onBoxArrive = null;
+    this.inBoxWater = false;
     this.jellyMoved = false;
     this.exiting = false;
     this.outT = -1;
@@ -177,6 +194,63 @@ export class Scoop {
   cross(to: number, onStart: () => void): void {
     if (!this.jelly) return;
     this.pendingCross = { to, onStart };
+  }
+
+  /** 箱へ運んでいる・箱の中にある間（瓶のガラスより手前に描く） */
+  get inFront(): boolean {
+    return BOX_PHASES.has(this.phase);
+  }
+
+  /** カップが箱の中の袋の水に浸かっている（袋の水面をカップのあとに描く） */
+  get submergedInBox(): boolean {
+    return this.inFront && this.inBoxWater;
+  }
+
+  /** 箱の上で、送るかを確かめているところか */
+  get atBox(): boolean {
+    return this.phase === 'boxHold';
+  }
+
+  /** 運んでいるところか（上がる・口の上・隣へ移る）。箱は、この間だけ画面の下からのぞく */
+  get carrying(): boolean {
+    return this.jelly !== null && (this.phase === 'rise' || this.phase === 'hover' || this.phase === 'cross') && this.pendingRelease === null;
+  }
+
+  /**
+   * 指を離した所が箱の上だった：カップを箱の上へ運ぶ。着いたら onArrive（送るかを確かめる）。
+   * まだ上がっている・隣へ移っている途中なら、口の上に来てから
+   */
+  toBox(onArrive: () => void): void {
+    if (!this.jelly || !this.carrying) return;
+    this.onBoxArrive = onArrive;
+    this.pendingBox = true;
+  }
+
+  private startToBox(): void {
+    this.pendingBox = false;
+    this.from.copy(this.pos);
+    this.host.boxBottom(this.jar, this.to);
+    this.to.y += BOX.height + BOX.hoverClear;
+    this.yawFrom = this.yaw;
+    this.enter('toBox');
+  }
+
+  /** 送る：箱の中の袋の水へ、カップごとゆっくり下ろして放す */
+  sendToBox(): void {
+    if (this.phase !== 'boxHold') return;
+    this.from.copy(this.pos);
+    this.host.boxBottom(this.jar, this.to);
+    this.to.y += BOX.wall + 0.004;
+    this.enter('boxLower');
+  }
+
+  /** やめる：瓶の口の上へ戻って、瓶の水へ放す */
+  backFromBox(): void {
+    if (this.phase !== 'boxHold') return;
+    this.from.copy(this.pos);
+    const x = clampSlack(this.from.x - (this.host.view - this.jar) * this.host.spacing) + (this.host.view - this.jar) * this.host.spacing;
+    this.to.set(Math.min(Math.max(x, -this.host.hoverRange), this.host.hoverRange), HOVER_Y, 0);
+    this.enter('fromBox');
   }
 
   /** 指を離した：今いる瓶（移る途中なら行き先）の水へ沈めて放す（delay 秒待ってから） */
@@ -286,6 +360,78 @@ export class Scoop {
       case 'leave':
         if (this.stepLeave()) return;
         break;
+      case 'toBox': {
+        // 瓶の口の上から、手前の箱の上へ（少し持ち上げてから、ゆっくり下ろす）
+        const e = ease(this.t / BOX.toSeconds);
+        this.pos.lerpVectors(this.from, this.to, e);
+        this.pos.y += Math.sin(Math.PI * e) * 0.06;
+        // 注ぎ口は箱の奥の隅へ（いちばん広い向き）
+        this.yaw = this.yawFrom + (BOX_YAW - this.yawFrom) * e;
+        this.sway *= Math.exp(-4 * dt);
+        if (this.t >= BOX.toSeconds) {
+          this.enter('boxHold');
+          const done = this.onBoxArrive;
+          this.onBoxArrive = null;
+          done?.();
+        }
+        break;
+      }
+      case 'boxHold':
+        // 箱の上で、送るかを確かめている（少しだけ揺れる）
+        this.pos.copy(this.to);
+        this.pos.y += Math.sin(this.t * 1.7) * 0.004;
+        this.sway *= Math.exp(-4 * dt);
+        break;
+      case 'fromBox': {
+        const e = ease(this.t / BOX.toSeconds);
+        this.pos.lerpVectors(this.from, this.to, e);
+        this.pos.y += Math.sin(Math.PI * e) * 0.06;
+        if (this.t >= BOX.toSeconds) {
+          this.velX = 0;
+          this.enter('hover');
+          // 指はもう離しているので、そのまま瓶の水へ放す
+          this.pendingRelease = 0;
+        }
+        break;
+      }
+      case 'boxLower': {
+        const e = ease(this.t / BOX.lowerSeconds);
+        this.pos.lerpVectors(this.from, this.to, e);
+        if (this.t >= BOX.lowerSeconds) this.enter('boxWait');
+        break;
+      }
+      case 'boxWait': {
+        // 袋の水の中で放す（海月は箱の奥へ泳いでいく。手前の壁に隠れてほとんど見えない）
+        this.pos.copy(this.to);
+        const jelly = this.jelly;
+        if (jelly) {
+          jelly.setOpacity(1 - ease(this.t / BOX.waitSeconds));
+          if (this.t >= BOX.waitSeconds) {
+            this.jelly = null;
+            this.host.sent(this.id, jelly);
+          }
+        }
+        if (this.t >= BOX.waitSeconds) {
+          this.from.copy(this.pos);
+          this.enter('boxLeave');
+        }
+        break;
+      }
+      case 'boxLeave': {
+        // 空のカップ（水でいっぱい）が上がってきて、消える
+        const e = ease(this.t / BOX.leaveSeconds);
+        this.pos.copy(this.from);
+        this.pos.y += e * (BOX.height + 0.2);
+        this.alpha = 1 - ease((this.t - BOX.leaveSeconds * 0.55) / (BOX.leaveSeconds * 0.45));
+        if (this.t >= BOX.leaveSeconds) {
+          this.phase = 'idle';
+          this.cup.setAlpha(0);
+          this.inBoxWater = false;
+          this.host.obstruct(this.jar, null, 0);
+          return;
+        }
+        break;
+      }
       default:
         break;
     }
@@ -351,6 +497,8 @@ export class Scoop {
       this.crossX = this.pos.x + (this.jar - this.host.view) * this.host.spacing;
       this.enter('cross');
       onStart();
+    } else if (this.pendingBox) {
+      this.startToBox();
     } else if (this.pendingRelease !== null) {
       this.pendingRelease -= dt;
       if (this.pendingRelease <= 0) {
@@ -443,6 +591,20 @@ export class Scoop {
     const top = mid.y + e.top;
     const low = mid.y + e.bottom;
     const jar = this.jar;
+    if (this.inFront) {
+      // 箱の中の袋の水：口まで浸かったら水面はない（瓶の水と同じ扱い）
+      const boxWater = this.host.boxBottom(jar, this.tmp).y + BOX.height * BOX.waterLevel;
+      this.inBoxWater = top < boxWater;
+      if (this.inBoxWater) this.flooded = true;
+      else if (this.flooded) {
+        this.flooded = false;
+        this.fill = 0.97;
+      }
+      this.lowPrev = low;
+      this.cup.setWater(this.flooded ? -10 : this.cup.waterFor(this.fill).level);
+      this.host.obstruct(jar, null, 0);
+      return;
+    }
     if (this.lowPrev > WATER && low <= WATER) this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleEnter, CUP.radiusBottom);
     else if (this.lowPrev <= WATER && low > WATER) this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleLeave, CUP.radiusBottom);
     this.lowPrev = low;

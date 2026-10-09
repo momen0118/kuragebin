@@ -8,6 +8,7 @@ import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
 import { canFeed, feedJar, type FeedResult } from './sim/feed';
 import { stirJar } from './sim/growth';
+import { canSend, openLetter, sendCreature, type SendResult } from './sim/uncle';
 import { hasUnread } from './sim/journal';
 import { createInitialState, type GameState, type Settings } from './sim/state';
 import { openStateStore, type StateStore } from './storage/db';
@@ -34,6 +35,8 @@ export class Game {
   private rewound = false;
   /** 生活環の期間と上限（確認用に差し替えられる） */
   private rules: LifeRules = LIFE;
+  /** 開いている間に見ている瓶（tick で受け取る） */
+  private watching: number | null = null;
 
   private constructor(
     private readonly clock: Clock,
@@ -92,6 +95,7 @@ export class Game {
    * watching は画面で見ている瓶（その瓶の出来事は日誌に書かない）
    */
   tick(watching: number | null): void {
+    this.watching = watching;
     this.catchUpNow(false, watching);
     if (this.clock.wallNow() - this.lastSaveWall >= SIM.saveIntervalSeconds * 1000) void this.save();
   }
@@ -163,6 +167,35 @@ export class Game {
     this.catchUpNow(false, jar);
     const next = structuredClone(this.current);
     if (!stirJar(next, jar)) return;
+    this.current = next;
+    this.emit();
+    void this.save();
+  }
+
+  /** 個体を、おじさんのところへ送れるか（泳ぐ個体だけ） */
+  canSend(id: number): SendResult {
+    return canSend(this.current, id);
+  }
+
+  /**
+   * 個体を、おじさんのところへ送る。瓶からいなくなり「送った子」として残る。日誌に一行。
+   * 返事が届くかは、ここで決まる（珍しい子ほど届きやすい）
+   */
+  send(id: number): SendResult {
+    this.catchUpNow(false, this.watching);
+    const next = structuredClone(this.current);
+    const result = sendCreature(next, id, this.rules);
+    if (result !== 'sent') return result;
+    this.current = next;
+    this.emit();
+    void this.save();
+    return result;
+  }
+
+  /** 封筒を開いた（最初の手紙）。日誌のその日のページに留まる */
+  openLetter(id: number): void {
+    const next = structuredClone(this.current);
+    if (!openLetter(next, id)) return;
     this.current = next;
     this.emit();
     void this.save();
