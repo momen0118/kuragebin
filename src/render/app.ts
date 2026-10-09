@@ -42,7 +42,7 @@ import { Finds } from './finds';
 import { Food } from './food';
 import { LoupeLens, type LensView } from './loupe';
 import { createJar, type Jar } from './jar';
-import { apparentNdc, contentsAt } from './lensMap';
+import { apparentNdc } from './lensMap';
 import { lightAt, type LightState } from './lighting';
 import { Bubble, createSnow, type Snow } from './particles';
 import { Pipette } from './pipette';
@@ -790,28 +790,7 @@ export class App {
     }
   }
 
-  /**
-   * 画面上の点（ndc）が、表示中の瓶の瓶底のどこに見えるか（瓶底の内側の半径を 1 とした [x, z]、水とガラスのレンズ越し）。
-   * 瓶底の上でなければ（瓶の外、瓶底より上の水の中に見える所）null
-   */
-  floorSpotAt(ndcX: number, ndcY: number): [number, number] | null {
-    if (!this.atRest) return null;
-    const cam = this.placeJarCamera(this.jarIndex);
-    // 手前のガラスがそこに映している中身の点。カメラからその点へ向かう線が、瓶底の面と交わる所
-    const s = contentsAt(cam, ndcX, ndcY, this.tmpV);
-    if (!s) return null;
-    const o = this.tmpV2.setFromMatrixPosition(cam.matrixWorld);
-    const dy = s.y - o.y;
-    if (dy > -1e-4) return null;
-    const t = (JAR.bottomThickness - o.y) / dy;
-    const x = o.x + (s.x - o.x) * t;
-    const z = o.z + (s.z - o.z) * t;
-    const inner = JAR.radius - JAR.glassThickness;
-    const spot: [number, number] = [x / inner, z / inner];
-    return Math.hypot(spot[0], spot[1]) <= FIND_LOOK.dropReach ? spot : null;
-  }
-
-  /** 標本から置いた物 id を、瓶 jar に次に現れるとき水面のすぐ下から沈める（状態を変える前に呼ぶ） */
+  /** 標本から沈める物 id を、瓶 jar に次に現れるとき水面から沈める（状態を変える前に呼ぶ） */
   dropFind(jar: number, id: number): void {
     this.finds[jar]?.drop(id);
   }
@@ -963,7 +942,7 @@ export class App {
       const field = water.still ? null : water.field;
       // 標本から置いた物が沈んでいる間は、泳ぐ個体がよける
       const finds = this.finds[i]!;
-      finds.update(d);
+      finds.update(d, this.sediments[i]!);
       const sinking = finds.sinking(this.tmpV);
       if (sinking) creatures.setObstacle(sinking, FIND_LOOK.sinkAvoid);
       else if (this.findObstructing[i]) creatures.setObstacle(null);

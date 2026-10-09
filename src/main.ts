@@ -1,6 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, SIM, SLOSH, UNCLE } from './config';
+import { FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, SIM, SLOSH, UNCLE } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -18,7 +18,7 @@ import { JournalButton } from './ui/journal/button';
 import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
-import { FindCarry, flyLight } from './ui/finds';
+import { flyLight } from './ui/finds';
 import { Envelope, LetterReader } from './ui/letters';
 import { Loupe } from './ui/loupe';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
@@ -273,7 +273,8 @@ async function main(): Promise<void> {
       const l = game.state.letters.find((x) => x.id === id);
       if (l) reader.open(l);
     },
-    carrySpecimen: (id, photo, x, y, pointer) => findCarry.start(id, photo, x, y, pointer),
+    sinkSpecimen: (id) => sinkSpecimen(id),
+    raiseSpecimen: (id) => void game.raiseFind(id),
   });
   const journalButton = new JournalButton(() => notebook.open());
   const showJournal = (): void => {
@@ -451,22 +452,22 @@ async function main(): Promise<void> {
     else app.poke(x, y);
   };
 
-  /** 標本から瓶へ戻す：瓶底の上で離すと、表示中の瓶に置く（水面のすぐ下から沈む）。置けなければ標本へ戻る */
-  const placeAt = (id: number, x: number, y: number): boolean => {
+  /**
+   * 標本の物を、見ている瓶に沈める。メモ帳を下げてから、水面からそっと入って沈んでいくところを瓶の前で見せる
+   * （場所は空いた所を選ぶ。その瓶に前に沈めた物は黙って標本へ戻る）。沈められなければ false
+   */
+  const sinkSpecimen = (id: number): boolean => {
     if (app.handsBusy || slider.moving || !app.atRest) return false;
-    const spot = app.floorSpotAt(...toNdc({ x, y }));
     const j = slider.index;
-    if (!spot || game.canPlaceFind(id, j) !== 'placed') return false;
-    app.dropFind(j, id);
-    const yaw = (((id * 2654435761) >>> 0) / 4294967296) * Math.PI * 2;
-    return game.placeFind(id, j, spot, yaw) === 'placed';
+    if (game.canPlaceFind(id, j) !== 'placed') return false;
+    notebook.close();
+    window.setTimeout(() => {
+      if (game.canPlaceFind(id, j) !== 'placed') return;
+      app.dropFind(j, id);
+      game.placeFind(id, j);
+    }, FIND_LOOK.sinkDelayMs);
+    return true;
   };
-  const findCarry = new FindCarry({
-    drop: placeAt,
-    over: (x, y) => app.atRest && !app.handsBusy && app.floorSpotAt(...toNdc({ x, y })) !== null,
-    home: () => journalButton.center(),
-    returned: () => journalButton.glow(),
-  });
   /** 長押しでつまめる個体（指を置いたときに、その下にいた泳ぐ個体） */
   let holdable: number | null = null;
   new Gestures(canvas, {
@@ -613,7 +614,7 @@ async function main(): Promise<void> {
       replyNow: () => edit((s) => deliverReplyNow(s)),
       firstLetter: () => edit((s) => resetFirstLetter(s, slider.index)),
       // 拾いもの：表示中の瓶に出す（variant を決めなければ重みで選ぶ。番号を返す）、瓶底の物の画面上の位置、拾う（タップと同じ）、
-      // 標本から置く（画面の CSS px。置けたら true）、瓶底の物を消す、標本を空に
+      // 標本から見ている瓶に沈める（メモ帳を下げてから。沈められたら true）、瓶底の物を消す、標本を空に
       spawnFind: (variant?: string) => {
         let id = 0;
         edit((s) => (id = spawnFind(s, slider.index, variant)));
@@ -621,8 +622,7 @@ async function main(): Promise<void> {
       },
       findWhere: (id: number) => app.findScreen(id, canvas.clientWidth, canvas.clientHeight),
       pickFind: (id: number) => pickUpFind(id),
-      placeFind: (id: number, x: number, y: number) => placeAt(id, x, y),
-      floorSpot: (x: number, y: number) => app.floorSpotAt(...toNdc({ x, y })),
+      sinkFind: (id: number) => sinkSpecimen(id),
       clearFinds: () => edit((s) => clearFinds(s, null)),
       clearSpecimens: () => edit((s) => clearSpecimens(s)),
       // 虫眼鏡：今の様子、「よく見る」、倍率、天板へ戻す、画質「低」（引き伸ばし）、レンズの中を画像に（一辺 px）

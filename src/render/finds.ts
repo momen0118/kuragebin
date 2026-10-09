@@ -1,6 +1,7 @@
 // 瓶1つの瓶底の拾いもの（貝殻のかけら・シーグラス・小石）を描く。状態の物（sim の Specimen で at がこの瓶）に合わせて作ったり消したりする。
 // 自分では光らず、部屋・窓・デスクライトの光を受けたぶんだけ見える（夜はライトの円錐の中だけ）。シーグラスは曇って少し透ける。
-// 拾うと薄れて消え（光になって日誌へ向かうのは ui）、標本から置いた物は水面のすぐ下から揺れながらゆっくり沈んで瓶底に落ち着く。
+// 拾うと薄れて消え（光になって日誌へ向かうのは ui）、標本から沈めた物は水面からそっと入って沈む。平たいシーグラスと貝殻のかけらは
+// 木の葉のように左右へ振れながら落ち、小石はまっすぐ。瓶底に着くと、まわりの堆積がふわっと少しだけ舞う。
 // 揺らしても動かない。
 import {
   BackSide,
@@ -12,19 +13,24 @@ import {
   OneFactor,
   OneMinusSrcAlphaFactor,
   PlaneGeometry,
+  Quaternion,
   ShaderMaterial,
+  type BufferAttribute,
+  type Points,
   Vector2,
   Vector3,
   type PerspectiveCamera,
   type Side,
 } from 'three';
 import { FIND_LOOK, FIND_VARIANTS, JAR } from '../config';
-import type { Specimen } from '../sim/state';
+import { createRng } from '../sim/rng';
+import type { FindKind, Specimen } from '../sim/state';
 import { findShape, type FindShape } from './findShape';
 import { LAMP_GLSL, lampUniforms } from './lamp';
 import { apparentNdc } from './lensMap';
 import common from './shaders/common.glsl?raw';
 import { frag } from './shaders/glsl';
+import { createDustPoints } from './stirred';
 import type { SharedUniforms } from './uniforms';
 
 const INNER_R = JAR.radius - JAR.glassThickness;
@@ -156,6 +162,7 @@ void main() {
 const SHADOW_GEOMETRY = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
 
 interface FindView {
+  kind: FindKind;
   shape: FindShape;
   meshes: Mesh[];
   shadow: Mesh;
@@ -164,6 +171,8 @@ interface FindView {
   /** 瓶底の置き場所（ワールド）と向き */
   rest: Vector3;
   yaw: number;
+  /** 沈むとき左右へ振れる向き（ラジアン） */
+  swayDir: number;
   /** 'rest' 置いてある、'sink' 水面から沈んでいる、'leave' 拾われて消えていく */
   phase: 'rest' | 'sink' | 'leave';
   t: number;
@@ -172,6 +181,8 @@ interface FindView {
 }
 
 const KIND_INDEX = { glass: 0, shell: 1, pebble: 2 } as const;
+const UP = new Vector3(0, 1, 0);
+const FLOOR_Y = JAR.bottomThickness + 0.003;
 
 function smoothstep(a: number, b: number, x: number): number {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
@@ -193,12 +204,27 @@ export class Finds {
   readonly sortables: FloorSortable[] = [];
   private readonly tmp = new Vector3();
   private readonly tmpN = new Vector2();
+  private readonly qTilt = new Quaternion();
+  private readonly qYaw = new Quaternion();
+  /** 底に着いたときに舞う堆積の粒（瓶ごとに1組。-1 で舞っていない） */
+  private readonly puff: Points;
+  private readonly puffSeeds = Array.from({ length: FIND_LOOK.puffCount }, () => ({ angle: 0, reach: 0, rise: 0, size: 0, delay: 0 }));
+  private readonly puffAt = new Vector3();
+  private puffR = 0;
+  private puffAmount = 0;
+  private puffT = -1;
 
   constructor(
     private readonly shared: SharedUniforms,
     /** 置いた物が水面のすぐ下に現れたとき、その上の水面に小さな波紋（瓶の座標の x, z） */
     private readonly ripple: (x: number, z: number) => void = () => {},
-  ) {}
+  ) {
+    this.puff = createDustPoints(shared, FIND_LOOK.puffCount);
+    this.puff.renderOrder = 21;
+    this.puff.visible = false;
+    this.puff.frustumCulled = false;
+    this.group.add(this.puff);
+  }
 
   /** 瓶底の物に合わせる（list はこの瓶にある物）。なくなった物は薄れて消える */
   sync(list: readonly Specimen[]): void {
@@ -285,7 +311,20 @@ export class Finds {
     shadow.rotation.y = at.yaw;
     shadow.scale.set(shape.radius * FIND_LOOK.shadowSize, 1, shape.radius * FIND_LOOK.shadowSize * 0.8);
     const dropping = this.drops.delete(s.id);
-    const v: FindView = { shape, meshes, shadow, uniforms, shadowStrength, rest, yaw: at.yaw, phase: dropping ? 'sink' : 'rest', t: 0, pos: rest.clone() };
+    const v: FindView = {
+      kind: s.kind,
+      shape,
+      meshes,
+      shadow,
+      uniforms,
+      shadowStrength,
+      rest,
+      yaw: at.yaw,
+      swayDir: at.yaw * 1.7,
+      phase: dropping ? 'sink' : 'rest',
+      t: 0,
+      pos: rest.clone(),
+    };
     this.group.add(shadow);
     for (const m of meshes) this.group.add(m);
     this.views.set(s.id, v);
@@ -328,26 +367,42 @@ export class Finds {
 
   /** 今の位置と向きをメッシュに */
   private place(v: FindView): void {
-    let rockX = 0;
-    let rockZ = 0;
     let lift = 0;
+    let swayX = 0;
+    let swayZ = 0;
+    let tilt = 0;
     if (v.phase === 'sink') {
-      const k = Math.min(v.t / FIND_LOOK.sinkSeconds, 1);
-      // はじめはゆっくり、底の近くでまたゆっくり。揺れながら沈み、底に着くころには落ち着く
-      const e = smoothstep(0, 1, k);
-      const top = JAR.waterLevel - FIND_LOOK.sinkStart;
+      const L = FIND_LOOK;
+      const k = Math.min(v.t / L.sinkSeconds[v.kind], 1);
+      // 水面からそっと入り、ほぼ一定の速さで沈み、底の近くでゆっくりになる
+      const e = 0.55 * smoothstep(0, 1, k) + 0.45 * k;
+      const top = JAR.waterLevel - L.sinkStart;
       lift = (top - v.rest.y) * (1 - e);
-      const amp = FIND_LOOK.sinkRock * (1 - e);
-      rockX = Math.sin(v.t * 2.3 + v.yaw) * amp;
-      rockZ = Math.cos(v.t * 1.7 + v.yaw * 2) * amp * 0.7;
+      // 振れは入ってすぐに始まり、底に着くころには収まる
+      const env = smoothstep(0, 0.08, k) * Math.pow(1 - k, 0.8);
+      if (v.kind === 'pebble') {
+        tilt = L.pebbleRock * Math.sin(v.t * 2.1 + v.yaw) * env;
+      } else {
+        // 平たい物は木の葉のように左右へ振れながら落ちる。動く向きへ傾き、振れの端で水平に戻る
+        const ph = (v.t / L.leafPeriod) * Math.PI * 2 + v.yaw;
+        const d = L.leafSway * Math.sin(ph) * env;
+        swayX = Math.cos(v.swayDir) * d;
+        swayZ = Math.sin(v.swayDir) * d * 0.6;
+        tilt = L.leafTilt * Math.cos(ph) * env;
+      }
     } else if (v.phase === 'leave') {
       lift = FIND_LOOK.leaveRise * smoothstep(0, 1, v.t / FIND_LOOK.leaveSeconds);
     }
     v.pos.copy(v.rest);
+    v.pos.x += swayX;
+    v.pos.z += swayZ;
     v.pos.y += lift;
+    // 傾ける軸は、振れる向きに直交する水平の軸
+    this.qTilt.setFromAxisAngle(this.tmp.set(-Math.sin(v.swayDir), 0, Math.cos(v.swayDir)), tilt);
+    this.qYaw.setFromAxisAngle(UP, v.yaw);
     for (const m of v.meshes) {
       m.position.copy(v.pos);
-      m.rotation.set(rockX, v.yaw, rockZ, 'YXZ');
+      m.quaternion.copy(this.qTilt).multiply(this.qYaw);
     }
     const fade = v.phase === 'leave' ? 1 - smoothstep(0, 1, v.t / FIND_LOOK.leaveSeconds) : 1;
     v.uniforms.uOpacity.value = fade;
@@ -355,18 +410,66 @@ export class Finds {
     v.shadowStrength.value = FIND_LOOK.shadow * fade * (1 - smoothstep(0, FIND_LOOK.shadowFadeHeight, lift));
   }
 
-  update(dt: number): void {
+  /** 動かす。sediment はこの瓶の瓶底の堆積（底に着いたときに舞う量） */
+  update(dt: number, sediment = 0): void {
     for (const [id, v] of [...this.views]) {
       v.t += dt;
-      if (v.phase === 'sink' && v.t >= FIND_LOOK.sinkSeconds) {
+      if (v.phase === 'sink' && v.t >= FIND_LOOK.sinkSeconds[v.kind]) {
         v.phase = 'rest';
         v.t = 0;
+        this.startPuff(v, sediment);
       }
       if (v.phase === 'leave' && v.t >= FIND_LOOK.leaveSeconds) {
         this.dispose(id);
         continue;
       }
       this.place(v);
+    }
+    this.updatePuff(dt);
+  }
+
+  /** 瓶底に着いた：まわりの堆積がふわっと少しだけ舞う（堆積が多いほど濃い） */
+  private startPuff(v: FindView, sediment: number): void {
+    const L = FIND_LOOK;
+    const rng = createRng(Math.floor(v.rest.x * 1e5) ^ Math.floor(v.rest.z * 1e5) ^ 0x51ed27);
+    for (let i = 0; i < L.puffCount; i++) {
+      const p = this.puffSeeds[i]!;
+      p.angle = rng.range(0, Math.PI * 2);
+      p.reach = Math.sqrt(rng.next());
+      p.rise = rng.range(0.3, 1);
+      p.size = rng.range(L.puffSize[0], L.puffSize[1]);
+      p.delay = rng.range(0, 0.25);
+    }
+    this.puffAt.copy(v.rest);
+    this.puffR = v.shape.radius;
+    this.puffAmount = Math.min(1, L.puffMin + (1 - L.puffMin) * Math.min(sediment, 1));
+    this.puffT = 0;
+    this.puff.visible = true;
+  }
+
+  private updatePuff(dt: number): void {
+    if (this.puffT < 0) return;
+    const L = FIND_LOOK;
+    this.puffT += dt;
+    const geo = this.puff.geometry;
+    const pos = geo.getAttribute('position') as BufferAttribute;
+    const size = geo.getAttribute('aSize') as BufferAttribute;
+    const alpha = geo.getAttribute('aAlpha') as BufferAttribute;
+    for (let i = 0; i < L.puffCount; i++) {
+      const p = this.puffSeeds[i]!;
+      const t = Math.max(this.puffT - p.delay, 0);
+      const k = Math.min(t / L.puffSeconds, 1);
+      // 縁から外へふわっと広がり、少し浮いて、ゆっくり沈み直す
+      const out = this.puffR * 0.8 + L.puffSpread * p.reach * (1 - Math.exp(-t * 2.2));
+      const h = L.puffRise * p.rise * Math.sin(Math.PI * Math.pow(k, 0.55));
+      pos.setXYZ(i, this.puffAt.x + Math.cos(p.angle) * out, FLOOR_Y + h, this.puffAt.z + Math.sin(p.angle) * out);
+      size.setX(i, p.size);
+      alpha.setX(i, this.puffAmount * smoothstep(0, 0.06, k) * (1 - smoothstep(0.55, 1, k)));
+    }
+    pos.needsUpdate = size.needsUpdate = alpha.needsUpdate = true;
+    if (this.puffT > L.puffSeconds + 0.3) {
+      this.puffT = -1;
+      this.puff.visible = false;
     }
   }
 

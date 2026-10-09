@@ -217,20 +217,26 @@ export class Game {
     return true;
   }
 
-  /** 標本の物 id を瓶 jar に置けるか（自分で置ける物は1瓶に1つまで） */
+  /** 標本の物 id を瓶 jar に沈められるか（標本にあって、まだどの瓶にも沈めていない物） */
   canPlaceFind(id: number, jar: number): PlaceResult {
     return canPlace(this.current, id, jar);
   }
 
-  /** 標本の物 id を瓶 jar の瓶底の spot に置く（近すぎればずらす）。日誌には書かない */
-  placeFind(id: number, jar: number, spot: readonly [number, number], yaw: number): PlaceResult {
+  /** 標本の物 id を瓶 jar に沈める（場所は空いた所を選ぶ。前に沈めた物は黙って標本へ戻る）。日誌には書かない */
+  placeFind(id: number, jar: number): PlaceResult {
+    this.catchUpNow(false, this.watching);
     const next = structuredClone(this.current);
-    const result = placeFind(next, id, jar, spot, yaw);
+    const result = placeFind(next, id, jar);
     if (result !== 'placed') return result;
     this.current = next;
     this.emit();
     void this.save();
     return result;
+  }
+
+  /** 沈めてある物 id を引き上げて標本へ戻す（瓶でタップしたのと同じ。写真と拾った日はそのまま） */
+  raiseFind(id: number): boolean {
+    return this.pickFind(id, null);
   }
 
   /** 名前を付ける（null や空なら名無しに戻す） */

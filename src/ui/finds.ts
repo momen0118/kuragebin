@@ -1,5 +1,4 @@
 // 拾いものの手触り。拾った物は小さな光になって左下の日誌のアイコンへ吸い込まれる（文字は出さない）。
-// 標本から瓶へ戻すときは、標本の写真が指の少し上についてくる。瓶底の上で離すと置き、外で離すと光になって標本へ戻る。
 import { FIND_FLIGHT } from '../config';
 
 const ease = (t: number): number => {
@@ -36,79 +35,4 @@ export function flyLight(from: { x: number; y: number }, to: { x: number; y: num
     }
   };
   requestAnimationFrame(step);
-}
-
-export interface FindCarryOptions {
-  /** 運んでいる物を離した所（画面の CSS px）。瓶底に置けたら true（置けなければ標本へ戻す） */
-  drop(id: number, x: number, y: number): boolean;
-  /** その所が瓶底の上か（運んでいる間の見た目） */
-  over(x: number, y: number): boolean;
-  /** 標本へ戻るときの行き先（日誌のアイコンの真ん中） */
-  home(): { x: number; y: number };
-  /** 戻り着いた */
-  returned(): void;
-}
-
-/** 標本から瓶へ運ぶ。写真が指の少し上についてくる */
-export class FindCarry {
-  private ghost: HTMLDivElement | null = null;
-  private id = 0;
-  private pointer = -1;
-  private x = 0;
-  private y = 0;
-
-  constructor(private readonly opts: FindCarryOptions) {
-    window.addEventListener('pointermove', (e) => this.move(e), { passive: true });
-    window.addEventListener('pointerup', (e) => this.up(e));
-    window.addEventListener('pointercancel', (e) => this.up(e, true));
-  }
-
-  get active(): boolean {
-    return this.ghost !== null;
-  }
-
-  /** 運びはじめる（標本の物 id、写真、指の位置と番号） */
-  start(id: number, photo: string | null, x: number, y: number, pointer: number): void {
-    this.ghost?.remove();
-    const g = document.createElement('div');
-    g.className = 'find-ghost';
-    if (photo) g.style.backgroundImage = `url("${photo}")`;
-    document.body.appendChild(g);
-    this.ghost = g;
-    this.id = id;
-    this.pointer = pointer;
-    this.place(x, y);
-    requestAnimationFrame(() => g.classList.add('shown'));
-  }
-
-  /** 物の見えている所（指の少し上） */
-  private place(x: number, y: number): void {
-    this.x = x;
-    this.y = y - FIND_FLIGHT.carryLift;
-    const g = this.ghost;
-    if (!g) return;
-    g.style.transform = `translate(${this.x.toFixed(1)}px, ${this.y.toFixed(1)}px)`;
-    g.classList.toggle('over', this.opts.over(this.x, this.y));
-  }
-
-  private move(e: PointerEvent): void {
-    if (!this.ghost || e.pointerId !== this.pointer) return;
-    this.place(e.clientX, e.clientY);
-  }
-
-  private up(e: PointerEvent, cancel = false): void {
-    const g = this.ghost;
-    if (!g || e.pointerId !== this.pointer) return;
-    this.ghost = null;
-    if (!cancel) this.place(e.clientX, e.clientY);
-    const placed = !cancel && this.opts.drop(this.id, this.x, this.y);
-    if (placed) {
-      // 水へ入っていく：ふっと消える（瓶の中では水面のすぐ下から沈んでいく）
-      g.classList.add('placed');
-      setTimeout(() => g.remove(), 400);
-      return;
-    }
-    g.remove();
-    flyLight({ x: this.x, y: this.y }, this.opts.home(), () => this.opts.returned());
-  }
 }

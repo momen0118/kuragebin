@@ -3,7 +3,7 @@ import { FIND_VARIANTS, FINDS, LIFE } from '../config';
 import { migrate } from '../storage/schema';
 import { advance } from './advance';
 import { spawnCreature, spawnFind } from './edit';
-import { bookSpecimens, canPlace, findsIn, pickFind, pickVariant, placeFind, setFindPhoto, settleSpot } from './finds';
+import { bookSpecimens, canPlace, findsIn, pickFind, pickVariant, placeFind, setFindPhoto } from './finds';
 import { createRng } from './rng';
 import { createInitialState, type GameState } from './state';
 
@@ -92,7 +92,7 @@ describe('拾いものが現れる', () => {
 });
 
 describe('拾う・置く', () => {
-  test('拾うと標本へ移り、初めて拾った日と写真が残る。置き直して拾っても、日と写真は最初のまま', () => {
+  test('拾うと標本へ移り、初めて拾った日と写真が残る。沈めても標本に載ったまま、引き上げても日と写真は最初のまま', () => {
     const s = empty();
     const id = spawnFind(s, 0, 'glass-blue');
     expect(bookSpecimens(s)).toHaveLength(0);
@@ -101,48 +101,50 @@ describe('拾う・置く', () => {
     expect(bookSpecimens(s).map((x) => x.id)).toEqual([id]);
     const first = { ...bookSpecimens(s)[0]! };
     expect(first.foundWallTime).toBe(T0 + 1000);
-    // 別の瓶に置き直して、また拾う
-    expect(placeFind(s, id, 2, [0.2, 0.1], 1)).toBe('placed');
-    expect(bookSpecimens(s)).toHaveLength(0);
+    // 別の瓶に沈める：標本には載ったまま（どの瓶にあるかがわかる）
+    expect(placeFind(s, id, 2)).toBe('placed');
+    expect(bookSpecimens(s).map((x) => x.at?.jar)).toEqual([2]);
     expect(findsIn(s, 2)[0]!.at!.placed).toBe(true);
+    // 沈めてある物はもう沈められない
+    expect(canPlace(s, id, 1)).toBe('missing');
+    // 引き上げる（瓶でタップしても同じ）
     expect(pickFind(s, id, T0 + 99999)).toBe(true);
     expect(setFindPhoto(s, id, 'data:b')).toBe(false);
-    expect(bookSpecimens(s)[0]).toMatchObject({ foundWallTime: first.foundWallTime, photo: 'data:a' });
+    expect(bookSpecimens(s)[0]).toMatchObject({ at: null, foundWallTime: first.foundWallTime, photo: 'data:a' });
     // 標本にある物は拾えない
     expect(pickFind(s, id, T0)).toBe(false);
   });
 
-  test('自分で置けるのは1瓶に1つまで。置いた瓶では、現れる物は2つまで', () => {
+  test('沈められるのは1瓶に1つ。別のを沈めると、前のは黙って標本に戻る。沈めた瓶では、現れる物は2つまで', () => {
     let s = empty();
     const a = spawnFind(s, 0);
     const b = spawnFind(s, 0);
     pickFind(s, a, T0);
     pickFind(s, b, T0);
-    expect(placeFind(s, a, 0, [0, 0], 0)).toBe('placed');
-    expect(canPlace(s, b, 0)).toBe('full');
-    expect(placeFind(s, b, 0, [0.3, 0], 0)).toBe('full');
-    expect(canPlace(s, b, 1)).toBe('placed');
+    expect(placeFind(s, a, 0)).toBe('placed');
+    expect(placeFind(s, b, 0)).toBe('placed');
+    expect(findsIn(s, 0).map((x) => x.id)).toEqual([b]);
+    expect(s.specimens.find((x) => x.id === a)!.at).toBeNull();
+    // ほかの瓶の物はそのまま
+    expect(placeFind(s, a, 1)).toBe('placed');
+    expect(findsIn(s, 0).map((x) => x.id)).toEqual([b]);
     s = run(s, 120, null);
     const here = findsIn(s, 0);
     expect(here).toHaveLength(FINDS.maxPerJar);
     expect(here.filter((x) => x.at!.placed)).toHaveLength(1);
+    expect(s.journal.filter((e) => e.kind !== 'water')).toHaveLength(0);
   });
 
-  test('ポリプやほかの物に近すぎる所に置くと、近くの空いた所へずれる', () => {
+  test('沈める場所は、ポリプやほかの物から離れた所', () => {
     const s = empty();
-    const p = spawnCreature(s, 0, 'polyp');
-    p.spot = [0, 0];
+    for (let i = 0; i < 2; i++) spawnCreature(s, 0, 'polyp');
+    spawnFind(s, 0);
     const id = spawnFind(s, 1);
     pickFind(s, id, T0);
-    expect(placeFind(s, id, 0, [0.02, 0.01], 0)).toBe('placed');
-    const [x, z] = findsIn(s, 0)[0]!.at!.spot;
-    expect(Math.hypot(x, z * FINDS.depthWeight)).toBeGreaterThanOrEqual(FINDS.placeSpacing - 1e-9);
-    expect(Math.hypot(x - 0.02, z - 0.01)).toBeLessThan(0.6);
-    // 空いていればそのまま
-    expect(settleSpot([[0, 0]], [0.5, 0.2])).toEqual([0.5, 0.2]);
-    // 置ける範囲の外は内側へ
-    const far = settleSpot([], [2, 0], FINDS.placeRadius);
-    expect(Math.hypot(far[0], far[1])).toBeCloseTo(FINDS.placeRadius, 6);
+    expect(placeFind(s, id, 0)).toBe('placed');
+    const me = findsIn(s, 0).find((x) => x.id === id)!.at!.spot;
+    const others = [...s.jars[0]!.creatures.map((c) => c.spot!), ...findsIn(s, 0).filter((x) => x.id !== id).map((x) => x.at!.spot)];
+    for (const o of others) expect(Math.hypot(me[0] - o[0], (me[1] - o[1]) * FINDS.depthWeight)).toBeGreaterThan(0.12);
   });
 
   test('日誌には書かない', () => {

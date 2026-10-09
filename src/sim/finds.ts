@@ -1,7 +1,8 @@
 // 拾いもの（4-2）。貝殻のかけら・シーグラス・小石が、見ていない間にまれに瓶底に現れる（入れ替えた水に混じっていたもの）。
 // 1瓶あたり平均 FINDS.meanDays 日に1つ。水換えとは関係なく日数で決め、見ている瓶には現れない。
-// タップで拾うと日誌の標本に移り（初めて拾った日と写真を残す）、標本から瓶へ戻して飾れる。置いた物をタップするとまた標本へ。
-// 1瓶に合わせて FINDS.maxPerJar まで、そのうち自分で置いた物は FINDS.maxPlaced まで（置いた物がある瓶では、現れる物はその分少ない）。
+// タップで拾うと日誌の標本に移り（初めて拾った日と写真を残す）、標本から瓶に沈めて飾れる（標本には「一番の瓶」と残る）。
+// 沈めた物は、瓶でタップするか標本で引き上げると戻る。
+// 1瓶に合わせて FINDS.maxPerJar まで、そのうち自分で沈めた物は FINDS.maxPlaced まで（沈めた物がある瓶では、現れる物はその分少ない）。
 // 揺らしても動かない。日誌には書かない。現れるかどうかは刻みと瓶から決まる別の乱数で決め、生活環の乱数の並びは変えない。
 // 状態をその場で書き換える。
 import { FIND_VARIANTS, FINDS, SIM } from '../config';
@@ -26,9 +27,9 @@ export function findSpots(state: GameState, jar: number): Array<[number, number]
   return findsIn(state, jar).map((s) => s.at!.spot);
 }
 
-/** 標本にある物（拾った順） */
+/** 標本に載っている物（拾ったことのある物。標本にある物と、瓶に沈めてある物）。拾った順 */
 export function bookSpecimens(state: GameState): Specimen[] {
-  return state.specimens.filter((s) => s.at === null && s.foundAt !== null).sort((a, b) => a.foundAt! - b.foundAt! || a.id - b.id);
+  return state.specimens.filter((s) => s.foundAt !== null && (s.at === null || s.at.placed)).sort((a, b) => a.foundAt! - b.foundAt! || a.id - b.id);
 }
 
 /** 重みで1つ選ぶ */
@@ -156,56 +157,30 @@ export function setFindPhoto(state: GameState, id: number, photo: string): boole
   return true;
 }
 
-export type PlaceResult = 'placed' | 'full' | 'missing';
+export type PlaceResult = 'placed' | 'missing';
 
-/** 標本の物 id を瓶 jar に置けるか（自分で置ける物は1瓶に FINDS.maxPlaced まで） */
+/** 標本の物 id を瓶 jar に沈められるか（標本にあって、まだどの瓶にも沈めていない物） */
 export function canPlace(state: GameState, id: number, jar: number): PlaceResult {
   const s = state.specimens.find((x) => x.id === id);
   if (!s || s.at !== null || s.foundAt === null || !state.jars[jar]) return 'missing';
-  if (findsIn(state, jar).filter((x) => x.at!.placed).length >= FINDS.maxPlaced) return 'full';
   return 'placed';
 }
 
 /**
- * spot がポリプやほかの物に近すぎれば、近くの空いた所へずらす（瓶底の半径 limit の内側で）。
- * 少しずつ遠くを、いくつかの向きで探す。どこも空いていなければ、いちばん離れた所
+ * 標本の物 id を、瓶 jar の瓶底に沈める。場所はポリプやほかの物から離れた所を選ぶ。
+ * 自分で沈められるのは1瓶に FINDS.maxPlaced まで。越える分は、前に沈めた物から黙って標本へ戻す。
+ * 沈めた物は揺らしても動かない。日誌には書かない
  */
-export function settleSpot(taken: ReadonlyArray<readonly [number, number]>, spot: readonly [number, number], limit: number = FINDS.spotRadius): [number, number] {
-  const clampIn = (x: number, z: number): [number, number] => {
-    const r = Math.hypot(x, z);
-    return r > limit ? [(x / r) * limit, (z / r) * limit] : [x, z];
-  };
-  const clearance = (p: readonly [number, number]): number => taken.reduce((m, t) => Math.min(m, gap(p, t)), Infinity);
-  let best = clampIn(spot[0], spot[1]);
-  let bestD = clearance(best);
-  if (bestD >= FINDS.placeSpacing) return best;
-  const steps = 14;
-  const angles = 16;
-  for (let i = 1; i <= steps; i++) {
-    const d = (i / steps) * limit;
-    for (let k = 0; k < angles; k++) {
-      const a = (k / angles) * Math.PI * 2;
-      // 奥行きの向きは画面では詰まって見えるので、そのぶん大きく動かす
-      const p = clampIn(spot[0] + Math.cos(a) * d, spot[1] + (Math.sin(a) * d) / FINDS.depthWeight);
-      const c = clearance(p);
-      if (c >= FINDS.placeSpacing) return p;
-      if (c > bestD) {
-        bestD = c;
-        best = p;
-      }
-    }
-  }
-  return best;
-}
-
-/**
- * 標本の物 id を、瓶 jar の瓶底の spot に置く（ポリプやほかの物に近ければ、近くの空いた所へずらす）。
- * 置いた物は揺らしても動かない。日誌には書かない
- */
-export function placeFind(state: GameState, id: number, jar: number, spot: readonly [number, number], yaw: number): PlaceResult {
+export function placeFind(state: GameState, id: number, jar: number): PlaceResult {
   const result = canPlace(state, id, jar);
   if (result !== 'placed') return result;
   const s = state.specimens.find((x) => x.id === id)!;
-  s.at = { jar, spot: settleSpot(takenIn(state, jar), spot, FINDS.placeRadius), yaw, placed: true };
+  let placed = findsIn(state, jar).filter((x) => x.at!.placed);
+  while (placed.length >= FINDS.maxPlaced) {
+    placed[0]!.at = null;
+    placed = placed.slice(1);
+  }
+  const rng = createRng((s.seed ^ Math.floor((state.time + state.pending) * 1000)) >>> 0);
+  s.at = { jar, spot: pickFindSpot(takenIn(state, jar), rng), yaw: rng.range(0, Math.PI * 2), placed: true };
   return 'placed';
 }

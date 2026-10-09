@@ -264,14 +264,17 @@ export interface SpecimenItem {
   found: string;
   /** 初めて拾ったときの写真（なければ null） */
   photo: string | null;
+  /** 沈めてある瓶（「一番の瓶」。標本にあれば null） */
+  where: string | null;
 }
 
-/** 標本：標本にある物を拾った順に。名前と拾った日だけ（どの瓶かは書かない） */
+/** 標本：拾ったことのある物を拾った順に。名前と拾った日（どの瓶で拾ったかは書かない）。沈めてある物は、その瓶 */
 export function specimenItems(state: GameState): SpecimenItem[] {
   return bookSpecimens(state).map((s) => ({
     id: s.id,
     name: FIND_NAMES[s.variant] ?? s.variant,
     found: dayTitle(feedDay(s.foundWallTime ?? s.appearedWallTime)),
     photo: s.photo,
+    where: s.at ? jarTitle(s.at.jar) : null,
   }));
 }
