@@ -299,6 +299,8 @@ body {
  */
 .creature-note {
   position: fixed;
+  /* 虫眼鏡より手前（レンズの上の個体にも札を出す） */
+  z-index: 6;
   left: 0;
   top: 0;
   width: 0;
@@ -385,6 +387,43 @@ body {
   line-height: 1.3;
   letter-spacing: 0.03em;
   opacity: 0.66;
+}
+
+/* 「よく見る」：段階の下に小さく、下線で */
+.creature-note .look {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.3;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  opacity: 0.72;
+  text-decoration: underline;
+  text-decoration-color: rgba(238, 238, 238, 0.35);
+  text-underline-offset: 2px;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.55);
+  touch-action: manipulation;
+}
+
+.creature-note.shown .look {
+  pointer-events: auto;
+}
+
+.creature-note .look::after {
+  content: '';
+  position: absolute;
+  inset: -8px -8px -10px;
+}
+
+.creature-note.editing .look {
+  visibility: hidden;
 }
 
 /* 名前を入れているとき。16px 未満だと iOS が画面を拡大する */
@@ -1162,4 +1201,81 @@ body {
   .letter-scrim {
     transition: none;
   }
+}
+
+/*
+ * 虫眼鏡。枠（細い金属の輪）と柄（黒い樹脂、根元に金具）。レンズの中は描画側が描く。
+ * 天板に置いてあるときは小さく寝かせ（レンズの中はガラスの映り込みだけ）、持ち上げると起きる。位置と傾きは JS で合わせる
+ */
+.loupe {
+  --lum: 1;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.loupe-body {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  filter: brightness(var(--lum));
+}
+
+.loupe-ring {
+  position: absolute;
+  left: calc(-1 * (var(--r) + var(--frame)));
+  top: calc(-1 * (var(--r) + var(--frame)));
+  box-sizing: border-box;
+  width: calc(2 * (var(--r) + var(--frame)));
+  height: calc(2 * (var(--r) + var(--frame)));
+  border: var(--frame) solid #77797c;
+  border-radius: 50%;
+  /* 金属の輪：上が明るく下が暗い。内側の縁に細い影 */
+  border-top-color: #a3a5a8;
+  border-left-color: #8e9093;
+  border-bottom-color: #4f5154;
+  border-right-color: #626467;
+  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.06) 38%, rgba(160, 175, 190, 0.12) 70%, rgba(255, 255, 255, 0.2) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 4px 10px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+/* 起きてガラスの上にあるとき：レンズの中は描画側が描くので透明に */
+.loupe.up .loupe-ring {
+  background: transparent;
+}
+
+.loupe-handle {
+  position: absolute;
+  left: 0;
+  top: calc(-0.5 * var(--handle-w));
+  width: var(--handle);
+  height: var(--handle-w);
+  border-radius: 3px calc(var(--handle-w) / 2) calc(var(--handle-w) / 2) 3px;
+  /* 根元の金具と、黒い樹脂の柄 */
+  background:
+    linear-gradient(90deg, #8a8c8f 0 12px, #5b5d60 12px 14px, transparent 14px),
+    linear-gradient(180deg, #3a3634 0%, #1d1b1a 55%, #121110 100%);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.45);
+  transform-origin: 0 50%;
+  transform: rotate(45deg) translateX(calc(var(--r) + var(--frame) - 2px));
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+.loupe.off .loupe-ring,
+.loupe.off .loupe-handle {
+  pointer-events: none;
 }

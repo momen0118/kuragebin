@@ -241,6 +241,8 @@ export interface RoomView {
   shift: readonly [number, number];
   /** 天板に立っている瓶の横の位置（ワールド x） */
   jars: readonly number[];
+  /** 画面の一部だけを描く（虫眼鏡）：画面の uv で [左, 下, 幅, 高さ]。なければ画面全体 */
+  rect?: readonly [number, number, number, number];
 }
 
 export class Room {
@@ -340,8 +342,9 @@ export class Room {
     u.uJarX.value[0] = view.jars[0] ?? 0;
     u.uJarX.value[1] = view.jars[1] ?? 0;
     const cover = aspect === null ? { scale: [1, 1], offset: [0, 0] } : coverTransform(aspect);
-    u.uCoverScale.value.set(cover.scale[0]!, cover.scale[1]!);
-    u.uCoverOffset.value.set(cover.offset[0]!, cover.offset[1]!);
+    const [rx, ry, rw, rh] = view.rect ?? [0, 0, 1, 1];
+    u.uCoverScale.value.set(cover.scale[0]! * rw, cover.scale[1]! * rh);
+    u.uCoverOffset.value.set(cover.offset[0]! + cover.scale[0]! * rx, cover.offset[1]! + cover.scale[1]! * ry);
     // 写真が画面より狭いとき（横長の画面）だけ端を溶かす
     u.uEdgeFade.value = cover.scale[0]! > 1.0001 ? ROOM.edgeFade : 0;
     if (this.debugOnly) {

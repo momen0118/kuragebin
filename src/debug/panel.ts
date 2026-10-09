@@ -2,9 +2,9 @@
 // 時刻の上書き（光の確認用）、背景写真の切り替えと重ね表示（位置合わせの確認用）、FPS、
 // 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、餌（1日1回を無視してやる・記録を消す）、
 // 揺れ（今の値と閾値、センサーなしで一回揺らす・逆さまから起き直るところを見る）、
-// おじさん（最初の手紙を出し直す・返事を今すぐ届ける）、
+// おじさん（最初の手紙を出し直す・返事を今すぐ届ける）、虫眼鏡（倍率・天板へ戻す）、
 // 状態の表示・リセット・書き出し・読み込み。
-import { DEBUG, type PhotoName } from '../config';
+import { DEBUG, LOUPE, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
 import type { GeneEdit } from '../sim/edit';
 import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
@@ -58,6 +58,9 @@ export interface DebugPanelOptions {
   /** おじさん：最初の手紙を封筒のまま表示中の瓶の横に出し直す、返事を今すぐ届ける */
   onFirstLetter(): void;
   onReplyNow(): void;
+  /** 虫眼鏡：倍率を変える、天板へ戻す */
+  onLoupeZoom(zoom: number): void;
+  onLoupeHome(): void;
 }
 
 const PHOTOS: ReadonlyArray<[PhotoName, string]> = [
@@ -221,6 +224,11 @@ export class DebugPanel {
         </div>
       </details>
       <details>
+        <summary>虫眼鏡</summary>
+        <label class="row">倍率 <input class="zoom" type="range" min="${LOUPE.zoomRange[0]}" max="${LOUPE.zoomRange[1]}" step="0.1" value="${LOUPE.zoom}" aria-label="倍率"> <span class="zoom-v">×${LOUPE.zoom.toFixed(1)}</span></label>
+        <div class="row buttons"><button type="button" class="loupe-home">天板へ戻す</button></div>
+      </details>
+      <details>
         <summary>状態</summary>
         <div class="state sub"></div>
         <div class="row buttons">
@@ -268,6 +276,13 @@ export class DebugPanel {
     this.uncleEl = root.querySelector('.uncle')!;
     root.querySelector('.first-letter')!.addEventListener('click', () => this.opts.onFirstLetter());
     root.querySelector('.reply-now')!.addEventListener('click', () => this.opts.onReplyNow());
+    const zoom = root.querySelector<HTMLInputElement>('.zoom')!;
+    const zoomV = root.querySelector<HTMLSpanElement>('.zoom-v')!;
+    zoom.addEventListener('input', () => {
+      zoomV.textContent = `×${Number(zoom.value).toFixed(1)}`;
+      this.opts.onLoupeZoom(Number(zoom.value));
+    });
+    root.querySelector('.loupe-home')!.addEventListener('click', () => this.opts.onLoupeHome());
     this.motionEl.style.whiteSpace = 'pre-line';
 
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-spawn]')) {

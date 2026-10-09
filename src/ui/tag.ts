@@ -1,6 +1,7 @@
 // 個体の札。海月（瓶底のポリプも）をタップすると数秒だけ出る。
 // 図鑑や標本の注記のように、個体から細い線を斜め上へ引き、その先の短い横線の上に名前、下に小さく段階と日数。
 // 線は瓶の縁や画面の外にはみ出さない側へ引く。名前（初めは「名無し」）をタップすると名前を付けられる。
+// 段階の下の「よく見る」で、虫眼鏡がその個体の上へ動いてしばらくついていく。
 import { TAG } from '../config';
 import type { NoteAnchor } from '../render/app';
 import { NAME_MAX } from '../sim/actions';
@@ -20,6 +21,8 @@ export interface TagOptions {
   /** 線を付ける所（CSS px、レンズ越しに見えている位置）。見えていなければ null */
   anchor(id: number): NoteAnchor | null;
   rename(id: number, name: string): void;
+  /** 「よく見る」：虫眼鏡をその個体の上へ */
+  look(id: number): void;
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -41,6 +44,7 @@ export class CreatureTag {
   private readonly line: SVGPathElement;
   private readonly nameEl: HTMLButtonElement;
   private readonly subEl: HTMLDivElement;
+  private readonly lookEl: HTMLButtonElement;
   private input: HTMLInputElement | null = null;
   private id: number | null = null;
   /** 出ている残りの時間と、消えていく残りの時間（秒） */
@@ -51,6 +55,8 @@ export class CreatureTag {
   private nameW = 0;
   private nameH = 0;
   private subW = 0;
+  private subH = 0;
+  private lookW = 0;
   private placed: Layout | null = null;
 
   constructor(private readonly opts: TagOptions) {
@@ -72,11 +78,22 @@ export class CreatureTag {
     name.addEventListener('click', () => this.edit());
     const sub = document.createElement('div');
     sub.className = 'sub';
-    el.append(svg, name, sub);
+    const look = document.createElement('button');
+    look.type = 'button';
+    look.className = 'look';
+    look.textContent = 'よく見る';
+    look.addEventListener('click', () => {
+      const id = this.id;
+      if (id === null) return;
+      this.hide();
+      this.opts.look(id);
+    });
+    el.append(svg, name, sub, look);
     document.body.appendChild(el);
     this.el = el;
     this.nameEl = name;
     this.subEl = sub;
+    this.lookEl = look;
   }
 
   /** 出している個体 */
@@ -160,6 +177,8 @@ export class CreatureTag {
     this.nameW = n.offsetWidth;
     this.nameH = n.offsetHeight;
     this.subW = this.subEl.offsetWidth;
+    this.subH = this.subEl.offsetHeight;
+    this.lookW = this.lookEl.offsetWidth;
   }
 
   /** 横線の長さ（文字の幅と前後の余り） */
@@ -221,6 +240,8 @@ export class CreatureTag {
     const sx = l.dir > 0 ? pad : -pad - this.subW;
     name.style.transform = `translate(${nx.toFixed(1)}px, ${(-this.nameH - 1).toFixed(1)}px)`;
     this.subEl.style.transform = `translate(${sx.toFixed(1)}px, 3px)`;
+    const lx = l.dir > 0 ? pad : -pad - this.lookW;
+    this.lookEl.style.transform = `translate(${lx.toFixed(1)}px, ${(3 + this.subH + 2).toFixed(1)}px)`;
   }
 
   /** 名前を入れる */

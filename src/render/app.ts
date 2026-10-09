@@ -5,6 +5,7 @@
 // 4. 画面へ：背景を出し、最後に手前のガラスが背景と中身をレンズとして曲げて重ねる
 //
 // 5. 手前：おじさんへ送る箱と、箱へ運ぶカップ（瓶のガラスより手前にある）
+// 6. 虫眼鏡：レンズの所だけを、狭い画角のカメラで 1〜5 をもう一度描いて、丸く重ねる（使っている間だけ）
 //
 // 3つの瓶は天板の上に横に並んでいる。瓶 i は x = (i - view) × spacing に立ち、見えている瓶（ふだんは1つ、
 // すれ違う間は2つ）だけを描く。瓶ごとに、カメラをその瓶の位置だけ横へずらして、瓶を原点に置いたまま描く
@@ -23,7 +24,7 @@ import {
   type Texture,
   type WebGLRenderTarget,
 } from 'three';
-import { BELL, BOX, CUP, FOOD, JAR, LAMP, PHOTO, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, BOX, CUP, FOOD, JAR, LAMP, LOUPE, PHOTO, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState } from '../sim/state';
@@ -37,6 +38,7 @@ import { Creatures } from './creatures';
 import { Cup } from './cup';
 import { Feeding } from './feeding';
 import { Food } from './food';
+import { LoupeLens, type LensView } from './loupe';
 import { createJar, type Jar } from './jar';
 import { apparentNdc } from './lensMap';
 import { lightAt, type LightState } from './lighting';
@@ -165,6 +167,12 @@ export class App {
   private readonly stirred: boolean[];
   /** 瓶ごとの水面の波紋（x, z, 始まった時刻, 強さ） */
   private readonly ripples: Vector4[][];
+  /** 虫眼鏡のレンズ（使っていなければ null）と、描き直す画像。stretch は画質「低」（描き直さず画面を引き伸ばす） */
+  private loupe: LensView | null = null;
+  private readonly lens: LoupeLens;
+  loupeStretch = false;
+  /** 最後に重ねたレンズ：写っている画像と、それが写している所（画面の画素） */
+  private lensShot: { src: Texture; origin: Vector2; size: number } | null = null;
   /** 確認用：中間の画像をそのまま出す（'bg' | 'contents' | 'glow' | 'room'） */
   debugView: string | null = null;
   /** 確認用：部品ごとに表示を切り替える */
@@ -233,6 +241,7 @@ export class App {
       this.cup,
     );
     this.box = new Box(this.shared);
+    this.lens = new LoupeLens(this.shared);
     this.boxBackScene.add(this.box.back);
     this.boxWaterScene.add(this.box.water);
     this.boxFrontScene.add(this.box.front);
@@ -675,6 +684,20 @@ export class App {
     this.scoop.release();
   }
 
+  /** 虫眼鏡のレンズ（CSS px）。null で使っていない（描かない） */
+  setLoupe(v: LensView | null): void {
+    this.loupe = v;
+    if (!v) this.lensShot = null;
+  }
+
+  /** レンズの中を1枚の画像に（一辺 px の正方形、レンズの外は透明）。使っていなければ null。今は使わない */
+  captureLens(px = 512): ImageData | null {
+    const v = this.loupe;
+    const shot = this.lensShot;
+    if (!v || !shot) return null;
+    return this.lens.capture(this.renderer, v, shot.src, shot.origin, shot.size, this.renderer.getPixelRatio(), this.height, px);
+  }
+
   /** 運んでいる間、指が画面の下のほう（箱のあたり）にあるか。あると箱がせり上がる */
   scoopNearBox(near: boolean): void {
     this.boxNear = near;
@@ -890,10 +913,74 @@ export class App {
       this.room.render(r, this.roomWideRT, this.light, null);
       this.wideDirty = false;
     }
+    if (!this.drawScene(vis, xs, { room: this.roomRT, bg: this.bgRT, content: this.contentRT, out: null, glow: true })) return;
 
+    // 6. 虫眼鏡：レンズの所だけ、狭い画角でもう一度描いて丸く重ねる（使っている間だけ）
+    if (this.loupe && this.loupe.alpha > 1e-3) this.renderLoupe(vis, xs);
+  }
+
+  /**
+   * 虫眼鏡：レンズの所（とその少し外）だけを、カメラの視野の一部として描き直し（狭い画角）、丸く重ねる。
+   * 画質「低」なら描き直さず、描いた画面のその所を写し取って引き伸ばす
+   */
+  private renderLoupe(vis: number[], xs: number[]): void {
+    const v = this.loupe!;
+    const r = this.renderer;
+    const ratio = r.getPixelRatio();
+    const cssW = this.width / ratio;
+    const cssH = this.height / ratio;
+    // 描き直す所（CSS px、左上が原点）：レンズの真ん中のまわり、倍率で割った広さ
+    const hs = (v.radius * LOUPE.margin) / v.zoom;
+    const x0 = v.x - hs;
+    const y0 = v.y - hs;
+    const origin = new Vector2(x0 * ratio, this.height - (y0 + 2 * hs) * ratio);
+    const size = 2 * hs * ratio;
+    if (this.loupeStretch) {
+      const at = this.lens.grabScreen(r, origin.x, origin.y, size, this.width, this.height);
+      this.lensShot = { src: this.lens.grabbed!, origin: at, size: this.lens.grabSize };
+      this.lens.draw(r, v, this.lens.grabbed!, at, this.lens.grabSize, ratio, this.height);
+      return;
+    }
+    this.lens.ensure(2 * v.radius * LOUPE.margin * Math.min(ratio, LOUPE.maxDpr));
+    const n = this.lens.out.width;
+    const s = this.shared;
+    const fu = this.jar.frontUniforms;
+    const saved = { scale: fu.uCoverScale.value.clone(), offset: fu.uCoverOffset.value.clone() };
+    this.camera.setViewOffset(cssW, cssH, x0, y0, 2 * hs, 2 * hs);
+    this.jarCam.setViewOffset(cssW, cssH, x0, y0, 2 * hs, 2 * hs);
+    s.uResolution.value.set(n, n);
+    // 画素で決めている太さ（触手）も、拡大したぶん太く
+    s.uPixelRatio.value = n / (2 * hs);
+    s.tRoom.value = this.lens.room.texture;
+    const rect = [x0 / cssW, 1 - (y0 + 2 * hs) / cssH, (2 * hs) / cssW, (2 * hs) / cssH] as const;
+    fu.uCoverScale.value.set(saved.scale.x * rect[2], saved.scale.y * rect[3]);
+    fu.uCoverOffset.value.set(saved.offset.x + saved.scale.x * rect[0], saved.offset.y + saved.scale.y * rect[1]);
+    const [wall, table] = this.parallaxStep;
+    this.room.render(r, this.lens.room, this.light, cssW / cssH, { shift: [wall * this.view, table * this.view], jars: xs, rect });
+    this.drawScene(vis, xs, { room: this.lens.room, bg: this.lens.bg, content: this.lens.content, out: this.lens.out, glow: false });
+    // 元に戻す
+    this.camera.clearViewOffset();
+    this.jarCam.clearViewOffset();
+    s.uResolution.value.set(this.width, this.height);
+    s.uPixelRatio.value = ratio;
+    s.tRoom.value = this.roomRT.texture;
+    fu.uCoverScale.value.copy(saved.scale);
+    fu.uCoverOffset.value.copy(saved.offset);
+    this.jar.floorBg.value = this.bgRT.texture;
+    this.lensShot = { src: this.lens.out.texture, origin, size };
+    r.setRenderTarget(null);
+    this.lens.draw(r, v, this.lens.out.texture, origin, size, ratio, this.height);
+  }
+
+  /**
+   * 1〜5 を描く。room は部屋の画像（描いてあるもの）、bg・content は途中の画像、out は描く先（null で画面）。
+   * glow が false なら光る部分のブルームは描かない（虫眼鏡）。確認用の中間の画像を出したときは false を返す
+   */
+  private drawScene(vis: number[], xs: number[], t: { room: WebGLRenderTarget; bg: WebGLRenderTarget; content: WebGLRenderTarget; out: WebGLRenderTarget | null; glow: boolean }): boolean {
+    const r = this.renderer;
     // 1. 背景：部屋に天板の影や光を重ねる（見えている瓶ごとに）
-    this.copy.uniforms.tSrc.value = this.roomRT.texture;
-    this.copy.render(r, this.bgRT);
+    this.copy.uniforms.tSrc.value = t.room.texture;
+    this.copy.render(r, t.bg);
     const tj = this.tableJars;
     tj.uJarCount.value = vis.length;
     vis.forEach((i, k) => {
@@ -901,7 +988,7 @@ export class App {
       tj.uJarAgitation.value[k] = this.agitations[i]!;
     });
     this.camera.layers.set(0);
-    r.setRenderTarget(this.bgRT);
+    r.setRenderTarget(t.bg);
     r.render(this.bgScene, this.camera);
     // カップ（と中の海月）とスポイトの、瓶の口より上にある部分は背景に重ねる
     // （箱へ運んでいる間は瓶のガラスより手前なので、最後に描く）
@@ -910,8 +997,8 @@ export class App {
     if (this.feeding.busy && vis.includes(this.feeding.jar)) this.renderPipette(this.feeding.jar, 2);
 
     // 2. 中身：透明な画像に描く（瓶底は背景の天板を映す）。見えている瓶ごとに、その瓶の位置へずらしたカメラで
-    this.jar.floorBg.value = this.bgRT.texture;
-    r.setRenderTarget(this.contentRT);
+    this.jar.floorBg.value = t.bg.texture;
+    r.setRenderTarget(t.content);
     r.setClearColor(0x000000, 0);
     r.clear(true, false, false);
     for (const i of vis) {
@@ -920,21 +1007,22 @@ export class App {
       if (cupBehind && i === this.scoop.frameJar) this.renderCup(i, 1);
       if (this.feeding.busy && i === this.feeding.jar) this.renderPipette(i, 1);
     }
+    r.setClearColor(RENDER.clearColor, 1);
 
     // 3. 光る部分だけを描いてブルームにする（ミズクラゲは光らないので、光る種がいるときだけ）
-    const glowing = vis.some((i) => this.jars[i]!.glowing);
+    const glowing = t.glow && vis.some((i) => this.jars[i]!.glowing);
     if (glowing) {
       r.setRenderTarget(this.glowRT);
       r.setClearColor(0x000000, 1);
       r.clear(true, false, false);
-      s.uGlowPass.value = 1;
+      this.shared.uGlowPass.value = 1;
       for (const i of vis) {
         const cam = this.useJar(i);
         cam.layers.set(GLOW_LAYER);
         r.render(this.contentScene, cam);
         cam.layers.set(0);
       }
-      s.uGlowPass.value = 0;
+      this.shared.uGlowPass.value = 0;
       r.setClearColor(RENDER.clearColor, 1);
       this.bloom.render(r, this.glowRT);
     }
@@ -942,8 +1030,8 @@ export class App {
 
     // 4. 画面へ。背景を出してから、手前のガラスが瓶の部分を描く
     const cu = this.composite.uniforms;
-    cu.tBg.value = this.bgRT.texture;
-    cu.tContents.value = this.contentRT.texture;
+    cu.tBg.value = t.bg.texture;
+    cu.tContents.value = t.content.texture;
     cu.tBloom.value = this.bloom.texture;
     cu.uBloomStrength.value = bloomStrength;
     cu.uFade.value = this.fade;
@@ -953,7 +1041,7 @@ export class App {
     cu.uViewProj.value.copy(this.tmpM);
     cu.uInvViewProj.value.copy(this.tmpM).invert();
     cu.uCamPos.value.copy(this.camera.getWorldPosition(this.tmpV));
-    if (this.debugView) {
+    if (this.debugView && !t.out) {
       const views: Record<string, Texture> = {
         bg: this.bgRT.texture,
         contents: this.contentRT.texture,
@@ -963,18 +1051,18 @@ export class App {
       cu.tBg.value = views[this.debugView] ?? this.bgRT.texture;
       cu.uBloomStrength.value = 0;
     }
-    this.composite.render(r, null);
-    if (this.debugView) return;
+    this.composite.render(r, t.out);
+    if (this.debugView) return false;
 
     const fu = this.jar.frontUniforms;
-    fu.tBg.value = this.bgRT.texture;
+    fu.tBg.value = t.bg.texture;
     fu.tRoomWide.value = this.roomWideRT.texture;
-    fu.tContents.value = this.contentRT.texture;
+    fu.tContents.value = t.content.texture;
     fu.tBloom.value = this.bloom.texture;
     fu.uBloomStrength.value = bloomStrength;
     fu.uFade.value = this.fade;
     fu.uParallax.value = this.parallaxStep[0] * this.view;
-    r.setRenderTarget(null);
+    r.setRenderTarget(t.out);
     for (const i of vis) {
       const cam = this.useJar(i);
       const [near, far] = SWIPE.windowSideFade;
@@ -984,5 +1072,6 @@ export class App {
 
     // 5. 手前：おじさんへ送る箱と、箱へ運ぶカップ
     if (this.box.shown || this.scoop.inFront) this.renderFront();
+    return true;
   }
 }

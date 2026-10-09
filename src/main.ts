@@ -1,6 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { HANDLING, KICK, MOTION, NOTEBOOK, SIM, SLOSH, UNCLE } from './config';
+import { HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, SIM, SLOSH, UNCLE } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -19,6 +19,7 @@ import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
 import { Envelope, LetterReader } from './ui/letters';
+import { Loupe } from './ui/loupe';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
 import { ShakeDetector } from './ui/motionFilter';
 import { SendConfirm } from './ui/sendConfirm';
@@ -133,6 +134,20 @@ async function main(): Promise<void> {
     },
     anchor: (id) => app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight),
     rename: (id, name) => game.rename(id, name),
+    look: (id) => loupe.lookAt(id),
+  });
+
+  // 虫眼鏡。見ている瓶の手前の天板に置いてある（瓶を切り替えている間は薄くなり、隣の瓶の手前に現れる）
+  const loupe = new Loupe({
+    rest: () => {
+      const v = app.viewPosition;
+      const i = Math.min(Math.max(Math.round(v), 0), SIM.jarCount - 1);
+      const p = app.tablePoint(i, LOUPE.rest[0], LOUPE.rest[1], canvas.clientWidth, canvas.clientHeight);
+      const d = Math.abs(v - i);
+      return { ...p, alpha: 1 - Math.min(Math.max((d - 0.1) / 0.35, 0), 1) };
+    },
+    target: (id) => (app.atRest ? app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight) : null),
+    lifted: () => tag.hide(),
   });
 
   // 瓶ごとの個体を描く（描いて動かすのは見えている瓶だけ）
@@ -282,6 +297,7 @@ async function main(): Promise<void> {
     const lum = paperLum(light);
     notebook.setLum(lum);
     reader.setLum(lum);
+    loupe.setLum(lum);
     envelope.setLum(lum);
     sendConfirm.setLum(lum);
     panel?.showHour(h, sun.sunrise, sun.sunset);
@@ -335,6 +351,8 @@ async function main(): Promise<void> {
           onFlip: () => app.flipForDebug(),
           onFirstLetter: () => game.edit((s) => resetFirstLetter(s, slider.index)),
           onReplyNow: () => game.edit((s) => deliverReplyNow(s)),
+          onLoupeZoom: (z) => (loupe.zoom = z),
+          onLoupeHome: () => loupe.returnToTable(),
         })
       : null;
   /** 確認用：表示中の瓶の餌の様子 */
@@ -417,6 +435,8 @@ async function main(): Promise<void> {
     tap: tapAt,
     swipeStart: () => {
       tag.hide();
+      // 瓶を切り替えるときは、虫眼鏡を天板へ戻す
+      loupe.returnToTable();
       slider.grab();
     },
     swipeMove: (dx) => slider.drag(dx),
@@ -435,6 +455,12 @@ async function main(): Promise<void> {
     applyMotion(dt);
     slider.update(dt);
     app.setView(slider.position);
+    // 虫眼鏡：瓶を切り替えている間（運んで隣へ移るときも）は天板へ戻す。カップやスポイトを使っている間は、天板の虫眼鏡を出さない
+    if (!app.atRest && loupe.inUse) loupe.returnToTable();
+    loupe.setHidden(app.handsBusy);
+    loupe.update(dt);
+    app.loupeStretch = game.state.settings.quality === 'low';
+    app.setLoupe(loupe.lens);
     if (draw) app.frame(dt);
     else app.simulate(dt);
     dots.set(slider.position);
@@ -538,6 +564,19 @@ async function main(): Promise<void> {
       send: (id: number) => game.send(id),
       replyNow: () => edit((s) => deliverReplyNow(s)),
       firstLetter: () => edit((s) => resetFirstLetter(s, slider.index)),
+      // 虫眼鏡：今の様子、「よく見る」、倍率、天板へ戻す、画質「低」（引き伸ばし）、レンズの中を画像に（一辺 px）
+      loupe: () => loupe.state,
+      look: (id: number) => loupe.lookAt(id),
+      zoom: (z: number) => (loupe.zoom = z),
+      loupeHome: () => loupe.returnToTable(),
+      lowQuality: (on: boolean) => game.updateSettings({ quality: on ? 'low' : 'high' }),
+      lensImage: (px = 256) => {
+        const img = app.captureLens(px);
+        if (!img) return null;
+        let sum = 0;
+        for (let i = 0; i < img.data.length; i += 4) sum += img.data[i + 3]!;
+        return { w: img.width, h: img.height, alpha: sum / (img.width * img.height * 255) };
+      },
     };
     // 確認用：描画側の中身を直接見る
     w.__kurageApp = app;
