@@ -211,7 +211,7 @@ export class Scoop {
     return this.phase === 'boxHold';
   }
 
-  /** 運んでいるところか（上がる・口の上・隣へ移る）。箱は、この間だけ画面の下からのぞく */
+  /** 運んでいるところか（上がる・口の上・隣へ移る）。この間だけ、天板に「おじさんに送る」が出る */
   get carrying(): boolean {
     return this.jelly !== null && (this.phase === 'rise' || this.phase === 'hover' || this.phase === 'cross') && this.pendingRelease === null;
   }

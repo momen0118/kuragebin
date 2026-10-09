@@ -139,7 +139,7 @@ export class App {
   private readonly cupScene = new Scene();
   private readonly scoop: Scoop;
   /**
-   * おじさんへ送る箱（瓶の手前、画面の下の真ん中）。運んでいる間は画面の下からのぞき、指を下のほうへ運ぶとせり上がる。
+   * おじさんへ送る箱（瓶の手前、画面の下の真ん中）。運んでいる間に指を画面の下のほうへ運ぶとせり上がる。
    * 送り終えたら蓋をして下がる
    */
   private readonly box: Box;
@@ -718,6 +718,11 @@ export class App {
     this.scoop.backFromBox();
   }
 
+  /** カップで運んでいるところか（上がる・口の上・隣へ移る）。天板に「おじさんに送る」を出す */
+  get scoopCarrying(): boolean {
+    return this.scoop.carrying;
+  }
+
   /** 箱の上で待っているカップの上端（CSS px）。送るかを確かめる札をその上に出す */
   boxAnchor(cssWidth: number, cssHeight: number): { x: number; y: number } {
     const f = this.scoop.frameJar;
@@ -727,7 +732,7 @@ export class App {
   }
 
   /**
-   * 箱：カップを箱へ運んでいる・箱の中にある間はせり上がり、運んでいる間は画面の下からのぞく（指が近ければせり上がる）。
+   * 箱：カップを箱へ運んでいる・箱の中にある間と、運んでいる間に指が箱のあたりにあるときはせり上がる。
    * 送り終えて空のカップが去ったら、蓋をして下がる
    */
   private updateBox(d: number): void {
@@ -744,11 +749,11 @@ export class App {
       if (this.boxSealT >= BOX.lidSeconds + 0.3) seconds = BOX.awaySeconds;
       else want = 0;
     } else if (sc.inFront) want = 0;
-    else if (sc.carrying) want = this.boxNear ? 0 : BOX.peekDrop;
+    else if (sc.carrying && this.boxNear) want = 0;
     // ゆっくり近づく（seconds でほぼ着く）
     this.boxDrop += (want - this.boxDrop) * (1 - Math.exp((-4 * d) / seconds));
     if (Math.abs(want - this.boxDrop) < 1e-4) this.boxDrop = want;
-    const alpha = 1 - smoothstep(BOX.peekDrop + (BOX.hiddenDrop - BOX.peekDrop) * 0.25, BOX.hiddenDrop, this.boxDrop);
+    const alpha = 1 - smoothstep(BOX.hiddenDrop * 0.55, BOX.hiddenDrop, this.boxDrop);
     const near = sc.carrying && this.boxNear;
     this.box.setLook(alpha, near ? 0.12 : 0);
     if (this.boxSealT >= 0 && this.boxDrop >= BOX.hiddenDrop) {
