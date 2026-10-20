@@ -159,7 +159,7 @@ export interface SentRecord {
   species: Species;
   stage: Stage;
   genes: Genes;
-  /** 雌雄（送ったときに成熟前なら null で「まだわからない」。ポリプは送れないので、いつも泳ぐ個体） */
+  /** 雌雄（成体のとき。エフィラは null で出さない） */
   sex: Sex | null;
   /** 送った瓶と、送った時刻（ゲーム内の秒と端末のミリ秒） */
   jar: number;

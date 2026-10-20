@@ -115,7 +115,7 @@ function span(seconds: number): string {
 function sexInfo(c: Creature, time: number): string {
   if (!c.sex) return '雌雄なし（瓶底の段階）';
   const name = c.sex === 'female' ? 'メス' : 'オス';
-  if (c.stage !== 'adult') return `${name}（エフィラ。札では「まだわからない」）`;
+  if (c.stage !== 'adult') return `${name}（エフィラ。札と一覧には出さない）`;
   const parts = [name];
   if (!isMature(c)) parts.push(`成熟まで ${span(SEX.matureAfter - c.adultAge)}`);
   else parts.push(`成熟済み・輪の色 ${sexColorAmount(c).toFixed(2)}`);

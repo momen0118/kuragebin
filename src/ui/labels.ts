@@ -8,11 +8,10 @@ export const STAGE_LABELS: Record<Stage, string> = {
   adult: '成体',
 };
 
-/** 雌雄（札と個体一覧。成熟前は「まだわからない」） */
-export const SEX_LABELS: Record<'male' | 'female' | 'unknown', string> = {
+/** 雌雄（札と個体一覧。成体だけ） */
+export const SEX_LABELS: Record<'male' | 'female', string> = {
   male: 'オス',
   female: 'メス',
-  unknown: 'まだわからない',
 };
 
 /** 名前のない個体 */

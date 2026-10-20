@@ -211,7 +211,7 @@ export interface RosterRow {
   /** 種の名前と段階の名前 */
   species: string;
   stage: string;
-  /** 雌雄（「オス」「メス」「まだわからない」。ポリプとストロビラは null で出さない） */
+  /** 雌雄（成体だけ「オス」「メス」。ほかは null で出さない） */
   sex: string | null;
   /** この瓶に来た日（「9月27日」。日は朝4時で区切る） */
   arrived: string;
@@ -240,15 +240,15 @@ export function rosterPages(state: GameState): RosterPage[] {
         name: r.name,
         species: SPECIES[r.species] ?? r.species,
         stage: STAGE_LABELS[r.stage as Stage],
-        sex: SEX_LABELS[r.sex ?? 'unknown'],
+        sex: r.sex ? SEX_LABELS[r.sex] : null,
         arrived: dayTitle(feedDay(r.sentWallTime)),
       })),
   };
   return [...jars, sent];
 }
 
-/** 札と一覧に出す雌雄の言葉（ポリプとストロビラは null） */
-export function sexLabel(c: Pick<Creature, 'stage' | 'adultAge' | 'sex'>): string | null {
+/** 札と一覧に出す雌雄の言葉（成体だけ。ほかは null） */
+export function sexLabel(c: Pick<Creature, 'stage' | 'sex'>): string | null {
   const s = shownSex(c);
   return s ? SEX_LABELS[s] : null;
 }

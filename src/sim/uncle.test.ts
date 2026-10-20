@@ -76,11 +76,11 @@ describe('おじさん：送る', () => {
     expect(lines).toContain('ぽこを、おじさんのところへ送った');
     const roster = rosterPages(s);
     expect(roster[roster.length - 1]).toMatchObject({ jar: -1, title: '送った子' });
-    // 雌雄も残る（最初の一匹は成熟したメス）。成熟前に送った子は「まだわからない」
+    // 雌雄も残る（最初の一匹はメス）。エフィラで送った子は出さない
     expect(s.sent[0]!.sex).toBe('female');
     const young = spawnCreature(s, 0, 'ephyra');
     sendCreature(s, young.id);
-    expect(rosterPages(s).at(-1)!.rows.map((r) => r.sex)).toEqual(['メス', 'まだわからない']);
+    expect(rosterPages(s).at(-1)!.rows.map((r) => r.sex)).toEqual(['メス', null]);
   });
 
   test('名無しの子は「一匹、おじさんのところへ送った」。同じ日はまとめる', () => {

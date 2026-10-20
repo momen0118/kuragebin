@@ -11,7 +11,7 @@ import { STAGE_LABELS, UNNAMED } from './labels';
 export interface TagInfo {
   name: string | null;
   stage: Stage;
-  /** 雌雄（「オス」「メス」「まだわからない」。ポリプとストロビラは null で出さない） */
+  /** 雌雄（成体だけ「オス」「メス」。ほかは null で出さない） */
   sex: string | null;
   /** この瓶に来て何日目か（来た日が 1） */
   day: number;

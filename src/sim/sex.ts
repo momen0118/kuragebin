@@ -1,5 +1,5 @@
 // 雌雄とプラヌラ。見た目と記録だけで、増え方の仕組みは変えない。
-// 成体・エフィラは生まれたときにオスかメスかが決まる（半々）。成体になってしばらく経つと成熟し、四つ葉の輪の色に少しずつ出る。
+// 成体・エフィラは生まれたときにオスかメスかが決まる（半々）。札や一覧には成体になったら出す。成体になってしばらく経つと成熟し、四つ葉の輪の色に少しずつ出る。
 // 成熟したメスは、ポリプが付く前にプラヌラを口腕に抱える（生活環から呼ぶ）。状態をその場で書き換えるのは startBrood だけ。
 import { SEX } from '../config';
 import { createRng, type Rng } from './rng';
@@ -20,10 +20,9 @@ export function isMature(c: Pick<Creature, 'stage' | 'adultAge'>): boolean {
   return c.stage === 'adult' && c.adultAge >= SEX.matureAfter;
 }
 
-/** 札や一覧に出す雌雄：成熟していればオス・メス、まだなら 'unknown'。ポリプとストロビラは null（出さない） */
-export function shownSex(c: Pick<Creature, 'stage' | 'adultAge' | 'sex'>): Sex | 'unknown' | null {
-  if (c.stage !== 'adult' && c.stage !== 'ephyra') return null;
-  return isMature(c) && c.sex ? c.sex : 'unknown';
+/** 札や一覧に出す雌雄：成体になったらオス・メス（成熟を待たない）。エフィラ・ポリプ・ストロビラは null（出さない） */
+export function shownSex(c: Pick<Creature, 'stage' | 'sex'>): Sex | null {
+  return c.stage === 'adult' ? c.sex : null;
 }
 
 /** 四つ葉の輪に雌雄の色がどれだけ出ているか（0〜1）。成熟すると colorStart から、colorRamp かけてはっきりする */

@@ -8,7 +8,7 @@ import type { Genes } from './genes';
 import { record } from './journal';
 import { updateResting } from './lifecycle';
 import { createRng, type Rng } from './rng';
-import { isMature } from './sex';
+import { shownSex } from './sex';
 import { FIRST_LETTER_BROOD, isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Stage } from './state';
 
 export type SendResult = 'sent' | 'fixed' | 'missing';
@@ -63,8 +63,8 @@ export function sendCreature(state: GameState, id: number, rules: LifeRules = LI
   j.creatures = j.creatures.filter((x) => x.id !== id);
   const now = state.time + state.pending;
   const wall = wallAt(state, now);
-  // 雌雄は成熟していれば残す（まだなら「まだわからない」）
-  state.sent.push({ id: c.id, name: c.name, species: c.species, stage: c.stage, genes: { ...c.genes }, sex: isMature(c) ? c.sex : null, jar, sentAt: now, sentWallTime: wall });
+  // 雌雄は成体なら残す（エフィラは出さないので null）
+  state.sent.push({ id: c.id, name: c.name, species: c.species, stage: c.stage, genes: { ...c.genes }, sex: shownSex(c), jar, sentAt: now, sentWallTime: wall });
   record(state, 'sent', jar, 1, [c.id], wall, c.name);
   updateResting(state, j, jar, rules, null);
   const rare = rarity(c.genes, c.stage);

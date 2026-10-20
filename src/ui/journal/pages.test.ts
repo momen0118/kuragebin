@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'vitest';
-import { SEX } from '../../config';
 import { advance } from '../../sim/advance';
 import { spawnCreature } from '../../sim/edit';
 import { createInitialState, type JournalEntry, type JournalKind } from '../../sim/state';
@@ -133,15 +132,14 @@ describe('個体一覧', () => {
     expect(rows[1]!.rows).toEqual([]);
   });
 
-  test('雌雄：成熟した成体はオス・メス、成熟前とエフィラは「まだわからない」、ポリプは出さない', () => {
+  test('雌雄：成体になったらオス・メス（成熟を待たない）。エフィラ・ポリプは出さない', () => {
     const s = createInitialState(local(20, 12));
     const young = spawnCreature(s, 0, 'adult');
     young.sex = 'male';
+    young.adultAge = 0;
     spawnCreature(s, 0, 'ephyra');
     spawnCreature(s, 0, 'polyp');
     const sexes = rosterPages(s)[0]!.rows.map((r) => r.sex);
-    expect(sexes).toEqual(['メス', 'まだわからない', 'まだわからない', null]);
-    young.adultAge = SEX.matureAfter;
-    expect(rosterPages(s)[0]!.rows[1]!.sex).toBe('オス');
+    expect(sexes).toEqual(['メス', 'オス', null, null]);
   });
 });
