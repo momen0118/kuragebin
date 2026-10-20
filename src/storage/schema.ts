@@ -1,6 +1,7 @@
 // 保存データの版とマイグレーション。古い版のデータは1版ずつ順に今の形へ直す。
 // 形が合わないデータは読み込まない（呼び出し側で新しい状態から始める）。
 import { CARE, FIND_VARIANTS, LIFE } from '../config';
+import { createBook, FACT_KEYS } from '../sim/book';
 import { BASE_GENES, sanitizeGenes } from '../sim/genes';
 import { DEFAULT_SETTINGS, firstLetter, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Stage } from '../sim/state';
 
@@ -109,6 +110,8 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
   },
   // 8：拾いもの。それまでの標本の欄は使っていなかった（空のまま）
   7: (d) => ({ ...d, specimens: [] }),
+  // 9：種のページ（豆知識と写真）。豆知識は、状態から分かるものを次に開いたときにまとめて足す（日付はその日）
+  8: (d) => ({ ...d, book: createBook(isNumber(d.createdAt) ? d.createdAt : 0) }),
 };
 
 export class SchemaError extends Error {}
@@ -246,10 +249,38 @@ function validate(d: Raw): GameState {
     s.at = ok ? { jar: at.jar, spot: at.spot, yaw: at.yaw, placed: at.placed === true } : null;
   }
   d.specimens = (d.specimens as Raw[]).filter((s) => s.at !== null || s.foundAt !== null);
+  // 種のページ：読めない豆知識・写真だけを除く。数は読めなければ 0
+  d.book = validateBook(d.book, d.createdAt as number);
   // 設定は足りない項目を初期値で埋める（あとから設定が増えても読める）
   const settings = isObject(d.settings) ? d.settings : {};
   const merged = { ...DEFAULT_SETTINGS, ...settings };
   if (!isNumber(merged.jar) || merged.jar < 0 || merged.jar >= d.jars.length) merged.jar = 0;
   d.settings = merged;
   return d as unknown as GameState;
+}
+
+const FACT_SET: ReadonlySet<string> = new Set(FACT_KEYS);
+
+function validateBook(v: unknown, createdAt: number): Raw {
+  const b = isObject(v) ? v : (createBook(createdAt) as unknown as Raw);
+  const species = (Array.isArray(b.species) ? b.species : []).filter((r: unknown) => isObject(r) && typeof r.species === 'string') as Raw[];
+  let maxPhoto = 0;
+  for (const r of species) {
+    if (!isNumber(r.since)) r.since = createdAt;
+    r.facts = (Array.isArray(r.facts) ? r.facts : []).filter((f: unknown) => isObject(f) && typeof f.key === 'string' && FACT_SET.has(f.key) && isNumber(f.wallTime));
+    r.photos = (Array.isArray(r.photos) ? r.photos : []).filter((p: unknown) => isObject(p) && isNumber(p.id) && isNumber(p.wallTime));
+    for (const p of r.photos as Raw[]) {
+      if (!(p.creature === null || isNumber(p.creature))) p.creature = null;
+      if (!(p.name === null || typeof p.name === 'string')) p.name = null;
+      maxPhoto = Math.max(maxPhoto, p.id as number);
+    }
+  }
+  if (!species.some((r) => r.species === 'aurelia')) species.unshift({ species: 'aurelia', since: createdAt, facts: [], photos: [] });
+  const counts = isObject(b.counts) ? b.counts : {};
+  return {
+    species,
+    factsSeen: isNumber(b.factsSeen) && b.factsSeen >= 0 ? b.factsSeen : 0,
+    counts: { feeds: isNumber(counts.feeds) ? counts.feeds : 0, righted: isNumber(counts.righted) ? counts.righted : 0 },
+    nextPhotoId: isNumber(b.nextPhotoId) && b.nextPhotoId > maxPhoto ? b.nextPhotoId : maxPhoto + 1,
+  };
 }

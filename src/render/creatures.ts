@@ -22,6 +22,8 @@ interface SwimmerView {
   neighbor: Neighbor;
   /** 皿から離れるのを待っている（まだ描かない） */
   waiting: boolean;
+  /** 前のフレームで、逆さまから起き直っているところだったか */
+  righting: boolean;
 }
 
 interface PolypView {
@@ -48,6 +50,9 @@ export class Creatures {
   private readonly tmp = new Vector3();
   /** 瓶底の拾いもの（ポリプと一緒に奥から並べる）。finds.ts が持つ配列をそのまま使う */
   floorExtras: readonly FloorSortable[] = [];
+  /** 逆さまになって起き直りはじめた回数と、起き直った回数（takeRighting で読むと 0 に戻る） */
+  private flips = 0;
+  private righted = 0;
   /** 見せ場で食べる個体（毎フレーム作り直さないよう使い回す） */
   private readonly eaterList: Eater[] = [];
 
@@ -93,7 +98,7 @@ export class Creatures {
     if (isSwimmer(c.stage)) {
       const jelly = new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius(), c.genes, c.seed);
       jelly.group.traverse((o) => o.layers.enable(this.glowLayer));
-      const view: SwimmerView = { kind: 'swimmer', genes: genesKey(c.genes), jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false };
+      const view: SwimmerView = { kind: 'swimmer', genes: genesKey(c.genes), jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, righting: false };
       // 皿を放しているストロビラの子なら、その皿が離れるまで待ってから泳ぎ出す
       const parent = c.parent !== null ? this.views.get(c.parent) : undefined;
       if (c.stage === 'ephyra' && parent?.kind === 'polyp' && parent.polyp.isReleasing) {
@@ -231,6 +236,10 @@ export class Creatures {
       v.jelly.neighbors = this.neighbors;
       v.jelly.water = water;
       v.jelly.update(dt);
+      const r = v.jelly.righting;
+      if (r && !v.righting) this.flips++;
+      else if (!r && v.righting) this.righted++;
+      v.righting = r;
     }
     for (const v of polyps) v.polyp.update(dt);
     const far = (o: Vector3): number => -o.distanceToSquared(cam);
@@ -240,6 +249,14 @@ export class Creatures {
     const floor: FloorSortable[] = [...polyps.map((v) => v.polyp), ...this.floorExtras];
     floor.sort((a, b) => far(a.base) - far(b.base));
     floor.forEach((f, i) => f.setRenderOrder(12 + i * 0.5));
+  }
+
+  /** 逆さまになって起き直りはじめた回数と、起き直った回数（読むと 0 に戻る。豆知識のきっかけ） */
+  takeRighting(): { flips: number; righted: number } {
+    const out = { flips: this.flips, righted: this.righted };
+    this.flips = 0;
+    this.righted = 0;
+    return out;
   }
 
   /** ガラスをつつかれた。近くの個体が反応したら true */
@@ -342,7 +359,7 @@ export class Creatures {
   /** カップから出ていった個体を、この瓶の個体にする（動きはそのまま） */
   adopt(id: number, jelly: Jellyfish): void {
     this.carried.delete(id);
-    this.views.set(id, { kind: 'swimmer', genes: jelly.genesKey, jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false });
+    this.views.set(id, { kind: 'swimmer', genes: jelly.genesKey, jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, righting: false });
     this.group.add(jelly.group);
   }
 

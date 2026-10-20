@@ -1,11 +1,12 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, QUALITY, SIM, SLOSH, UNCLE } from './config';
+import { BOOK, FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, QUALITY, SIM, SLOSH, UNCLE } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
 import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
+import { closeAllFacts, openAllFacts } from './sim/book';
 import { clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
 import type { GameState, Letter, Settings, Stage } from './sim/state';
@@ -160,6 +161,7 @@ async function main(): Promise<void> {
     anchor: (id) => app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight),
     rename: (id, name) => game.rename(id, name),
     look: (id) => loupe.lookAt(id),
+    shoot: (id) => shoot(id),
   });
 
   // 虫眼鏡。見ている瓶の手前の天板に置いてある（瓶を切り替えている間は薄くなり、隣の瓶の手前に現れる）
@@ -304,12 +306,19 @@ async function main(): Promise<void> {
       const l = game.state.letters.find((x) => x.id === id);
       if (l) reader.open(l);
     },
+    newFacts: () => game.newFacts,
+    speciesShown: () => {
+      game.noteFact('page');
+      game.markFactsSeen();
+    },
+    photo: (id) => game.photo(id),
+    removePhoto: (id) => game.removePhoto(id),
     sinkSpecimen: (id) => sinkSpecimen(id),
     raiseSpecimen: (id) => void game.raiseFind(id),
   });
   const journalButton = new JournalButton(() => notebook.open());
   const showJournal = (): void => {
-    journalButton.setUnread(game.unread);
+    journalButton.setUnread(game.unread || game.newFacts);
     notebook.refresh();
   };
   showJournal();
@@ -392,6 +401,8 @@ async function main(): Promise<void> {
           onFindSpawn: (variant) => game.edit((s) => void spawnFind(s, slider.index, variant ?? undefined)),
           onFindsClear: () => game.edit((s) => clearFinds(s, slider.index)),
           onSpecimensClear: () => game.edit((s) => clearSpecimens(s)),
+          onFactsAll: (open) => game.edit((s) => (open ? openAllFacts(s, clock.now()) : closeAllFacts(s))),
+          onDummyPhoto: () => addDummyPhoto(),
           onSound: (name, opts) => sound.preview(name, opts),
           onAirBoost: (boost) => sound.previewAir(boost),
           onLoupeZoom: (z) => (loupe.zoom = z),
@@ -444,6 +455,7 @@ async function main(): Promise<void> {
       panel.showFeed(feedText());
       panel.showUncle(game.state);
       panel.showFinds(game.state);
+      panel.showBook(game.state);
     };
     game.onChange(refreshPanel);
     refreshPanel();
@@ -470,6 +482,62 @@ async function main(): Promise<void> {
     if (!game.pickFind(id, photo)) return;
     if (at) flyLight(at, journalButton.center(), () => journalButton.glow());
   };
+  /** 撮ったとき：画面がふっと白くなる */
+  const flash = (): void => {
+    const el = document.createElement('div');
+    el.className = 'shutter';
+    el.style.setProperty('--a', String(BOOK.flashAlpha));
+    el.style.setProperty('--s', `${BOOK.flashSeconds}s`);
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('done'));
+    setTimeout(() => el.remove(), BOOK.flashSeconds * 1000 + 200);
+  };
+  /**
+   * 札の「撮る」：その個体を真ん中に一枚撮って種のページに貼る。虫眼鏡の「よく見る」で追っている間は、レンズの中身を一枚に。
+   * 貼ったら光が日誌のアイコンへ。6枚で埋まっていたら、メモ帳を開いて入れ替える写真を選ばせる（やめてもよい）
+   */
+  const shoot = (id: number): void => {
+    const c = game.state.jars[slider.index]?.creatures.find((x) => x.id === id);
+    if (!c) return;
+    const l = loupe.state;
+    const url = l.mode === 'follow' && l.watching === id && loupe.lens ? app.photoLens() : app.photoCreature(id);
+    if (!url) return;
+    flash();
+    const meta = { creature: id, name: c.name, wallTime: clock.now() };
+    if (game.addPhoto(c.species, url, meta) === 'added') {
+      const at = app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight);
+      if (at) flyLight(at, journalButton.center(), () => journalButton.glow());
+      return;
+    }
+    notebook.openReplace(url, (oldId) => {
+      if (oldId !== null) game.replacePhoto(oldId, url, meta);
+    });
+  };
+
+  /** 確認用：ダミーの写真を1枚貼る（6枚なら、撮ったときと同じく入れ替える写真を選ぶ） */
+  const addDummyPhoto = (): void => {
+    const n = 160;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = n;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    const hue = Math.floor(Math.random() * 360);
+    const g = ctx.createLinearGradient(0, 0, n, n);
+    g.addColorStop(0, `hsl(${hue} 30% 25%)`);
+    g.addColorStop(1, `hsl(${(hue + 60) % 360} 30% 12%)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, n, n);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '20px serif';
+    ctx.fillText('ダミー', 46, 88);
+    const url = cv.toDataURL('image/jpeg', 0.8);
+    const meta = { creature: null, name: null, wallTime: clock.now() };
+    if (game.addPhoto('aurelia', url, meta) === 'added') return;
+    notebook.openReplace(url, (oldId) => {
+      if (oldId !== null) game.replacePhoto(oldId, url, meta);
+    });
+  };
+
   /** 泳ぐ個体の上なら札、瓶底の拾いものの上なら拾う、ポリプの上なら札、瓶の空いたところならガラスをつつく */
   const tapAt = (p: Point): void => {
     const [x, y] = toNdc(p);
@@ -485,7 +553,8 @@ async function main(): Promise<void> {
     }
     const id = app.pickAt(x, y, fingerNdc());
     if (id !== null) tag.show(id);
-    else app.poke(x, y);
+    // 初めて瓶をつついたとき（の豆知識）
+    else if (app.poke(x, y)) game.noteFact('poke');
   };
 
   /**
@@ -535,6 +604,31 @@ async function main(): Promise<void> {
   });
 
   /** 1フレーム：瓶の並びを動かし、描き、点と札を合わせる（draw が false なら描かずに動きだけ） */
+  /** 豆知識のきっかけ（画面の出来事）を確かめる間隔の残り（秒） */
+  let factTimer = 0;
+  /**
+   * 画面の出来事の豆知識：逆さまになった・起き直った（毎フレーム数える）、虫眼鏡を瓶に当てた・エフィラに当てた（ときどき確かめる）
+   */
+  const checkScreenFacts = (dt: number): void => {
+    const r = app.takeRighting();
+    if (r.flips > 0) game.noteFact('flip');
+    for (let i = 0; i < r.righted; i++) game.countRighted();
+    factTimer -= dt;
+    if (factTimer > 0) return;
+    factTimer = 0.5;
+    const lens = loupe.lens;
+    if (!loupe.inUse || !lens || lens.alpha < 0.9 || !app.atRest) return;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const b = app.jarBounds(w, h);
+    if (lens.x > b.left && lens.x < b.right && lens.y > b.top && lens.y < b.bottom) game.noteFact('loupe');
+    for (const c of game.state.jars[slider.index]?.creatures ?? []) {
+      if (c.stage !== 'ephyra') continue;
+      const a = app.noteAnchor(c.id, w, h);
+      if (a && Math.hypot(a.x - lens.x, a.y - lens.y) < lens.radius) game.noteFact('loupeEphyra');
+    }
+  };
+
   const tick = (dt: number, draw = true): void => {
     applyMotion(dt);
     slider.update(dt);
@@ -546,6 +640,7 @@ async function main(): Promise<void> {
     app.setLoupe(loupe.lens);
     if (draw) app.frame(dt);
     else app.simulate(dt);
+    checkScreenFacts(dt);
     dots.set(slider.position);
     tag.update(dt);
     placeEnvelope();
@@ -660,6 +755,11 @@ async function main(): Promise<void> {
       sinkFind: (id: number) => sinkSpecimen(id),
       clearFinds: () => edit((s) => clearFinds(s, null)),
       clearSpecimens: () => edit((s) => clearSpecimens(s)),
+      // 種のページ：札の「撮る」と同じ、ダミーの写真、豆知識をすべて開く・閉じる、豆知識のきっかけ（画面の出来事）
+      shoot: (id: number) => shoot(id),
+      dummyPhoto: () => addDummyPhoto(),
+      factsAll: (open: boolean) => edit((s) => (open ? openAllFacts(s, clock.now()) : closeAllFacts(s))),
+      noteFact: (key: Parameters<typeof game.noteFact>[0]) => game.noteFact(key),
       // 音：設定によらず鳴らす（確認用）、オン・オフ、空気の音を大きくして聞く
       sound: (name: SoundName, opts?: SoundOptions) => sound.preview(name, opts),
       setSound: (on: boolean) => setSound(on),

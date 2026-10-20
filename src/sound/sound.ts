@@ -237,7 +237,7 @@ export class Sound {
       osc.type = 'sine';
       osc.frequency.value = f0 * vary(p.ratio, 0.01);
       const g = ctx.createGain();
-      const end = this.envelope(g, t0, 0.002, p.gain, p.decay * length);
+      const end = this.envelope(g, t0, P.attack, p.gain, p.decay * length);
       osc.connect(g).connect(lp);
       osc.start(t0);
       osc.stop(end + 0.05);
@@ -245,7 +245,7 @@ export class Sound {
     const c = P.click;
     const src = this.noiseSource(t0, c.seconds);
     const g = ctx.createGain();
-    this.envelope(g, t0, 0.001, c.gain, c.seconds);
+    this.envelope(g, t0, P.attack * 0.5, c.gain, c.seconds);
     src.connect(this.filter('bandpass', vary(c.freq, 0.1), 1.2)).connect(g).connect(lp);
   }
 

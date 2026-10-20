@@ -1,7 +1,7 @@
 // 個体の札。海月（瓶底のポリプも）をタップすると数秒だけ出る。
 // 図鑑や標本の注記のように、個体から細い線を斜め上へ引き、その先の短い横線の上に名前、下に小さく段階と日数。
 // 線は瓶の縁や画面の外にはみ出さない側へ引く。名前（初めは「名無し」）をタップすると名前を付けられる。
-// 段階の下の「よく見る」で、虫眼鏡がその個体の上へ動いてしばらくついていく。
+// 段階の下の「よく見る」で、虫眼鏡がその個体の上へ動いてしばらくついていく。「撮る」で、その個体を真ん中に一枚撮って種のページに貼る。
 import { TAG } from '../config';
 import type { NoteAnchor } from '../render/app';
 import { NAME_MAX } from '../sim/actions';
@@ -23,6 +23,8 @@ export interface TagOptions {
   rename(id: number, name: string): void;
   /** 「よく見る」：虫眼鏡をその個体の上へ */
   look(id: number): void;
+  /** 「撮る」：その個体を真ん中に一枚撮る */
+  shoot(id: number): void;
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -45,6 +47,7 @@ export class CreatureTag {
   private readonly nameEl: HTMLButtonElement;
   private readonly subEl: HTMLDivElement;
   private readonly lookEl: HTMLButtonElement;
+  private readonly shootEl: HTMLButtonElement;
   private input: HTMLInputElement | null = null;
   private id: number | null = null;
   /** 出ている残りの時間と、消えていく残りの時間（秒） */
@@ -57,6 +60,7 @@ export class CreatureTag {
   private subW = 0;
   private subH = 0;
   private lookW = 0;
+  private shootW = 0;
   private placed: Layout | null = null;
 
   constructor(private readonly opts: TagOptions) {
@@ -88,12 +92,23 @@ export class CreatureTag {
       this.hide();
       this.opts.look(id);
     });
-    el.append(svg, name, sub, look);
+    const shoot = document.createElement('button');
+    shoot.type = 'button';
+    shoot.className = 'look shoot';
+    shoot.textContent = '撮る';
+    shoot.addEventListener('click', () => {
+      const id = this.id;
+      if (id === null) return;
+      this.hide();
+      this.opts.shoot(id);
+    });
+    el.append(svg, name, sub, look, shoot);
     document.body.appendChild(el);
     this.el = el;
     this.nameEl = name;
     this.subEl = sub;
     this.lookEl = look;
+    this.shootEl = shoot;
   }
 
   /** 出している個体 */
@@ -179,6 +194,7 @@ export class CreatureTag {
     this.subW = this.subEl.offsetWidth;
     this.subH = this.subEl.offsetHeight;
     this.lookW = this.lookEl.offsetWidth;
+    this.shootW = this.shootEl.offsetWidth;
   }
 
   /** 横線の長さ（文字の幅と前後の余り） */
@@ -240,8 +256,13 @@ export class CreatureTag {
     const sx = l.dir > 0 ? pad : -pad - this.subW;
     name.style.transform = `translate(${nx.toFixed(1)}px, ${(-this.nameH - 1).toFixed(1)}px)`;
     this.subEl.style.transform = `translate(${sx.toFixed(1)}px, 3px)`;
-    const lx = l.dir > 0 ? pad : -pad - this.lookW;
-    this.lookEl.style.transform = `translate(${lx.toFixed(1)}px, ${(3 + this.subH + 2).toFixed(1)}px)`;
+    // 「よく見る」と「撮る」を同じ行に（横線の向きの側から）
+    const gap = TAG.actionGap;
+    const row = this.lookW + gap + this.shootW;
+    const lx = l.dir > 0 ? pad : -pad - row;
+    const ly = (3 + this.subH + 2).toFixed(1);
+    this.lookEl.style.transform = `translate(${lx.toFixed(1)}px, ${ly}px)`;
+    this.shootEl.style.transform = `translate(${(lx + this.lookW + gap).toFixed(1)}px, ${ly}px)`;
   }
 
   /** 名前を入れる */

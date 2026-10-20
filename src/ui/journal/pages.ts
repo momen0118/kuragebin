@@ -6,6 +6,7 @@ import { JOURNAL, SUN } from '../../config';
 import { feedDay } from '../../sim/feed';
 import { sunTimes, type SunTimes } from '../../sim/sun';
 import { bookSpecimens } from '../../sim/finds';
+import { FACT_TEXT } from './facts';
 import type { GameState, JournalEntry, JournalKind, Letter, Stage } from '../../sim/state';
 import { FIND_NAMES, STAGE_LABELS } from '../labels';
 
@@ -276,5 +277,35 @@ export function specimenItems(state: GameState): SpecimenItem[] {
     found: dayTitle(feedDay(s.foundWallTime ?? s.appearedWallTime)),
     photo: s.photo,
     where: s.at ? jarTitle(s.at.jar) : null,
+  }));
+}
+
+export interface SpeciesPagePhoto {
+  id: number;
+  /** 写っている個体の名前（なければ null で空欄） */
+  name: string | null;
+  /** 撮った日（「9月27日」） */
+  taken: string;
+}
+
+export interface SpeciesPage {
+  species: string;
+  /** 種の名前（「ミズクラゲ」） */
+  title: string;
+  /** 初めて瓶に来た日 */
+  since: string;
+  photos: SpeciesPagePhoto[];
+  /** 豆知識（見つけた順。まだ見ていない行は持たない）と見つけた日 */
+  facts: Array<{ text: string; found: string }>;
+}
+
+/** 種のページ：見たことのある種だけ。写真は撮った順（入れ替えた写真はその場所）、豆知識は見つけた順 */
+export function speciesPages(state: GameState): SpeciesPage[] {
+  return state.book.species.map((r) => ({
+    species: r.species,
+    title: SPECIES[r.species] ?? r.species,
+    since: dayTitle(feedDay(r.since)),
+    photos: r.photos.map((p) => ({ id: p.id, name: p.name, taken: dayTitle(feedDay(p.wallTime)) })),
+    facts: r.facts.map((f) => ({ text: FACT_TEXT[f.key], found: dayTitle(feedDay(f.wallTime)) })),
   }));
 }

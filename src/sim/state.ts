@@ -1,11 +1,12 @@
 // ゲームの状態。瓶・個体・日誌・標本・設定を1つの状態として持ち、そのまま保存する。
 // 描画・DOM・three.js には依存しない。
 import { CARE, LIFE, SIM } from '../config';
+import { createBook, type BookState } from './book';
 import { BASE_GENES, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -241,6 +242,8 @@ export interface GameState {
   letters: Letter[];
   sent: SentRecord[];
   uncle: UncleState;
+  /** 種のページ（豆知識と写真） */
+  book: BookState;
   settings: Settings;
 }
 
@@ -324,6 +327,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     letters: [firstLetter(1, 0, nowMs, 0)],
     sent: [],
     uncle: { nextLetterId: 2, reply: null, lastReplyAt: null },
+    book: createBook(nowMs),
     settings: { ...DEFAULT_SETTINGS },
   };
 }
