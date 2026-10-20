@@ -1,4 +1,5 @@
 // 見ていない間の世話（水換え）。水換えの機能は作らない。誰かが瓶の世話をしている跡としてだけ出る。
+// 何もいない瓶（海月もポリプもいない）は、堆積も積もらず水も替えない。ポリプだけの瓶は生き物がいるので今までどおり。
 // 瓶底にはマリンスノーが少しずつ溜まり、餌の食べ残しが消えると、そのぶん少し増える（餌をやるほど水換えの間隔が短くなる）。
 // 溜まったものが一定量に届いた瓶と、餌をやった瓶は、夜中（2〜4時のどこか。瓶と夜ごとに決まる）に水を替え、瓶底が薄く均されて日誌に一行残る。
 // 餌をやった瓶はその夜に必ず替える。夜中に餌をやったときは、食べ残しが消えきって少し間を空けてから（夜明け前後になることもある）。
@@ -35,13 +36,15 @@ export function waterTime(wall: number, index: number): number {
 
 /** 瓶底の堆積を dt 秒進め、その夜の水換えの時刻を通り過ぎたら水を替える（ctx.wall は刻みの終わりの端末の時刻） */
 export function stepCare(state: GameState, jar: JarState, index: number, dt: number, ctx: StepContext): void {
-  jar.sediment += (dt * CARE.snowPerDay) / 86400;
   const left = jar.leftover;
   if (left && state.time >= left.goneAt) {
     jar.sediment += left.amount;
     jar.cleanSince = left.goneAt;
     jar.leftover = null;
   }
+  // 何もいない瓶（海月もポリプもいない）は、堆積も積もらず、水も替えない（日誌に「水を替えた」が並ばないように）
+  if (jar.creatures.length === 0) return;
+  jar.sediment += (dt * CARE.snowPerDay) / 86400;
   const due = isDue(jar, ctx.wall);
   let at = waterTime(ctx.wall, index);
   // 餌をやった瓶は、食べ残しが消えきって少し間を空けるまで待ってから替える

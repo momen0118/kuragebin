@@ -1,7 +1,7 @@
 // 観察日誌のメモ帳。上にリングが付いた小さなもので、画面の下寄りに置く（上には瓶が薄く見えたまま）。
 // 1ページに1日、新しい日が上。下から上へめくると前の日、下へ引くと1日新しい日へ戻り、いちばん新しい日で下へ引くと閉じる。
 // 紙の外をタップしても閉じる。後ろのほうのページに個体一覧（瓶ごと。ここでも名前を付けられる）、
-// いちばん最後（裏表紙の内側）に設定（揺れを使うか、データの書き出し・読み込み）。紙の端から少し出た付箋2枚でそこへ飛べ、
+// いちばん最後に設定（揺れ、画質、データの書き出し・読み込み）。紙の端から少し出た付箋2枚でそこへ飛べ、
 // 一覧と設定のページには「日誌へ」。紙は少しくすんだ色で、夜は部屋の明るさに合わせて暗くする。
 // 一覧と設定の間に標本（拾いもの。写真と名前と拾った日）。写真をタップするとその一枚が少し持ち上がり、下に「瓶に沈める」
 // （沈めてある物は「引き上げる」）。沈めるとメモ帳は下がり、瓶の前で沈んでいくところを見せる。
@@ -195,7 +195,7 @@ export class Notebook {
     this.root.style.setProperty('--lum', lum.toFixed(3));
   }
 
-  /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 標本 → 設定（裏表紙の内側） */
+  /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 標本 → 設定 */
   private build(): void {
     const s = this.opts.state();
     const days: Leaf[] = journalPages(s.journal, { letters: s.letters }).map((page) => ({ kind: 'day', key: `d${page.key}`, page }));
@@ -226,7 +226,8 @@ export class Notebook {
       el.innerHTML = '';
       return;
     }
-    el.classList.add(leaf.kind === 'settings' ? 'cover' : 'paper');
+    // 設定のページもほかと同じ紙（厚紙の色は字との差が小さく、読みにくいので）
+    el.classList.add('paper');
     el.dataset.index = String(index);
     el.innerHTML = `<div class="holes" aria-hidden="true">${'<i></i>'.repeat(RINGS)}</div>${this.leafHtml(leaf)}<div class="shade"></div>`;
   }
