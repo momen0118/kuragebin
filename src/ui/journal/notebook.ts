@@ -8,7 +8,7 @@
 import { NOTEBOOK } from '../../config';
 import { NAME_MAX } from '../../sim/actions';
 import { feedDay } from '../../sim/feed';
-import type { GameState } from '../../sim/state';
+import type { GameState, Settings } from '../../sim/state';
 import { downloadText, exportFilename } from '../download';
 import { keepToSelf } from '../jarActions';
 import { UNNAMED } from '../labels';
@@ -25,6 +25,9 @@ export interface NotebookOptions {
   /** 揺れを使うか（設定）と、それを変える（使うにしたときは、ここで許可を訊く） */
   motion(): boolean;
   setMotion(on: boolean): void;
+  /** 画質（高・中・低）と、それを変える */
+  quality(): Settings['quality'];
+  setQuality(q: Settings['quality']): void;
   /** 日誌のページに留めた手紙をタップした（手紙を読む紙を開く） */
   readLetter(id: number): void;
   /** 標本の物を、見ている瓶に沈める（メモ帳はここで閉じる）。沈められなければ false */
@@ -56,6 +59,13 @@ type Drag = {
 };
 
 const RINGS = 11;
+
+/** 画質の選び方（高・中・低） */
+const QUALITY_CHOICES: ReadonlyArray<[Settings['quality'], string]> = [
+  ['high', '高'],
+  ['medium', '中'],
+  ['low', '低'],
+];
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -272,12 +282,18 @@ export class Notebook {
       return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">標本</h2><button type="button" class="to-journal">日誌へ</button></div><p class="specimen-note">入れ替えた水に混じって、沈んでいたもの。</p>${items}</div>`;
     }
     const on = this.opts.motion();
+    const quality = this.opts.quality();
     return `<div class="leaf-body"><div class="leaf-head"><span></span><button type="button" class="to-journal">日誌へ</button></div>
       <div class="settings">
       <div class="motion">
         <p class="label">揺れ</p>
         <p class="hint">端末を傾けたり揺らしたりすると、瓶の水が動く</p>
         <div class="data-buttons choice"><button type="button" class="motion-on" aria-pressed="${on}">使う</button><button type="button" class="motion-off" aria-pressed="${!on}">使わない</button></div>
+      </div>
+      <div class="quality">
+        <p class="label">画質</p>
+        <p class="hint">低いほど、電池と熱にやさしい</p>
+        <div class="data-buttons choice">${QUALITY_CHOICES.map(([q, label]) => `<button type="button" data-quality="${q}" aria-pressed="${q === quality}">${label}</button>`).join('')}</div>
       </div>
       <div class="data">
         <p class="label">データ</p>
@@ -473,6 +489,7 @@ export class Notebook {
     else if (t.classList.contains('import-no')) this.cancelImport();
     else if (t.classList.contains('motion-on')) this.opts.setMotion(true);
     else if (t.classList.contains('motion-off')) this.opts.setMotion(false);
+    else if (t.dataset.quality) this.opts.setQuality(t.dataset.quality as Settings['quality']);
   }
 
   /** 標本の一枚を持ち上げる（null で下ろす）。今のページを書き直す */

@@ -1,6 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, SIM, SLOSH, UNCLE } from './config';
+import { FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, QUALITY, SIM, SLOSH, UNCLE } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -8,7 +8,7 @@ import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
 import { clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
-import type { GameState, Letter, Stage } from './sim/state';
+import type { GameState, Letter, Settings, Stage } from './sim/state';
 import { deliverReplyNow, resetFirstLetter } from './sim/uncle';
 import { Carry } from './ui/carry';
 import { JarDots } from './ui/dots';
@@ -19,6 +19,7 @@ import { Notebook } from './ui/journal/notebook';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
 import { flyLight } from './ui/finds';
+import { shouldDraw } from './ui/frameCap';
 import { Envelope, LetterReader } from './ui/letters';
 import { Loupe } from './ui/loupe';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
@@ -64,7 +65,7 @@ let laidOut = '';
 function layout(canvas: HTMLCanvasElement, app: App): void {
   const [vw, vh] = viewportSize();
   const dpr = window.devicePixelRatio || 1;
-  const key = `${vw}x${vh}@${dpr}`;
+  const key = `${vw}x${vh}@${dpr}/${app.maxDpr}`;
   if (key === laidOut) return;
   laidOut = key;
   // 報告された高さより画面が長いときは、ページそのものも画面の下まで伸ばす。
@@ -94,7 +95,7 @@ async function main(): Promise<void> {
     app.debugView = params.get('view');
     // 撮影用：細部を見るためにデバイスピクセル比の上限を上げる（?maxdpr=4）
     const maxDpr = Number(params.get('maxdpr'));
-    if (maxDpr > 0) app.maxDpr = maxDpr;
+    if (maxDpr > 0) app.maxDpr = app.maxDprOverride = maxDpr;
     app.setPatternDebug(params.has('pattern'));
     for (const name of (params.get('hide') ?? '').split(',')) {
       const part = app.parts[name];
@@ -108,6 +109,18 @@ async function main(): Promise<void> {
     if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
   });
   const [game] = await Promise.all([gameReady, app.load(import.meta.env.BASE_URL)]);
+
+  /** 画質（日誌の設定）：描く解像度・マリンスノーの数・虫眼鏡の描き方を合わせ、描き直す大きさを決め直す。1秒に描く回数はループで */
+  const applyQuality = (): void => {
+    app.setQuality(game.state.settings.quality);
+    layout(canvas, app);
+  };
+  const setQuality = (q: Settings['quality']): void => {
+    if (game.state.settings.quality === q) return;
+    game.updateSettings({ quality: q });
+    applyQuality();
+  };
+  applyQuality();
 
   // 3つの瓶。前回見ていた瓶から始め、スワイプで落ち着いた瓶を覚えておく
   const slider = new JarSlider(SIM.jarCount, game.state.settings.jar, () => app.jarStepPx);
@@ -226,6 +239,7 @@ async function main(): Promise<void> {
 
   /** 読み込んだ状態に、ライトと見ている瓶を合わせる（日誌の設定とデバッグパネルから） */
   const afterImport = (): void => {
+    applyQuality();
     app.setLampOn(game.state.settings.lamp);
     lampToggle.set(game.state.settings.lamp);
     jumpToSavedJar();
@@ -264,6 +278,8 @@ async function main(): Promise<void> {
     },
     motion: () => game.state.settings.motion,
     setMotion,
+    quality: () => game.state.settings.quality,
+    setQuality,
     opened: () => {
       tag.hide();
       game.markJournalRead();
@@ -328,6 +344,7 @@ async function main(): Promise<void> {
           },
           onReset: () => {
             game.reset();
+            applyQuality();
             app.setLampOn(game.state.settings.lamp);
             lampToggle.set(game.state.settings.lamp);
             jumpToSavedJar();
@@ -507,7 +524,6 @@ async function main(): Promise<void> {
     if (!app.atRest && loupe.inUse) loupe.returnToTable();
     loupe.setHidden(app.handsBusy);
     loupe.update(dt);
-    app.loupeStretch = game.state.settings.quality === 'low';
     app.setLoupe(loupe.lens);
     if (draw) app.frame(dt);
     else app.simulate(dt);
@@ -630,7 +646,8 @@ async function main(): Promise<void> {
       look: (id: number) => loupe.lookAt(id),
       zoom: (z: number) => (loupe.zoom = z),
       loupeHome: () => loupe.returnToTable(),
-      lowQuality: (on: boolean) => game.updateSettings({ quality: on ? 'low' : 'high' }),
+      lowQuality: (on: boolean) => setQuality(on ? 'low' : 'high'),
+      quality: (q: Settings['quality']) => setQuality(q),
       lensImage: (px = 256) => {
         const img = app.captureLens(px);
         if (!img) return null;
@@ -649,6 +666,11 @@ async function main(): Promise<void> {
   let raf = 0;
   let last = performance.now();
   const loop = (now: number): void => {
+    // 画質の 1秒に描く回数まで（低は 30fps）。間の画面の更新は飛ばす
+    if (!shouldDraw(now, last, QUALITY[game.state.settings.quality].fps)) {
+      raf = requestAnimationFrame(loop);
+      return;
+    }
     const dt = (now - last) / 1000;
     last = now;
     lightTimer += dt;

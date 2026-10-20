@@ -920,7 +920,8 @@ body {
   min-height: 1.7em;
 }
 
-.leaf .motion {
+.leaf .motion,
+.leaf .quality {
   margin-bottom: 14px;
 }
 

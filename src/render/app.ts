@@ -25,7 +25,7 @@ import {
   type Object3D,
   type Texture,
 } from 'three';
-import { BELL, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, QUALITY, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState, Specimen } from '../sim/state';
@@ -183,8 +183,22 @@ export class App {
   debugView: string | null = null;
   /** 確認用：部品ごとに表示を切り替える */
   readonly parts: Record<string, Object3D>;
-  /** デバイスピクセル比の上限（確認用の撮影で上げられる） */
+  /** デバイスピクセル比の上限（画質で決まる。確認用の撮影で上げられる） */
   maxDpr: number = RENDER.maxDpr;
+  /** 確認用に上げた上限（?maxdpr。あれば画質より優先） */
+  maxDprOverride: number | null = null;
+
+  /**
+   * 画質（高・中・低）：描く解像度の上限、マリンスノーの粒の数、虫眼鏡の描き方。屈折はどの段階でも残す。
+   * 1秒に描く回数（低は 30fps）は呼ぶ側（main.ts）が決める。解像度は次の resize から
+   */
+  setQuality(q: keyof typeof QUALITY): void {
+    const look = QUALITY[q];
+    this.maxDpr = this.maxDprOverride ?? look.maxDpr;
+    const geo = this.snow.points.geometry;
+    geo.setDrawRange(0, Math.round(WATER.snowCount * look.snow));
+    this.loupeStretch = q === 'low';
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new WebGLRenderer({
