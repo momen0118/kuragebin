@@ -1637,24 +1637,27 @@ export const SOUND = {
   master: 0.8,
   /**
    * ガラスをつつく音：澄んだ音を数本重ねて短く減衰させる（基音に対する高さ・大きさ・減衰の時間）。水が入っているので、高すぎず少しこもった響き
-   * （lowpass で上を落とす）。つついた高さで音の高さが少し変わり（瓶の下ほど低い）、水面より下は少し早く減衰する。はじめに小さなコツという音
+   * （lowpass で上を落とす）。つついた高さで音の高さが少し変わり（瓶の下ほど低い）、水面より下は少し早く減衰する。はじめに小さなコツという音。
+   * 指先でつつく柔らかさに（1回目の確認で「大きすぎる、硬いものでつついている感じ」→ 小さく、立ち上がりをゆるく、高い響きとコツを弱く）
    */
   poke: {
-    gain: 0.22,
+    gain: 0.13,
+    /** 鳴りはじめの立ち上がり（秒）。短いほど硬く聞こえる */
+    attack: 0.007,
     base: 760,
     /** つついた高さ（瓶の高さ 0〜1）による音の高さの幅（割合）。真ん中で base */
     heightRange: 0.22,
     partials: [
       { ratio: 1, gain: 1, decay: 0.42 },
-      { ratio: 2.71, gain: 0.42, decay: 0.24 },
-      { ratio: 5.2, gain: 0.18, decay: 0.12 },
-      { ratio: 8.6, gain: 0.07, decay: 0.06 },
+      { ratio: 2.71, gain: 0.28, decay: 0.2 },
+      { ratio: 5.2, gain: 0.08, decay: 0.09 },
+      { ratio: 8.6, gain: 0.02, decay: 0.05 },
     ],
-    lowpass: 2600,
+    lowpass: 1800,
     /** 水面より下をつついたときの、減衰の速まり（時間に掛ける）と lowpass の下がり */
     underwaterDecay: 0.7,
     underwaterLowpass: 0.7,
-    click: { gain: 0.25, freq: 3200, seconds: 0.012 },
+    click: { gain: 0.07, freq: 1600, seconds: 0.01 },
     jitter: 0.035,
     lengthJitter: 0.15,
   },
