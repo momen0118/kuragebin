@@ -3,6 +3,8 @@
 // 紙の外をタップしても閉じる。後ろのほうのページに個体一覧（瓶ごと。ここでも名前を付けられる）、
 // いちばん最後（裏表紙の内側）に設定（揺れを使うか、データの書き出し・読み込み）。紙の端から少し出た付箋2枚でそこへ飛べ、
 // 一覧と設定のページには「日誌へ」。紙は少しくすんだ色で、夜は部屋の明るさに合わせて暗くする。
+// 一覧と設定の間に標本（拾いもの。写真と名前と拾った日）。写真をタップするとその一枚が少し持ち上がり、下に「瓶に沈める」
+// （沈めてある物は「引き上げる」）。沈めるとメモ帳は下がり、瓶の前で沈んでいくところを見せる。
 import { NOTEBOOK } from '../../config';
 import { NAME_MAX } from '../../sim/actions';
 import { feedDay } from '../../sim/feed';
@@ -10,7 +12,7 @@ import type { GameState } from '../../sim/state';
 import { downloadText, exportFilename } from '../download';
 import { keepToSelf } from '../jarActions';
 import { UNNAMED } from '../labels';
-import { dayTitle, journalPages, rosterPages, type DayPage, type RosterPage } from './pages';
+import { dayTitle, journalPages, rosterPages, specimenItems, type DayPage, type RosterPage, type SpecimenItem } from './pages';
 
 export interface NotebookOptions {
   state(): GameState;
@@ -25,6 +27,10 @@ export interface NotebookOptions {
   setMotion(on: boolean): void;
   /** 日誌のページに留めた手紙をタップした（手紙を読む紙を開く） */
   readLetter(id: number): void;
+  /** 標本の物を、見ている瓶に沈める（メモ帳はここで閉じる）。沈められなければ false */
+  sinkSpecimen(id: number): boolean;
+  /** 沈めてある物を引き上げて標本へ戻す */
+  raiseSpecimen(id: number): void;
   /** 開いた・閉じた（日誌を読んだことにする） */
   opened(): void;
   closed(): void;
@@ -33,6 +39,7 @@ export interface NotebookOptions {
 type Leaf =
   | { kind: 'day'; key: string; page: DayPage }
   | { kind: 'roster'; key: string; page: RosterPage }
+  | { kind: 'specimens'; key: string; items: SpecimenItem[] }
   | { kind: 'settings'; key: string };
 
 type Drag = {
@@ -72,6 +79,8 @@ export class Notebook {
   /** めくっている最中（アニメーション） */
   private busy = false;
   private suppressClick = false;
+  /** 標本で持ち上げている一枚（タップで持ち上がり、下に「瓶に沈める」か「引き上げる」） */
+  private lifted: number | null = null;
   private editing: HTMLInputElement | null = null;
   private pendingImport: string | null = null;
   private readonly reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
@@ -90,6 +99,7 @@ export class Notebook {
         </div>
         <div class="rings" aria-hidden="true">${'<span></span>'.repeat(RINGS)}</div>
         <button type="button" class="index-tab to-roster">一覧</button>
+        <button type="button" class="index-tab to-specimens">標本</button>
         <button type="button" class="index-tab to-settings">設定</button>
       </div>`;
     document.body.appendChild(root);
@@ -102,6 +112,7 @@ export class Notebook {
 
     root.querySelector('.journal-scrim')!.addEventListener('click', () => this.close());
     root.querySelector('.to-roster')!.addEventListener('click', () => this.jumpTo(this.leaves.findIndex((l) => l.kind === 'roster')));
+    root.querySelector('.to-specimens')!.addEventListener('click', () => this.jumpTo(this.leaves.findIndex((l) => l.kind === 'specimens')));
     root.querySelector('.to-settings')!.addEventListener('click', () => this.jumpTo(this.leaves.length - 1));
     this.book.addEventListener('pointerdown', (e) => this.down(e));
     this.book.addEventListener('pointermove', (e) => this.move(e));
@@ -151,6 +162,7 @@ export class Notebook {
   close(): void {
     if (!this.shown) return;
     if (this.editing) this.editing.blur();
+    this.lifted = null;
     this.shown = false;
     this.drag = null;
     this.root.classList.remove('shown');
@@ -173,7 +185,7 @@ export class Notebook {
     this.root.style.setProperty('--lum', lum.toFixed(3));
   }
 
-  /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 設定（裏表紙の内側） */
+  /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 標本 → 設定（裏表紙の内側） */
   private build(): void {
     const s = this.opts.state();
     const days: Leaf[] = journalPages(s.journal, { letters: s.letters }).map((page) => ({ kind: 'day', key: `d${page.key}`, page }));
@@ -182,7 +194,7 @@ export class Notebook {
       days.push({ kind: 'day', key: `d${key}`, page: { key, title: dayTitle(key), sections: [], letters: [] } });
     }
     const rosters: Leaf[] = rosterPages(s).map((page) => ({ kind: 'roster', key: `r${page.jar}`, page }));
-    this.leaves = [...days, ...rosters, { kind: 'settings', key: 's' }];
+    this.leaves = [...days, ...rosters, { kind: 'specimens', key: 'k', items: specimenItems(s) }, { kind: 'settings', key: 's' }];
   }
 
   /** 今のページと、その下（次のページ）、上（めくった前のページ）を書く */
@@ -241,6 +253,23 @@ export class Notebook {
             .join('')
         : `<p class="empty">水だけ</p>`;
       return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">${esc(leaf.page.title)}</h2><button type="button" class="to-journal">日誌へ</button></div>${rows}</div>`;
+    }
+    if (leaf.kind === 'specimens') {
+      // 拾った順に、写真と名前と拾った日（沈めてある物は、日付の横にその瓶）。タップした一枚は持ち上がり、下に「瓶に沈める」か「引き上げる」
+      const items = leaf.items.length
+        ? `<div class="specimens">${leaf.items
+            .map((it, i) => {
+              const up = it.id === this.lifted;
+              const action = up ? `<button type="button" class="${it.where ? 'raise' : 'sink'}">${it.where ? '引き上げる' : '瓶に沈める'}</button>` : '';
+              return (
+                `<div class="specimen${up ? ' lifted' : ''}${it.where ? ' sunk' : ''}" data-specimen="${it.id}" style="--tilt:${(((it.id * 37) % 7) - 3) * 0.6}deg;--i:${i}">` +
+                `<button type="button" class="photo" aria-label="${esc(it.name)}"${it.photo ? ` style="background-image:url('${it.photo}')"` : ''}></button>` +
+                `<p class="name">${esc(it.name)}</p><p class="when">${esc(it.found)}${it.where ? `<span class="where">${esc(it.where)}</span>` : ''}</p>${action}</div>`
+              );
+            })
+            .join('')}</div>`
+        : `<p class="empty">まだ何もない</p>`;
+      return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">標本</h2><button type="button" class="to-journal">日誌へ</button></div><p class="specimen-note">入れ替えた水に混じって、沈んでいたもの。</p>${items}</div>`;
     }
     const on = this.opts.motion();
     return `<div class="leaf-body"><div class="leaf-head"><span></span><button type="button" class="to-journal">日誌へ</button></div>
@@ -420,7 +449,21 @@ export class Notebook {
 
   private click(e: MouseEvent): void {
     const t = (e.target as HTMLElement).closest<HTMLElement>('button');
+    // 標本：ほかの所をタップしたら、持ち上げていた一枚を下ろす
+    if (this.lifted !== null && !t?.closest('[data-specimen]')) this.lift(null);
     if (!t || !this.current.contains(t)) return;
+    const cell = t.closest<HTMLElement>('[data-specimen]');
+    if (cell) {
+      const id = Number(cell.dataset.specimen);
+      if (t.classList.contains('photo')) this.lift(this.lifted === id ? null : id);
+      else if (t.classList.contains('sink')) {
+        if (this.opts.sinkSpecimen(id)) this.lifted = null;
+      } else if (t.classList.contains('raise')) {
+        this.lifted = null;
+        this.opts.raiseSpecimen(id);
+      }
+      return;
+    }
     if (t.classList.contains('letter-clip')) this.opts.readLetter(Number(t.dataset.letter));
     else if (t.classList.contains('to-journal')) void this.jumpTo(0);
     else if (t.classList.contains('name')) this.editName(t);
@@ -430,6 +473,17 @@ export class Notebook {
     else if (t.classList.contains('import-no')) this.cancelImport();
     else if (t.classList.contains('motion-on')) this.opts.setMotion(true);
     else if (t.classList.contains('motion-off')) this.opts.setMotion(false);
+  }
+
+  /** 標本の一枚を持ち上げる（null で下ろす）。今のページを書き直す */
+  private lift(id: number | null): void {
+    if (this.lifted === id) return;
+    this.lifted = id;
+    const body = this.body();
+    const top = body?.scrollTop ?? 0;
+    this.renderLeaf(this.current, this.cur);
+    this.setAngle(this.current, 0);
+    this.body()?.scrollTo(0, top);
   }
 
   /** 個体一覧で名前を付ける。Enter か欄の外で決まり、Esc でやめる。16px 未満だと iOS が画面を拡大する */

@@ -1,6 +1,7 @@
 // 時間を進める。advance(state, 経過秒) は純関数で、固定刻みで進め、刻みに満たない端数は状態に残す。
 // 同じ状態と経過からは、何回に分けて進めても同じ結果になる。
 import { LIFE, SIM, type LifeRules } from '../config';
+import { stepFinds } from './finds';
 import { stepLife } from './lifecycle';
 import { createRng, type Rng } from './rng';
 import type { GameState } from './state';
@@ -13,6 +14,8 @@ function step(state: GameState, dt: number, rng: Rng, rules: LifeRules, wallBase
   stepLife(state, dt, { rng, rules, wall, watching });
   // おじさんからの返事（届く時刻になったら）
   stepUncle(state, { rng, wall });
+  // 拾いもの（見ていない瓶に、まれに現れる）
+  stepFinds(state, dt, { wall, watching });
 }
 
 /**

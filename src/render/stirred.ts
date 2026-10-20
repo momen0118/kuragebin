@@ -329,3 +329,8 @@ export class StirredSediment {
     this.active = any;
   }
 }
+
+/** 舞い上がった堆積と同じ見た目の粒を n 個（位置・大きさ・濃さは使う側が毎フレーム書く。拾いものが瓶底に着いたときの小さな舞い） */
+export function createDustPoints(shared: SharedUniforms, n: number): Points {
+  return pointsOf(shared, n, DUST_FRAG, { uDust: { value: new Vector3(...SEDIMENT.color) } });
+}

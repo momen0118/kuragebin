@@ -7,6 +7,7 @@ import { canMove, moveCreature, renameCreature, type MoveResult } from './sim/ac
 import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
 import { canFeed, feedJar, type FeedResult } from './sim/feed';
+import { canPlace, pickFind, placeFind, setFindPhoto, type PlaceResult } from './sim/finds';
 import { stirJar } from './sim/growth';
 import { canSend, openLetter, sendCreature, type SendResult } from './sim/uncle';
 import { hasUnread } from './sim/journal';
@@ -199,6 +200,43 @@ export class Game {
     this.current = next;
     this.emit();
     void this.save();
+  }
+
+  /**
+   * 瓶底の拾いもの id を拾って標本へ移す。初めて拾ったなら、拾った日と写真（photo、撮れなければ null）を残す。
+   * 日誌には書かない。拾えたら true
+   */
+  pickFind(id: number, photo: string | null): boolean {
+    this.catchUpNow(false, this.watching);
+    const next = structuredClone(this.current);
+    if (!pickFind(next, id, this.clock.now())) return false;
+    if (photo) setFindPhoto(next, id, photo);
+    this.current = next;
+    this.emit();
+    void this.save();
+    return true;
+  }
+
+  /** 標本の物 id を瓶 jar に沈められるか（標本にあって、まだどの瓶にも沈めていない物） */
+  canPlaceFind(id: number, jar: number): PlaceResult {
+    return canPlace(this.current, id, jar);
+  }
+
+  /** 標本の物 id を瓶 jar に沈める（場所は空いた所を選ぶ。前に沈めた物は黙って標本へ戻る）。日誌には書かない */
+  placeFind(id: number, jar: number): PlaceResult {
+    this.catchUpNow(false, this.watching);
+    const next = structuredClone(this.current);
+    const result = placeFind(next, id, jar);
+    if (result !== 'placed') return result;
+    this.current = next;
+    this.emit();
+    void this.save();
+    return result;
+  }
+
+  /** 沈めてある物 id を引き上げて標本へ戻す（瓶でタップしたのと同じ。写真と拾った日はそのまま） */
+  raiseFind(id: number): boolean {
+    return this.pickFind(id, null);
   }
 
   /** 名前を付ける（null や空なら名無しに戻す） */
