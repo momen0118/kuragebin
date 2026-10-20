@@ -218,6 +218,8 @@ export class Finds {
     private readonly shared: SharedUniforms,
     /** 置いた物が水面のすぐ下に現れたとき、その上の水面に小さな波紋（瓶の座標の x, z） */
     private readonly ripple: (x: number, z: number) => void = () => {},
+    /** 沈めた物が瓶底に着いた（ごく小さな音） */
+    private readonly landed: (kind: FindKind) => void = () => {},
   ) {
     this.puff = createDustPoints(shared, FIND_LOOK.puffCount);
     this.puff.renderOrder = 21;
@@ -418,6 +420,7 @@ export class Finds {
         v.phase = 'rest';
         v.t = 0;
         this.startPuff(v, sediment);
+        this.landed(v.kind);
       }
       if (v.phase === 'leave' && v.t >= FIND_LOOK.leaveSeconds) {
         this.dispose(id);

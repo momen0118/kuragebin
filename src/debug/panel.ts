@@ -2,11 +2,12 @@
 // 時刻の上書き（光の確認用）、背景写真の切り替えと重ね表示（位置合わせの確認用）、FPS、
 // 時間の早送りと一気に進める操作、個体（出す・段階・進み・実物大・上限）、餌（1日1回を無視してやる・記録を消す）、
 // 揺れ（今の値と閾値、センサーなしで一回揺らす・逆さまから起き直るところを見る）、
-// おじさん（最初の手紙を出し直す・返事を今すぐ届ける）、拾いもの（表示中の瓶に出す・消す、標本を空に）、虫眼鏡（倍率・天板へ戻す）、
+// おじさん（最初の手紙を出し直す・返事を今すぐ届ける）、拾いもの（表示中の瓶に出す・消す、標本を空に）、音（設定によらず各音を鳴らす）、虫眼鏡（倍率・天板へ戻す）、
 // 状態の表示・リセット・書き出し・読み込み。
 import { DEBUG, FIND_VARIANTS, LOUPE, type PhotoName } from '../config';
 import type { GameInfo } from '../game';
 import type { GeneEdit } from '../sim/edit';
+import type { SoundName, SoundOptions } from '../sound/sound';
 import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
 import { downloadText, exportFilename } from '../ui/download';
 import { FIND_NAMES, STAGE_LABELS } from '../ui/labels';
@@ -62,6 +63,9 @@ export interface DebugPanelOptions {
   onFindSpawn(variant: string | null): void;
   onFindsClear(): void;
   onSpecimensClear(): void;
+  /** 音：設定によらず鳴らす（確かめる用）、部屋の空気の音を大きくして聞く（1 でふだん） */
+  onSound(name: SoundName, opts?: SoundOptions): void;
+  onAirBoost(boost: number): void;
   /** 虫眼鏡：倍率を変える、天板へ戻す */
   onLoupeZoom(zoom: number): void;
   onLoupeHome(): void;
@@ -241,6 +245,30 @@ export class DebugPanel {
         </div>
       </details>
       <details>
+        <summary>音</summary>
+        <div class="sub">設定のオン・オフによらず鳴らす</div>
+        <div class="row buttons">
+          <button type="button" data-sound="poke" data-opts='{"height":0.9,"underwater":false}'>つつく（上）</button>
+          <button type="button" data-sound="poke" data-opts='{"height":0.5,"underwater":true}'>（中）</button>
+          <button type="button" data-sound="poke" data-opts='{"height":0.15,"underwater":true}'>（下）</button>
+        </div>
+        <div class="row buttons">
+          <button type="button" data-sound="water" data-opts='{"strength":1}'>水（カップ）</button>
+          <button type="button" data-sound="water" data-opts='{"strength":0.55}'>水（沈める）</button>
+        </div>
+        <div class="row buttons">
+          <button type="button" data-sound="page">めくる</button>
+          <button type="button" data-sound="open">開く</button>
+          <button type="button" data-sound="close">閉じる</button>
+        </div>
+        <div class="row buttons">
+          <button type="button" data-sound="land" data-opts='{"kind":"pebble"}'>着く（小石）</button>
+          <button type="button" data-sound="land" data-opts='{"kind":"glass"}'>（シーグラス）</button>
+          <button type="button" data-sound="land" data-opts='{"kind":"shell"}'>（貝殻）</button>
+        </div>
+        <label class="row"><input type="checkbox" class="air-boost"> 部屋の空気の音を10倍にして聞く</label>
+      </details>
+      <details>
         <summary>虫眼鏡</summary>
         <label class="row">倍率 <input class="zoom" type="range" min="${LOUPE.zoomRange[0]}" max="${LOUPE.zoomRange[1]}" step="0.1" value="${LOUPE.zoom}" aria-label="倍率"> <span class="zoom-v">×${LOUPE.zoom.toFixed(1)}</span></label>
         <div class="row buttons"><button type="button" class="loupe-home">天板へ戻す</button></div>
@@ -298,6 +326,11 @@ export class DebugPanel {
     root.querySelector('.find-spawn')!.addEventListener('click', () => this.opts.onFindSpawn(variant.value || null));
     root.querySelector('.finds-clear')!.addEventListener('click', () => this.opts.onFindsClear());
     root.querySelector('.specimens-clear')!.addEventListener('click', () => this.opts.onSpecimensClear());
+    for (const b of root.querySelectorAll<HTMLButtonElement>('[data-sound]')) {
+      b.addEventListener('click', () => this.opts.onSound(b.dataset.sound as SoundName, b.dataset.opts ? (JSON.parse(b.dataset.opts) as SoundOptions) : {}));
+    }
+    const air = root.querySelector<HTMLInputElement>('.air-boost')!;
+    air.addEventListener('change', () => this.opts.onAirBoost(air.checked ? 10 : 1));
     const zoom = root.querySelector<HTMLInputElement>('.zoom')!;
     const zoomV = root.querySelector<HTMLSpanElement>('.zoom-v')!;
     zoom.addEventListener('input', () => {

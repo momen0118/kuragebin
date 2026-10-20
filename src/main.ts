@@ -27,6 +27,7 @@ import { ShakeDetector } from './ui/motionFilter';
 import { SendConfirm, SendHint } from './ui/sendConfirm';
 import { CreatureTag } from './ui/tag';
 import { registerServiceWorker } from './pwa/register';
+import { Sound, type SoundName, type SoundOptions } from './sound/sound';
 
 const params = new URLSearchParams(location.search);
 // ?debug のほか、クエリを渡せない環境のために #debug でも開ける
@@ -121,6 +122,16 @@ async function main(): Promise<void> {
     applyQuality();
   };
   applyQuality();
+
+  // 音（初期はオフ）。iOS は利用者の操作の中でしか鳴らしはじめられないので、タップのたびに鳴らせる状態にしなおす
+  const sound = new Sound();
+  sound.setEnabled(game.state.settings.sound);
+  for (const type of ['pointerup', 'touchend', 'click']) window.addEventListener(type, () => sound.unlock(), { capture: true, passive: true });
+  app.onSound = (name, opts) => sound.play(name, opts);
+  const setSound = (on: boolean): void => {
+    game.updateSettings({ sound: on });
+    sound.setEnabled(on);
+  };
 
   // 3つの瓶。前回見ていた瓶から始め、スワイプで落ち着いた瓶を覚えておく
   const slider = new JarSlider(SIM.jarCount, game.state.settings.jar, () => app.jarStepPx);
@@ -240,6 +251,7 @@ async function main(): Promise<void> {
   /** 読み込んだ状態に、ライトと見ている瓶を合わせる（日誌の設定とデバッグパネルから） */
   const afterImport = (): void => {
     applyQuality();
+    sound.setEnabled(game.state.settings.sound);
     app.setLampOn(game.state.settings.lamp);
     lampToggle.set(game.state.settings.lamp);
     jumpToSavedJar();
@@ -278,6 +290,9 @@ async function main(): Promise<void> {
     },
     motion: () => game.state.settings.motion,
     setMotion,
+    sound: () => game.state.settings.sound,
+    setSound,
+    playSound: (name) => sound.play(name),
     quality: () => game.state.settings.quality,
     setQuality,
     opened: () => {
@@ -313,6 +328,7 @@ async function main(): Promise<void> {
     const h = hourOverride ?? hourOf(now);
     const light = lightAt(h, sun);
     app.setLight(light);
+    sound.setNight(light.night);
     lampToggle.setVisible(light.lamp > 0.5);
     const lum = paperLum(light);
     notebook.setLum(lum);
@@ -345,6 +361,7 @@ async function main(): Promise<void> {
           onReset: () => {
             game.reset();
             applyQuality();
+            sound.setEnabled(game.state.settings.sound);
             app.setLampOn(game.state.settings.lamp);
             lampToggle.set(game.state.settings.lamp);
             jumpToSavedJar();
@@ -375,6 +392,8 @@ async function main(): Promise<void> {
           onFindSpawn: (variant) => game.edit((s) => void spawnFind(s, slider.index, variant ?? undefined)),
           onFindsClear: () => game.edit((s) => clearFinds(s, slider.index)),
           onSpecimensClear: () => game.edit((s) => clearSpecimens(s)),
+          onSound: (name, opts) => sound.preview(name, opts),
+          onAirBoost: (boost) => sound.previewAir(boost),
           onLoupeZoom: (z) => (loupe.zoom = z),
           onLoupeHome: () => loupe.returnToTable(),
         })
@@ -641,6 +660,42 @@ async function main(): Promise<void> {
       sinkFind: (id: number) => sinkSpecimen(id),
       clearFinds: () => edit((s) => clearFinds(s, null)),
       clearSpecimens: () => edit((s) => clearSpecimens(s)),
+      // 音：設定によらず鳴らす（確認用）、オン・オフ、空気の音を大きくして聞く
+      sound: (name: SoundName, opts?: SoundOptions) => sound.preview(name, opts),
+      setSound: (on: boolean) => setSound(on),
+      airBoost: (boost: number) => sound.previewAir(boost),
+      // 音を書き出して、大きさ（いちばん大きい所と平均）・長さ（-50dB を越えている最後の時刻）・いちばん強い高さ（Hz）を返す
+      soundStats: async (name: SoundName, opts?: SoundOptions) => {
+        const d = await Sound.renderOffline(name, opts);
+        let peak = 0;
+        let sum = 0;
+        let last = 0;
+        for (let i = 0; i < d.length; i++) {
+          const a = Math.abs(d[i]!);
+          peak = Math.max(peak, a);
+          sum += a * a;
+          if (a > 0.00316) last = i;
+        }
+        // 素朴な DFT で 100〜6000Hz のいちばん強い高さ（はじめの 0.2 秒）
+        const n = 8820;
+        let best = 0;
+        let bestP = 0;
+        for (let f = 100; f <= 6000; f += 10) {
+          let re = 0;
+          let im = 0;
+          for (let i = 0; i < n; i++) {
+            const w = (2 * Math.PI * f * i) / 44100;
+            re += d[i]! * Math.cos(w);
+            im += d[i]! * Math.sin(w);
+          }
+          const p = re * re + im * im;
+          if (p > bestP) {
+            bestP = p;
+            best = f;
+          }
+        }
+        return { peak, rms: Math.sqrt(sum / d.length), seconds: last / 44100, freq: best };
+      },
       // 虫眼鏡：今の様子、「よく見る」、倍率、天板へ戻す、画質「低」（引き伸ばし）、レンズの中を画像に（一辺 px）
       loupe: () => loupe.state,
       look: (id: number) => loupe.lookAt(id),
@@ -696,6 +751,7 @@ async function main(): Promise<void> {
   };
   // タブが見えていない間は描画を止める。離れる直前に保存し、戻ったら閉じていた分を進める
   document.addEventListener('visibilitychange', () => {
+    sound.setHidden(document.hidden);
     if (document.hidden) {
       cancelAnimationFrame(raf);
       void game.save();

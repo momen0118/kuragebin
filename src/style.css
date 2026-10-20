@@ -917,6 +917,7 @@ body {
   min-height: var(--line-h);
 }
 
+.leaf .sound,
 .leaf .motion,
 .leaf .quality {
   margin-bottom: var(--line-h);

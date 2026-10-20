@@ -19,6 +19,8 @@ export interface ScoopHost {
   readonly hoverRange: number;
   /** 瓶 jar の水面に波紋を立てる（瓶の座標）。輪は半径 radius から広がりはじめる */
   ripple(jar: number, x: number, z: number, strength: number, radius: number): void;
+  /** 水の音（カップの底が水に入る・口が沈むとき。strength は 0〜1） */
+  water(strength: number): void;
   /** 水の中のカップを、瓶 jar の泳ぐ個体によけさせる（真ん中と半径、瓶の座標）。null でやめる */
   obstruct(jar: number, center: Vector3 | null, radius: number): void;
   /** 放した個体を瓶 jar の個体にする（泳ぎつづける） */
@@ -605,12 +607,16 @@ export class Scoop {
       this.host.obstruct(jar, null, 0);
       return;
     }
-    if (this.lowPrev > WATER && low <= WATER) this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleEnter, CUP.radiusBottom);
+    if (this.lowPrev > WATER && low <= WATER) {
+      this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleEnter, CUP.radiusBottom);
+      this.host.water(SCOOP.soundEnter);
+    }
     else if (this.lowPrev <= WATER && low > WATER) this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleLeave, CUP.radiusBottom);
     this.lowPrev = low;
     if (!this.flooded && top < WATER) {
       this.flooded = true;
       this.host.ripple(jar, mid.x, mid.z, SCOOP.rippleSubmerge, CUP.radiusTop);
+      this.host.water(SCOOP.soundSubmerge);
     } else if (this.flooded && top > WATER) {
       this.flooded = false;
       this.fill = 0.97;
