@@ -314,7 +314,7 @@ export class Notebook {
                 (sent
                   ? `<span class="name${r.name ? '' : ' unnamed'}">${esc(r.name ?? UNNAMED)}</span>`
                   : `<button type="button" class="name${r.name ? '' : ' unnamed'}">${esc(r.name ?? UNNAMED)}</button>`) +
-                `<span class="what">${esc(r.species)}・${esc(r.stage)}</span><span class="when">${esc(r.arrived)}</span></div>`,
+                `<span class="what"><span>${esc(r.species)}・${esc(r.stage)}${r.sex ? '・' : ''}</span>${r.sex ? `<span>${esc(r.sex)}</span>` : ''}</span><span class="when">${esc(r.arrived)}</span></div>`,
             )
             .join('')
         : `<p class="empty">水だけ</p>`;

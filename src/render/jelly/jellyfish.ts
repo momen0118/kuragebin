@@ -1,9 +1,10 @@
 // 泳ぐ海月一匹（成体とエフィラ）。拍動・泳ぎ・触手・口腕を固定刻みで進め、描画用のデータにまとめる。
 // 育ち具合（0 で放されたばかりのエフィラ、1 で成体）で形と動きが変わる（form.ts）。
 import { Group, Matrix4, Vector3, type BufferGeometry, type Material } from 'three';
-import { BELL, EPHYRA, JELLY_LOOK, ORAL_ARMS, POKE, RENDER, TENTACLES } from '../../config';
+import { BELL, EPHYRA, JELLY_LOOK, ORAL_ARMS, POKE, RENDER, SEX_LOOK, TENTACLES } from '../../config';
 import { BASE_GENES, genesKey, type Genes } from '../../sim/genes';
 import type { Rng } from '../../sim/rng';
+import type { Sex } from '../../sim/state';
 import type { WaterField } from '../slosh';
 import { Stomach } from '../stomach';
 import type { SharedUniforms } from '../uniforms';
@@ -93,6 +94,11 @@ export class Jellyfish {
       uLeafCount: { value: ind.leaves.length },
       uLeaf: { value: [0, 1, 2, 3, 4].map(leaf) },
       uNick: { value: [0, 1, 2].map(nick) },
+      uSexTint: { value: new Vector3(...SEX_LOOK.male) },
+      uSexAmount: { value: 0 },
+      uSexDensity: { value: 0 },
+      uBrood: { value: 0 },
+      uBroodSeed: { value: seed % 997 },
     };
     this.bell = createBell(shared, this.look, ind.lobes);
     this.tentacles = new Tentacles(shared, this.look, rng, ind);
@@ -188,6 +194,19 @@ export class Jellyfish {
     this.pulse.setParams(pulseParams(f.jerk));
     this.shape.setParams(shapeParams(f.jerk));
     this.swimmer.setForm(f.radius, f.jerk);
+  }
+
+  /**
+   * 雌雄の見え方。sex は雌雄（成熟前やエフィラでも持っているが、amount が 0 なら出ない）、amount は四つ葉の輪の色の出かた（0〜1）、
+   * brood は口腕に抱えているプラヌラの粒の見え方（0〜1）
+   */
+  setSex(sex: Sex | null, amount: number, brood: number): void {
+    const l = this.look;
+    const female = sex === 'female';
+    l.uSexTint.value.set(...(female ? SEX_LOOK.female : SEX_LOOK.male));
+    l.uSexAmount.value = sex ? amount * (female ? SEX_LOOK.femaleAmount : SEX_LOOK.maleAmount) : 0;
+    l.uSexDensity.value = female ? SEX_LOOK.femaleDensity : SEX_LOOK.maleDensity;
+    l.uBrood.value = brood;
   }
 
   /** 位置と向きを決めなおす（ストロビラから離れたエフィラ、確認用に置くとき）。触手と口腕は根元から伸ばしなおす */

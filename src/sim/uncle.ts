@@ -8,7 +8,8 @@ import type { Genes } from './genes';
 import { record } from './journal';
 import { updateResting } from './lifecycle';
 import { createRng, type Rng } from './rng';
-import { isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Stage } from './state';
+import { isMature } from './sex';
+import { FIRST_LETTER_BROOD, isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Stage } from './state';
 
 export type SendResult = 'sent' | 'fixed' | 'missing';
 
@@ -62,7 +63,8 @@ export function sendCreature(state: GameState, id: number, rules: LifeRules = LI
   j.creatures = j.creatures.filter((x) => x.id !== id);
   const now = state.time + state.pending;
   const wall = wallAt(state, now);
-  state.sent.push({ id: c.id, name: c.name, species: c.species, stage: c.stage, genes: { ...c.genes }, jar, sentAt: now, sentWallTime: wall });
+  // 雌雄は成熟していれば残す（まだなら「まだわからない」）
+  state.sent.push({ id: c.id, name: c.name, species: c.species, stage: c.stage, genes: { ...c.genes }, sex: isMature(c) ? c.sex : null, jar, sentAt: now, sentWallTime: wall });
   record(state, 'sent', jar, 1, [c.id], wall, c.name);
   updateResting(state, j, jar, rules, null);
   const rare = rarity(c.genes, c.stage);
@@ -146,7 +148,7 @@ export function openLetter(state: GameState, id: number): boolean {
 export function resetFirstLetter(state: GameState, jar: number): void {
   state.letters = state.letters.filter((l) => l.kind !== 'first');
   const now = state.time + state.pending;
-  addLetter(state, { kind: 'first', topic: null, pick: 0, about: null, arrivedAt: now, wallTime: wallAt(state, now), sealed: true, jar, gift: null });
+  addLetter(state, { kind: 'first', topic: null, pick: FIRST_LETTER_BROOD, about: null, arrivedAt: now, wallTime: wallAt(state, now), sealed: true, jar, gift: null });
 }
 
 /**

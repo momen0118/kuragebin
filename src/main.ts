@@ -7,8 +7,9 @@ import { App } from './render/app';
 import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
 import { closeAllFacts, openAllFacts } from './sim/book';
-import { clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit } from './sim/edit';
+import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, editSex, skipMaturity, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit, type SexEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
+import { broodAmount } from './sim/sex';
 import type { GameState, Letter, Settings, Stage } from './sim/state';
 import { deliverReplyNow, resetFirstLetter } from './sim/uncle';
 import { Carry } from './ui/carry';
@@ -17,6 +18,7 @@ import { FeedButton } from './ui/feedButton';
 import { Gestures, type Point } from './ui/gestures';
 import { JournalButton } from './ui/journal/button';
 import { Notebook } from './ui/journal/notebook';
+import { sexLabel } from './ui/journal/pages';
 import { JarSlider } from './ui/jarSlider';
 import { LampToggle } from './ui/lampToggle';
 import { flyLight } from './ui/finds';
@@ -156,7 +158,7 @@ async function main(): Promise<void> {
       const s = game.state;
       const c = s.jars[slider.index]?.creatures.find((x) => x.id === id);
       if (!c) return null;
-      return { name: c.name, stage: c.stage, day: Math.floor(Math.max(0, s.time - c.arrivedAt) / 86400) + 1 };
+      return { name: c.name, stage: c.stage, sex: sexLabel(c), day: Math.floor(Math.max(0, s.time - c.arrivedAt) / 86400) + 1 };
     },
     anchor: (id) => app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight),
     rename: (id, name) => game.rename(id, name),
@@ -387,6 +389,12 @@ async function main(): Promise<void> {
           onRemove: (id) => game.edit((s, rules) => removeCreature(s, id, rules)),
           onFill: (n) => game.edit((s, rules) => fillAdults(s, slider.index, n, rules)),
           onGenes: (id, e) => game.edit((s) => editGenes(s, id, e)),
+          onSex: (id, e) =>
+            game.edit((s) => {
+              if (e === 'mature') skipMaturity(s, id);
+              else if (e === 'brood') broodNow(s, id);
+              else editSex(s, id, e);
+            }),
           onCap: (n) => game.setRules({ maxSwimmers: n }),
           onRealSize: (on) => setRealSize(on),
           onFeed: () => void feedNow(true),
@@ -451,7 +459,7 @@ async function main(): Promise<void> {
   if (panel) {
     refreshPanel = (): void => {
       panel.showState(game.state, game.info, clock.speed, clock.drift);
-      panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers);
+      panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers, game.state.time + game.state.pending);
       panel.showFeed(feedText());
       panel.showUncle(game.state);
       panel.showFinds(game.state);
@@ -607,7 +615,7 @@ async function main(): Promise<void> {
   /** 豆知識のきっかけ（画面の出来事）を確かめる間隔の残り（秒） */
   let factTimer = 0;
   /**
-   * 画面の出来事の豆知識：逆さまになった・起き直った（毎フレーム数える）、虫眼鏡を瓶に当てた・エフィラに当てた（ときどき確かめる）
+   * 画面の出来事の豆知識：逆さまになった・起き直った（毎フレーム数える）、虫眼鏡を瓶に当てた・エフィラに当てた、プラヌラを抱えた個体を見た（ときどき確かめる）
    */
   const checkScreenFacts = (dt: number): void => {
     const r = app.takeRighting();
@@ -616,6 +624,11 @@ async function main(): Promise<void> {
     factTimer -= dt;
     if (factTimer > 0) return;
     factTimer = 0.5;
+    // 見ている瓶に、プラヌラを抱えている個体がいる（粒が見えている）
+    if (app.atRest) {
+      const t = game.state.time + game.state.pending;
+      if (game.state.jars[slider.index]?.creatures.some((c) => broodAmount(c, t) >= BOOK.planulaSeen)) game.noteFact('planula');
+    }
     const lens = loupe.lens;
     if (!loupe.inUse || !lens || lens.alpha < 0.9 || !app.atRest) return;
     const w = canvas.clientWidth;
@@ -696,6 +709,13 @@ async function main(): Promise<void> {
       setStage: (id: number, stage: Stage) => edit((s, rules) => setStage(s, id, stage, rules)),
       // 遺伝子：'base'（基準）・'generations'（6世代ばらす）・{ set: { hue: 1, leaves: 5, ... } }
       genes: (id: number, e: GeneEdit) => edit((s) => editGenes(s, id, e)),
+      /** 雌雄：'male' | 'female' | 'immature'（デバッグパネルと同じ）、'mature'（成熟まで飛ばす）、'brood'（メスにプラヌラを抱えさせる） */
+      sex: (id: number, e: SexEdit | 'mature' | 'brood') =>
+        edit((s) => {
+          if (e === 'mature') skipMaturity(s, id);
+          else if (e === 'brood') broodNow(s, id);
+          else editSex(s, id, e);
+        }),
       setProgress: (id: number, p: number) => edit((s) => setProgress(s, id, p)),
       setDiscs: (id: number, n: number) => edit((s, rules) => setDiscs(s, id, n, rules)),
       remove: (id: number) => edit((s, rules) => removeCreature(s, id, rules)),

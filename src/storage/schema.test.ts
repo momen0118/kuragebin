@@ -1,11 +1,27 @@
 import { describe, expect, test } from 'vitest';
+import { SEX } from '../config';
 import { advance } from '../sim/advance';
 import { BASE_GENES } from '../sim/genes';
-import { createInitialState, SCHEMA_VERSION } from '../sim/state';
+import { createInitialState, SCHEMA_VERSION, type GameState } from '../sim/state';
 import { exportState, importState } from './io';
 import { migrate, SchemaError } from './schema';
 
 const T0 = Date.UTC(2026, 8, 25, 3, 0, 0);
+
+/** 版10（雌雄とプラヌラ）で足したものを除く。版9までのデータからは決め直すので、それより前の版の比べ方ではここを見ない */
+function withoutSex(state: GameState): GameState {
+  const s = structuredClone(state) as unknown as { jars: Array<Record<string, unknown> & { creatures: Array<Record<string, unknown>> }>; sent: Array<Record<string, unknown>> };
+  for (const jar of s.jars) {
+    delete jar.planulae;
+    for (const c of jar.creatures) {
+      delete c.sex;
+      delete c.adultAge;
+      delete c.brood;
+    }
+  }
+  for (const r of s.sent) delete r.sex;
+  return s as unknown as GameState;
+}
 
 describe('保存データの版', () => {
   test('今の版のデータはそのまま読める', () => {
@@ -64,7 +80,7 @@ describe('版4からのマイグレーション', () => {
     expect(m.schema).toBe(SCHEMA_VERSION);
     expect(m.jars.every((j) => j.stirredUntil === null)).toBe(true);
     // 版6より前のデータには、版7で最初の手紙と日誌の一行が足される。版8で標本は空から（それ以外はそのまま）
-    expect({ ...m, letters: s.letters, journal: s.journal, specimens: s.specimens }).toEqual(s);
+    expect(withoutSex({ ...m, letters: s.letters, journal: s.journal, specimens: s.specimens })).toEqual(withoutSex(s));
     expect(m.specimens).toEqual([]);
     expect(m.journal.slice(0, s.journal.length)).toEqual(s.journal);
   });
@@ -122,7 +138,7 @@ describe('版2からのマイグレーション', () => {
     expect(m.jars.every((j) => j.fedWallTime === null)).toBe(true);
     expect(m.jars[0]!.creatures.every((c) => c.meal === null)).toBe(true);
     // 版6より前のデータには、版7で最初の手紙と日誌の一行が足される。版8で標本は空から（それ以外はそのまま）
-    expect({ ...m, letters: s.letters, journal: s.journal, specimens: s.specimens }).toEqual(s);
+    expect(withoutSex({ ...m, letters: s.letters, journal: s.journal, specimens: s.specimens })).toEqual(withoutSex(s));
     expect(m.specimens).toEqual([]);
     expect(m.journal.slice(0, s.journal.length)).toEqual(s.journal);
   });
@@ -134,6 +150,68 @@ describe('版2からのマイグレーション', () => {
     const m = migrate(s);
     expect(m.jars[0]!.creatures[0]!.meal).toBeNull();
     expect(m.jars[0]!.fedWallTime).toBeNull();
+  });
+});
+
+describe('版9からのマイグレーション', () => {
+  test('雌雄とプラヌラ：最初の一匹はメス、ほかの成体は半々、エフィラと成熟前は「まだわからない」', () => {
+    const s = advance(createInitialState(T0), 2 * 86400);
+    const jar = s.jars[0]!;
+    // 版9のデータ：成体を何匹か（成体になってから長いもの・なったばかりのもの）とエフィラ、送った子
+    for (let i = 0; i < 12; i++) {
+      jar.creatures.push({ ...structuredClone(jar.creatures[0]!), id: 100 + i, seed: 1000 + i * 7919, parent: 1, age: (i % 2 ? 20 : 7) * 86400 });
+    }
+    jar.creatures.push({ ...structuredClone(jar.creatures[0]!), id: 200, stage: 'ephyra', parent: 5 });
+    s.sent.push({ id: 300, name: null, species: 'aurelia', stage: 'adult', genes: { ...BASE_GENES }, sex: null, jar: 0, sentAt: 0, sentWallTime: T0 });
+    s.sent.push({ id: 301, name: null, species: 'aurelia', stage: 'ephyra', genes: { ...BASE_GENES }, sex: null, jar: 0, sentAt: 0, sentWallTime: T0 });
+    const v9 = JSON.parse(JSON.stringify(s)) as Record<string, unknown> & {
+      jars: Array<Record<string, unknown> & { creatures: Array<Record<string, unknown>> }>;
+      sent: Array<Record<string, unknown>>;
+    };
+    v9.schema = 9;
+    for (const j of v9.jars) {
+      delete j.planulae;
+      for (const c of j.creatures) {
+        delete c.sex;
+        delete c.adultAge;
+        delete c.brood;
+      }
+    }
+    for (const r of v9.sent) delete r.sex;
+    const m = migrate(v9);
+    expect(m.schema).toBe(SCHEMA_VERSION);
+    expect(m.jars.every((j) => Array.isArray(j.planulae) && j.planulae.length === 0)).toBe(true);
+    const cs = m.jars[0]!.creatures;
+    const first = cs.find((c) => c.id === 1)!;
+    expect(first.sex).toBe('female');
+    expect(first.brood).toBeNull();
+    expect(first.adultAge).toBeGreaterThan(0);
+    const adults = cs.filter((c) => c.id >= 100 && c.id < 200);
+    const females = adults.filter((c) => c.sex === 'female').length;
+    expect(females).toBeGreaterThan(0);
+    expect(females).toBeLessThan(adults.length);
+    // 成体になってからの時間は、年齢からエフィラの期間を引いて見積もる（7日ではまだ成熟前、20日では成熟）
+    for (const c of adults) expect(c.adultAge > SEX.matureAfter).toBe(c.age > 10 * 86400);
+    expect(cs.find((c) => c.id === 200)!).toMatchObject({ adultAge: 0, brood: null });
+    expect(['male', 'female']).toContain(cs.find((c) => c.id === 200)!.sex);
+    for (const c of cs.filter((x) => x.stage === 'polyp' || x.stage === 'strobila')) expect(c.sex).toBeNull();
+    expect(['male', 'female']).toContain(m.sent.find((r) => r.id === 300)!.sex);
+    expect(m.sent.find((r) => r.id === 301)!.sex).toBeNull();
+    // 同じデータからは同じ結果
+    expect(migrate(JSON.parse(JSON.stringify(v9)))).toEqual(m);
+  });
+
+  test('読めない雌雄・プラヌラは、決め直すか除く', () => {
+    const s = JSON.parse(JSON.stringify(createInitialState(T0)));
+    s.jars[0].creatures[0].sex = 'x';
+    s.jars[0].creatures[0].brood = { from: 'a' };
+    s.jars[0].creatures[0].adultAge = -1;
+    s.jars[1].planulae = [{ at: 5, parent: 1, genes: { hue: 9 } }, { at: 'x' }];
+    const m = migrate(s);
+    expect(['male', 'female']).toContain(m.jars[0]!.creatures[0]!.sex);
+    expect(m.jars[0]!.creatures[0]!.brood).toBeNull();
+    expect(m.jars[0]!.creatures[0]!.adultAge).toBe(0);
+    expect(m.jars[1]!.planulae).toEqual([{ at: 5, parent: 1, genes: { ...BASE_GENES, hue: 1 } }]);
   });
 });
 
@@ -163,8 +241,9 @@ describe('版1からのマイグレーション', () => {
     expect(c.stageLength).toBeGreaterThan(0);
     expect(s.jars.every((j) => j.resting === false)).toBe(true);
     expect(s.settings.lamp).toBe(false);
-    // そのまま進められる（約1日でポリプが付く）
-    const n = advance(s, 1.5 * 86400);
+    // そのまま進められる（最初の一匹はメスなので、約1日でプラヌラを抱え、粒がなくなってしばらくするとポリプが付く）
+    expect(c.sex).toBe('female');
+    const n = advance(s, 3 * 86400);
     expect(n.jars[0]!.creatures.some((x) => x.stage === 'polyp')).toBe(true);
   });
 });

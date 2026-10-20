@@ -4,11 +4,12 @@
 // 揺れ（今の値と閾値、センサーなしで一回揺らす・逆さまから起き直るところを見る）、
 // おじさん（最初の手紙を出し直す・返事を今すぐ届ける）、拾いもの（表示中の瓶に出す・消す、標本を空に）、音（設定によらず各音を鳴らす）、虫眼鏡（倍率・天板へ戻す）、
 // 状態の表示・リセット・書き出し・読み込み。
-import { DEBUG, FIND_VARIANTS, LOUPE, type PhotoName } from '../config';
+import { DEBUG, FIND_VARIANTS, LOUPE, SEX, type PhotoName } from '../config';
+import { broodAmount, isMature, sexColorAmount } from '../sim/sex';
 import type { GameInfo } from '../game';
-import type { GeneEdit } from '../sim/edit';
+import type { GeneEdit, SexEdit } from '../sim/edit';
 import type { SoundName, SoundOptions } from '../sound/sound';
-import { STAGES, type GameState, type JarState, type Stage } from '../sim/state';
+import { STAGES, type Creature, type GameState, type JarState, type Stage } from '../sim/state';
 import { downloadText, exportFilename } from '../ui/download';
 import { FIND_NAMES, STAGE_LABELS } from '../ui/labels';
 
@@ -37,6 +38,8 @@ export interface DebugPanelOptions {
   onRemove(id: number): void;
   /** 遺伝子を書き換える（選んでいる個体） */
   onGenes(id: number, edit: GeneEdit): void;
+  /** 雌雄（選んでいる個体）：オス・メス・成熟前に切り替える、成熟までの時間を飛ばす、メスにプラヌラを抱えさせる */
+  onSex(id: number, edit: SexEdit | 'mature' | 'brood'): void;
   /** 泳ぐ個体を成体 n 匹にする（混み具合の確認） */
   onFill(n: number): void;
   /** 泳ぐ個体の上限を差し替える（保存しない） */
@@ -108,6 +111,18 @@ function span(seconds: number): string {
   return parts.slice(0, 2).join(' ');
 }
 
+/** 選んでいる個体の雌雄：雌雄、成熟まで（または色の出かた）、プラヌラを抱えている残り */
+function sexInfo(c: Creature, time: number): string {
+  if (!c.sex) return '雌雄なし（瓶底の段階）';
+  const name = c.sex === 'female' ? 'メス' : 'オス';
+  if (c.stage !== 'adult') return `${name}（エフィラ。札では「まだわからない」）`;
+  const parts = [name];
+  if (!isMature(c)) parts.push(`成熟まで ${span(SEX.matureAfter - c.adultAge)}`);
+  else parts.push(`成熟済み・輪の色 ${sexColorAmount(c).toFixed(2)}`);
+  if (c.brood) parts.push(`プラヌラ あと ${span(c.brood.until - time)}（粒 ${broodAmount(c, time).toFixed(2)}）`);
+  return parts.join('・');
+}
+
 function clockTime(ms: number): string {
   const d = new Date(ms);
   return [d.getHours(), d.getMinutes(), d.getSeconds()].map((v) => String(v).padStart(2, '0')).join(':');
@@ -136,6 +151,7 @@ export class DebugPanel {
   private readonly capSel: HTMLSelectElement;
   private readonly feedEl: HTMLDivElement;
   private readonly genesEl: HTMLDivElement;
+  private readonly sexEl: HTMLDivElement;
   private readonly motionEl: HTMLDivElement;
   private readonly uncleEl: HTMLDivElement;
   private readonly findsEl: HTMLDivElement;
@@ -195,6 +211,14 @@ export class DebugPanel {
           <button type="button" data-genes='{"leaves":4}'>四つ葉</button>
           <button type="button" data-genes='{"leaves":5}'>五つ葉</button>
           <button type="button" data-genes='{"warp":1,"ragged":1,"leafJitter":1}'>崩し最大</button>
+        </div>
+        <div class="sex sub"></div>
+        <div class="row buttons">
+          <button type="button" data-sex="male">オス</button>
+          <button type="button" data-sex="female">メス</button>
+          <button type="button" data-sex="immature">成熟前</button>
+          <button type="button" data-sex="mature">成熟まで飛ばす</button>
+          <button type="button" data-sex="brood">プラヌラを抱えさせる</button>
         </div>
         <div class="row buttons">
           <button type="button" data-fill="4">成体4</button>
@@ -398,6 +422,12 @@ export class DebugPanel {
         this.opts.onGenes(this.selected, v === 'base' || v === 'generations' ? v : { set: JSON.parse(v) });
       });
     }
+    this.sexEl = root.querySelector('.sex')!;
+    for (const b of root.querySelectorAll<HTMLButtonElement>('[data-sex]')) {
+      b.addEventListener('click', () => {
+        if (this.selected !== null) this.opts.onSex(this.selected, b.dataset.sex as SexEdit | 'mature' | 'brood');
+      });
+    }
     const real = root.querySelector<HTMLInputElement>('.real')!;
     real.addEventListener('change', () => this.opts.onRealSize(real.checked));
 
@@ -475,14 +505,14 @@ export class DebugPanel {
   }
 
   /** 表示中の瓶の個体の一覧と、選んでいる個体の段階・進み。cap は泳ぐ個体の上限 */
-  showCreatures(jar: JarState, cap: number): void {
+  showCreatures(jar: JarState, cap: number, time: number): void {
     this.capSel.value = String(cap);
     if (this.selected !== null && !jar.creatures.some((c) => c.id === this.selected)) this.selected = null;
     if ((this.selected === null || this.pickNewest) && jar.creatures.length) {
       this.selected = jar.creatures[jar.creatures.length - 1]!.id;
       this.pickNewest = false;
     }
-    const key = jar.creatures.map((c) => `${c.id}:${c.stage}:${c.discs}`).join(',') + `|${this.selected}|${jar.resting}`;
+    const key = jar.creatures.map((c) => `${c.id}:${c.stage}:${c.discs}:${c.sex ?? ''}`).join(',') + `|${this.selected}|${jar.resting}`;
     if (key !== this.listKey) {
       this.listKey = key;
       this.listEl.innerHTML =
@@ -490,7 +520,8 @@ export class DebugPanel {
           .map((c) => {
             const sel = c.id === this.selected ? ' class="picked"' : '';
             const discs = c.stage === 'strobila' ? ` 皿${c.discs}` : '';
-            return `<div data-id="${c.id}"${sel}>#${c.id} ${STAGE_NAMES[c.stage]}${discs} <span class="pct"></span></div>`;
+            const sex = c.sex === 'female' ? ' メス' : c.sex === 'male' ? ' オス' : '';
+            return `<div data-id="${c.id}"${sel}>#${c.id} ${STAGE_NAMES[c.stage]}${discs}${sex} <span class="pct"></span></div>`;
           })
           .join('') + (jar.resting ? '<div>（いっぱいでポリプが休んでいる）</div>' : '');
     }
@@ -501,10 +532,12 @@ export class DebugPanel {
     });
     const c = jar.creatures.find((x) => x.id === this.selected);
     if (c) {
+      const sexText = sexInfo(c, time);
       const g = c.genes;
       const f = (v: number): string => (v >= 0 ? '+' : '') + v.toFixed(2);
       const genes = `色 ${f(g.hue)}（−青 +桃）・透け ${f(g.clarity)}・触手 ${f(g.tentacle)}・拍動 ${f(g.tempo)}　崩し いびつ ${g.warp.toFixed(2)}・欠け ${g.ragged.toFixed(2)}・葉 ${g.leafJitter.toFixed(2)}　${g.leaves}つ葉`;
       if (this.genesEl.textContent !== genes) this.genesEl.textContent = genes;
+      if (this.sexEl.textContent !== sexText) this.sexEl.textContent = sexText;
       this.stageSel.value = c.stage;
       this.discsSel.disabled = c.stage !== 'strobila';
       if (c.stage === 'strobila') this.discsSel.value = String(c.discs);
