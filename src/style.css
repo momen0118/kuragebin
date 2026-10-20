@@ -615,7 +615,7 @@ body {
     0 0;
 }
 
-/* 裏表紙の内側（設定）：厚紙の色で罫線なし */
+/* 裏表紙（いちばん最後のページの下）：厚紙の色で罫線なし */
 .leaf.cover {
   background:
     radial-gradient(140% 100% at 70% 80%, rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.04)),
@@ -894,18 +894,15 @@ body {
   color: var(--ink-soft);
 }
 
-/* 設定（裏表紙の内側の下のほうに、小さく）。揺れ、その下にデータ */
+/* 設定：揺れ、画質、データ。ほかのページと同じく、どの行も罫線の行（--line-h）に乗せる。項目の間は一行あける */
 .leaf .settings {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 6px;
   font-size: 12px;
-  line-height: 1.7;
+  line-height: var(--line-h);
 }
 
 .leaf .settings p {
   margin: 0;
+  line-height: var(--line-h);
 }
 
 .leaf .settings .label {
@@ -917,16 +914,16 @@ body {
 .leaf .data .note {
   font-size: 11px;
   opacity: 0.7;
-  min-height: 1.7em;
+  min-height: var(--line-h);
 }
 
-.leaf .motion {
-  margin-bottom: 14px;
+.leaf .motion,
+.leaf .quality {
+  margin-bottom: var(--line-h);
 }
 
 /* 版（新しい版が届いているかを見分ける）。小さく淡く */
 .leaf .settings .version {
-  margin-top: 10px;
   font-size: 10px;
   opacity: 0.45;
   letter-spacing: 0.04em;
@@ -942,11 +939,13 @@ body {
 .data-buttons {
   display: flex;
   gap: 14px;
-  margin: 4px 0;
+  height: var(--line-h);
+  margin: 0;
 }
 
 .data-buttons button {
-  padding: 3px 0;
+  padding: 0;
+  line-height: var(--line-h);
   border: 0;
   background: transparent;
   color: inherit;
@@ -959,9 +958,6 @@ body {
   touch-action: manipulation;
 }
 
-.leaf .confirm p {
-  margin-top: 6px;
-}
 
 /*
  * 付箋。紙の右の端から横に少し出ていて、一覧と設定へ飛べる。

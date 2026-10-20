@@ -1,5 +1,5 @@
 // 拾いもの（4-2）。貝殻のかけら・シーグラス・小石が、見ていない間にまれに瓶底に現れる（入れ替えた水に混じっていたもの）。
-// 1瓶あたり平均 FINDS.meanDays 日に1つ。水換えとは関係なく日数で決め、見ている瓶には現れない。
+// 1瓶あたり平均 FINDS.meanDays 日に1つ。水換えとは関係なく日数で決め、見ている瓶と、何もいない瓶（水を替えない）には現れない。
 // タップで拾うと日誌の標本に移り（初めて拾った日と写真を残す）、標本から瓶に沈めて飾れる（標本には「一番の瓶」と残る）。
 // 沈めた物は、瓶でタップするか標本で引き上げると戻る。
 // 1瓶に合わせて FINDS.maxPerJar まで、そのうち自分で沈めた物は FINDS.maxPlaced まで（沈めた物がある瓶では、現れる物はその分少ない）。
@@ -130,6 +130,8 @@ export function stepFinds(state: GameState, dt: number, ctx: FindStepContext): v
   const salt = Math.floor(state.createdAt / 1000) | 0;
   for (let j = 0; j < state.jars.length; j++) {
     if (j === ctx.watching) continue;
+    // 何もいない瓶は水を替えないので、入れ替えた水に混じって現れることもない
+    if (state.jars[j]!.creatures.length === 0) continue;
     if (hash01(n * 8 + j, salt) >= chance) continue;
     if (freeFindSlots(state, j) < 1) continue;
     const rng = createRng(Math.floor(hash01(n * 8 + j, salt ^ 0x5bd1e995) * 2 ** 32) >>> 0);

@@ -1,14 +1,14 @@
 // 観察日誌のメモ帳。上にリングが付いた小さなもので、画面の下寄りに置く（上には瓶が薄く見えたまま）。
 // 1ページに1日、新しい日が上。下から上へめくると前の日、下へ引くと1日新しい日へ戻り、いちばん新しい日で下へ引くと閉じる。
 // 紙の外をタップしても閉じる。後ろのほうのページに個体一覧（瓶ごと。ここでも名前を付けられる）、
-// いちばん最後（裏表紙の内側）に設定（揺れを使うか、データの書き出し・読み込み）。紙の端から少し出た付箋2枚でそこへ飛べ、
+// いちばん最後に設定（揺れ、画質、データの書き出し・読み込み）。紙の端から少し出た付箋2枚でそこへ飛べ、
 // 一覧と設定のページには「日誌へ」。紙は少しくすんだ色で、夜は部屋の明るさに合わせて暗くする。
 // 一覧と設定の間に標本（拾いもの。写真と名前と拾った日）。写真をタップするとその一枚が少し持ち上がり、下に「瓶に沈める」
 // （沈めてある物は「引き上げる」）。沈めるとメモ帳は下がり、瓶の前で沈んでいくところを見せる。
 import { NOTEBOOK } from '../../config';
 import { NAME_MAX } from '../../sim/actions';
 import { feedDay } from '../../sim/feed';
-import type { GameState } from '../../sim/state';
+import type { GameState, Settings } from '../../sim/state';
 import { downloadText, exportFilename } from '../download';
 import { keepToSelf } from '../jarActions';
 import { UNNAMED } from '../labels';
@@ -25,6 +25,9 @@ export interface NotebookOptions {
   /** 揺れを使うか（設定）と、それを変える（使うにしたときは、ここで許可を訊く） */
   motion(): boolean;
   setMotion(on: boolean): void;
+  /** 画質（高・中・低）と、それを変える */
+  quality(): Settings['quality'];
+  setQuality(q: Settings['quality']): void;
   /** 日誌のページに留めた手紙をタップした（手紙を読む紙を開く） */
   readLetter(id: number): void;
   /** 標本の物を、見ている瓶に沈める（メモ帳はここで閉じる）。沈められなければ false */
@@ -56,6 +59,13 @@ type Drag = {
 };
 
 const RINGS = 11;
+
+/** 画質の選び方（高・中・低） */
+const QUALITY_CHOICES: ReadonlyArray<[Settings['quality'], string]> = [
+  ['high', '高'],
+  ['medium', '中'],
+  ['low', '低'],
+];
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -185,7 +195,7 @@ export class Notebook {
     this.root.style.setProperty('--lum', lum.toFixed(3));
   }
 
-  /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 標本 → 設定（裏表紙の内側） */
+  /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 標本 → 設定 */
   private build(): void {
     const s = this.opts.state();
     const days: Leaf[] = journalPages(s.journal, { letters: s.letters }).map((page) => ({ kind: 'day', key: `d${page.key}`, page }));
@@ -216,7 +226,8 @@ export class Notebook {
       el.innerHTML = '';
       return;
     }
-    el.classList.add(leaf.kind === 'settings' ? 'cover' : 'paper');
+    // 設定のページもほかと同じ紙（厚紙の色は字との差が小さく、読みにくいので）
+    el.classList.add('paper');
     el.dataset.index = String(index);
     el.innerHTML = `<div class="holes" aria-hidden="true">${'<i></i>'.repeat(RINGS)}</div>${this.leafHtml(leaf)}<div class="shade"></div>`;
   }
@@ -272,12 +283,18 @@ export class Notebook {
       return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">標本</h2><button type="button" class="to-journal">日誌へ</button></div><p class="specimen-note">入れ替えた水に混じって、沈んでいたもの。</p>${items}</div>`;
     }
     const on = this.opts.motion();
-    return `<div class="leaf-body"><div class="leaf-head"><span></span><button type="button" class="to-journal">日誌へ</button></div>
+    const quality = this.opts.quality();
+    return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">設定</h2><button type="button" class="to-journal">日誌へ</button></div>
       <div class="settings">
       <div class="motion">
         <p class="label">揺れ</p>
         <p class="hint">端末を傾けたり揺らしたりすると、瓶の水が動く</p>
         <div class="data-buttons choice"><button type="button" class="motion-on" aria-pressed="${on}">使う</button><button type="button" class="motion-off" aria-pressed="${!on}">使わない</button></div>
+      </div>
+      <div class="quality">
+        <p class="label">画質</p>
+        <p class="hint">低いほど、電池と熱にやさしい</p>
+        <div class="data-buttons choice">${QUALITY_CHOICES.map(([q, label]) => `<button type="button" data-quality="${q}" aria-pressed="${q === quality}">${label}</button>`).join('')}</div>
       </div>
       <div class="data">
         <p class="label">データ</p>
@@ -473,6 +490,7 @@ export class Notebook {
     else if (t.classList.contains('import-no')) this.cancelImport();
     else if (t.classList.contains('motion-on')) this.opts.setMotion(true);
     else if (t.classList.contains('motion-off')) this.opts.setMotion(false);
+    else if (t.dataset.quality) this.opts.setQuality(t.dataset.quality as Settings['quality']);
   }
 
   /** 標本の一枚を持ち上げる（null で下ろす）。今のページを書き直す */

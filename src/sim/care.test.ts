@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { CARE, LIFE } from '../config';
 import { advance } from './advance';
 import { waterTime } from './care';
-import { setSediment } from './edit';
+import { setSediment, spawnCreature } from './edit';
 import { feedJar } from './feed';
 import { createInitialState, type GameState } from './state';
 
@@ -148,6 +148,22 @@ describe('瓶底の堆積と水換え', () => {
     fed = run(fed, t, local(1 + days, 12));
     expect(waters(fed).length).toBeGreaterThan(waters(plain).length);
     expect(waters(plain).length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('何もいない瓶は堆積が積もらず、水も替えない。ポリプだけの瓶は今までどおり', () => {
+    const s = createInitialState(local(1, 12));
+    setSediment(s, 1, CARE.threshold);
+    setSediment(s, 2, CARE.threshold);
+    // 2番の瓶にはポリプだけ
+    spawnCreature(s, 2, 'polyp');
+    const n = run(s, local(1, 12), local(4, 12));
+    expect(waters(n, 1)).toHaveLength(0);
+    expect(n.jars[1]!.sediment).toBe(CARE.threshold);
+    expect(waters(n, 2).length).toBeGreaterThan(0);
+    // 最初から空の瓶は、何日経っても水を替えたことがない
+    const e = run(createInitialState(local(1, 12)), local(1, 12), local(30, 12));
+    expect(waters(e, 1)).toHaveLength(0);
+    expect(e.jars[1]!.sediment).toBe(CARE.after);
   });
 
   test('分けて進めても同じ結果', () => {
