@@ -25,7 +25,7 @@ import {
   type Object3D,
   type Texture,
 } from 'three';
-import { BELL, BOOK, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, QUALITY, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, BOOK, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, QUALITY, RENDER, RIM_WARM, ROOM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState, Specimen } from '../sim/state';
@@ -559,16 +559,26 @@ export class App {
   }
 
   /**
-   * 天板の上の点（瓶 jar の座標の x, z）が画面のどこに見えるか（CSS px）と、近さによる大きさの倍率（瓶の真下で 1）。
-   * 机の上に置いてあるもの（封筒・虫眼鏡）を、瓶と一緒に動かす
+   * 部屋の天板に置いてある物（虫眼鏡・封筒）の画面上の位置（CSS px）と、近いほど大きく見える倍率。
+   * 瓶ではなく部屋の側にあるので、瓶を切り替えても瓶と一緒には流れず、天板の写真と同じだけ（視差の分だけ）わずかにずれる。
+   * x, z は、真ん中の瓶を見ているときの、その瓶の座標での天板の上の位置。scale は近さによる大きさの倍率（瓶の真下で 1）
    */
-  tablePoint(jar: number, x: number, z: number, cssWidth: number, cssHeight: number): { x: number; y: number; scale: number } {
+  roomPoint(x: number, z: number, cssWidth: number, cssHeight: number): { x: number; y: number; scale: number } {
     const cam = this.camera;
-    const p = this.tmpV.set(x + this.jarX(jar), 0, z);
+    const p = this.tmpV.set(x, 0, z);
     const eye = this.tmpV2.setFromMatrixPosition(cam.matrixWorld);
     const scale = eye.length() / Math.max(p.distanceTo(eye), 1e-3);
     p.project(cam);
-    return { x: ((p.x + 1) / 2) * cssWidth, y: ((1 - p.y) / 2) * cssHeight, scale };
+    const sx = ((p.x + 1) / 2) * cssWidth;
+    const sy = ((1 - p.y) / 2) * cssHeight;
+    // その所の写真の視差（room.ts と同じ：写真の y で、奥の壁の量から手前の天板の量へ）
+    const cover = coverTransform(cssWidth / cssHeight);
+    const py = (1 - ((1 - sy / cssHeight) * cover.scale[1]! + cover.offset[1]!)) * PHOTO.height;
+    const t = Math.min(Math.max((py - ROOM.parallaxFrom) / (ROOM.parallaxTo - ROOM.parallaxFrom), 0), 1);
+    const near = t * t * (3 - 2 * t);
+    const [wall, table] = this.parallaxStep;
+    const shift = (wall + (table - wall) * near) * (this.view - (this.jars.length - 1) / 2);
+    return { x: sx - (shift / cover.scale[0]!) * cssWidth, y: sy, scale };
   }
 
   /** 瓶が止まっているか（スワイプの途中でない） */

@@ -166,15 +166,9 @@ async function main(): Promise<void> {
     shoot: (id) => shoot(id),
   });
 
-  // 虫眼鏡。見ている瓶の手前の天板に置いてある（瓶を切り替えている間は薄くなり、隣の瓶の手前に現れる）
+  // 虫眼鏡。部屋に一つだけ、天板に置いてある（瓶ではなく部屋の側。瓶を切り替えても一緒に流れず、天板の写真と同じだけわずかにずれる）
   const loupe = new Loupe({
-    rest: () => {
-      const v = app.viewPosition;
-      const i = Math.min(Math.max(Math.round(v), 0), SIM.jarCount - 1);
-      const p = app.tablePoint(i, LOUPE.rest[0], LOUPE.rest[1], canvas.clientWidth, canvas.clientHeight);
-      const d = Math.abs(v - i);
-      return { ...p, alpha: 1 - Math.min(Math.max((d - 0.1) / 0.35, 0), 1) };
-    },
+    rest: () => ({ ...app.roomPoint(LOUPE.rest[0], LOUPE.rest[1], canvas.clientWidth, canvas.clientHeight), alpha: 1 }),
     target: (id) => (app.atRest ? app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight) : null),
     lifted: () => tag.hide(),
   });
@@ -272,11 +266,11 @@ async function main(): Promise<void> {
     tag.hide();
     reader.open(l, () => game.openLetter(l.id));
   });
-  /** 封筒を、置いてある瓶の横の天板の上に（瓶と一緒に動く）。カップやスポイトを使っている間は出さない */
+  /** 封筒を天板の上に（虫眼鏡と同じく部屋の側。瓶を切り替えても一緒に流れない）。カップやスポイトを使っている間は出さない */
   const placeEnvelope = (): void => {
     const l = sealedLetter();
     const show = l !== null && !app.handsBusy && !reader.isOpen;
-    envelope.place(show ? app.tablePoint(l.jar, UNCLE.envelope[0], UNCLE.envelope[1], canvas.clientWidth, canvas.clientHeight) : null);
+    envelope.place(show ? app.roomPoint(UNCLE.envelope[0], UNCLE.envelope[1], canvas.clientWidth, canvas.clientHeight) : null);
   };
   /** おじさんへ送るかを確かめる札と、運んでいる間の「おじさんに送る」 */
   const sendConfirm = new SendConfirm();
