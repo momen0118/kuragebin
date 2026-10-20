@@ -7,7 +7,7 @@ import { App } from './render/app';
 import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
 import { closeAllFacts, openAllFacts } from './sim/book';
-import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, editSex, skipMaturity, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit, type SexEdit } from './sim/edit';
+import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, editSex, growAdult, growFull, skipMaturity, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit, type SexEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
 import { broodAmount } from './sim/sex';
 import type { GameState, Letter, Settings, Stage } from './sim/state';
@@ -389,6 +389,7 @@ async function main(): Promise<void> {
               else if (e === 'brood') broodNow(s, id);
               else editSex(s, id, e);
             }),
+          onGrow: (id, e) => game.edit((s) => (e === 'day' ? growAdult(s, id, 86400) : growFull(s, id))),
           onCap: (n) => game.setRules({ maxSwimmers: n }),
           onRealSize: (on) => setRealSize(on),
           onFeed: () => void feedNow(true),
@@ -710,6 +711,8 @@ async function main(): Promise<void> {
           else if (e === 'brood') broodNow(s, id);
           else editSex(s, id, e);
         }),
+      /** 成体になってからの成長：'day'（1日ぶん進める）、'full'（育ちきらせる） */
+      grow: (id: number, e: 'day' | 'full') => edit((s) => (e === 'day' ? growAdult(s, id, 86400) : growFull(s, id))),
       setProgress: (id: number, p: number) => edit((s) => setProgress(s, id, p)),
       setDiscs: (id: number, n: number) => edit((s, rules) => setDiscs(s, id, n, rules)),
       remove: (id: number) => edit((s, rules) => removeCreature(s, id, rules)),

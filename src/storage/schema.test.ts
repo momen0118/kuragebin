@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { SEX } from '../config';
+import { ADULT_GROWTH, SEX } from '../config';
+import { spawnCreature } from '../sim/edit';
+import { bodySize } from '../sim/size';
 import { advance } from '../sim/advance';
 import { BASE_GENES } from '../sim/genes';
 import { createInitialState, SCHEMA_VERSION, type GameState } from '../sim/state';
@@ -8,7 +10,7 @@ import { migrate, SchemaError } from './schema';
 
 const T0 = Date.UTC(2026, 8, 25, 3, 0, 0);
 
-/** 版10（雌雄とプラヌラ）で足したものを除く。版9までのデータからは決め直すので、それより前の版の比べ方ではここを見ない */
+/** 版10（雌雄とプラヌラ）と版11（成体になってからの成長）で足したものを除く。古いデータからは決め直すので、それより前の版の比べ方ではここを見ない */
 function withoutSex(state: GameState): GameState {
   const s = structuredClone(state) as unknown as { jars: Array<Record<string, unknown> & { creatures: Array<Record<string, unknown>> }>; sent: Array<Record<string, unknown>> };
   for (const jar of s.jars) {
@@ -17,6 +19,8 @@ function withoutSex(state: GameState): GameState {
       delete c.sex;
       delete c.adultAge;
       delete c.brood;
+      delete c.adultGrowth;
+      delete c.fullSize;
     }
   }
   for (const r of s.sent) delete r.sex;
@@ -150,6 +154,35 @@ describe('版2からのマイグレーション', () => {
     const m = migrate(s);
     expect(m.jars[0]!.creatures[0]!.meal).toBeNull();
     expect(m.jars[0]!.fedWallTime).toBeNull();
+  });
+});
+
+describe('版10からのマイグレーション', () => {
+  test('成体になってからの成長：すでにいる成体は育ちきった今の大きさのまま。エフィラは個体の種から育ちきった大きさを決める', () => {
+    const s = advance(createInitialState(T0), 2 * 86400);
+    spawnCreature(s, 0, 'adult');
+    spawnCreature(s, 0, 'ephyra');
+    const v10 = JSON.parse(JSON.stringify(s)) as Record<string, unknown> & { jars: Array<Record<string, unknown> & { creatures: Array<Record<string, unknown>> }> };
+    v10.schema = 10;
+    for (const j of v10.jars) {
+      for (const c of j.creatures) {
+        delete c.adultGrowth;
+        delete c.fullSize;
+      }
+    }
+    const m = migrate(v10);
+    expect(m.schema).toBe(SCHEMA_VERSION);
+    for (const c of m.jars[0]!.creatures) {
+      if (c.stage === 'adult') {
+        expect(c).toMatchObject({ adultGrowth: 1, fullSize: 1 });
+        expect(bodySize(c)).toBe(1);
+      } else {
+        expect(c.adultGrowth).toBe(0);
+        expect(c.fullSize).toBeGreaterThanOrEqual(ADULT_GROWTH.fullSize[0]);
+        expect(c.fullSize).toBeLessThanOrEqual(ADULT_GROWTH.fullSize[1]);
+      }
+    }
+    expect(migrate(JSON.parse(JSON.stringify(v10)))).toEqual(m);
   });
 });
 

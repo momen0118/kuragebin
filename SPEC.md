@@ -179,7 +179,7 @@ WebGL2で描く。Canvas 2Dだけでは作らない。背景の部屋だけ写�
 ### 性能
 
 - 中級スマホで60fpsを目標。デバイスピクセル比は2で頭打ち
-- 画質3段階：高（ブルーム・屈折・被写界深度あり）、中（被写界深度なし）、低（ブルーム・屈折なし）
+- 画質3段階：高（屈折・被写界深度あり）、中（被写界深度なし）、低（屈折なし）
 - 描画するのは表示中の瓶だけ。他の瓶はシミュレーションのみ進める
 - タブが非表示のときは描画を止める
 
@@ -190,7 +190,7 @@ Vite＋TypeScript＋three.jsで作り、GitHub ActionsでGitHub Pagesに公開�
 | 項目 | 内容 |
 | --- | --- |
 | ビルド | Vite、TypeScript（strict）。`base` をリポジトリ名に合わせる |
-| 描画 | three.js＋自作シェーダ。後処理（ブルーム・被写界深度）は three の EffectComposer か自前 |
+| 描画 | three.js＋自作シェーダ。後処理（被写界深度）は three の EffectComposer か自前 |
 | 公開 | GitHub Actions で main への push ごとに Pages へデプロイ |
 | PWA | manifest（standalone、縦固定、背景色・テーマ色は #111 前後）、アイコン 192・512・maskable。Service Worker で全アセットを事前キャッシュ。更新は次回起動時に反映 |
 | 保存 | IndexedDB。瓶・個体（遺伝子・段階・経過時間）・最終保存時刻・日誌・標本・設定を1つの状態として持つ。スキーマ番号とマイグレーションを用意 |

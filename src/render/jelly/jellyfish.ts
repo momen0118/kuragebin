@@ -39,6 +39,8 @@ export class Jellyfish {
   private form: JellyForm = ADULT_FORM;
   private growth = -1;
   private startRadius: number = EPHYRA.radius;
+  /** 大きさの倍率（成体になってからの成長と、育ちきった大きさの個体差。sim の bodySize） */
+  private size = 1;
   private acc = 0;
   /** つつかれた直後の光（0〜1、だんだん消える）。光る種だけが使う */
   private flash = 0;
@@ -161,14 +163,16 @@ export class Jellyfish {
   }
 
   /**
-   * 育ち具合（0 で放されたばかりのエフィラ、1 で成体）。startRadius は放されたときの半径。
-   * 大きさ・腕の形・触手と口腕・四つ葉・拍動と泳ぎの調子がまとめて変わる
+   * 育ち具合（0 で放されたばかりのエフィラ、1 で成体）。startRadius は放されたときの半径、size は大きさの倍率
+   * （成体になってからの成長と個体差。sim の bodySize）。大きさ・腕の形・触手と口腕・四つ葉・拍動と泳ぎの調子がまとめて変わる
    */
-  setGrowth(g: number, startRadius: number = this.startRadius): void {
-    if (g === this.growth && startRadius === this.startRadius) return;
+  setGrowth(g: number, startRadius: number = this.startRadius, size: number = this.size): void {
+    if (g === this.growth && startRadius === this.startRadius && size === this.size) return;
     this.growth = g;
     this.startRadius = startRadius;
-    const f = formAt(g, startRadius);
+    this.size = size;
+    const base = formAt(g, startRadius);
+    const f = size === 1 ? base : { ...base, radius: base.radius * size };
     this.form = f;
     this.scale.setScalar(f.radius);
     const u = this.bell.form;

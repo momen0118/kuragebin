@@ -6,7 +6,7 @@ import { BASE_GENES, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -70,6 +70,10 @@ export interface Creature {
   adultAge: number;
   /** プラヌラを抱えている間（成熟したメスだけ。なければ null） */
   brood: Brood | null;
+  /** 成体になってからの育ち（0〜1。成体でなければ 0）。1 で育ちきった大きさ */
+  adultGrowth: number;
+  /** 育ちきった大きさ（傘の半径の倍率。ADULT_GROWTH.fullSize の範囲。生まれたときに決まる） */
+  fullSize: number;
 }
 
 export interface Meal {
@@ -342,6 +346,9 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     sex: 'female',
     adultAge: SEX.matureAfter + SEX.colorRamp,
     brood: { from: 0, until },
+    // 育ちきった、今までの成体の大きさ
+    adultGrowth: 1,
+    fullSize: 1,
   };
   const jars: JarState[] = Array.from({ length: SIM.jarCount }, (_, i) => ({
     creatures: i === 0 ? [first] : [],
