@@ -166,7 +166,7 @@ async function main(): Promise<void> {
     shoot: (id) => shoot(id),
   });
 
-  // 虫眼鏡。部屋に一つだけ、天板に置いてある（瓶ではなく部屋の側。瓶を切り替えても一緒に流れず、天板の写真と同じだけわずかにずれる）
+  // 虫眼鏡。部屋に一つだけ、天板に置いてある（瓶ではなく部屋の側。瓶を切り替えても動かない）
   const loupe = new Loupe({
     rest: () => ({ ...app.roomPoint(LOUPE.rest[0], LOUPE.rest[1], canvas.clientWidth, canvas.clientHeight), alpha: 1 }),
     target: (id) => (app.atRest ? app.noteAnchor(id, canvas.clientWidth, canvas.clientHeight) : null),
@@ -266,7 +266,7 @@ async function main(): Promise<void> {
     tag.hide();
     reader.open(l, () => game.openLetter(l.id));
   });
-  /** 封筒を天板の上に（虫眼鏡と同じく部屋の側。瓶を切り替えても一緒に流れない）。カップやスポイトを使っている間は出さない */
+  /** 封筒を天板の上に（虫眼鏡と同じく部屋の側。瓶を切り替えても動かない）。カップやスポイトを使っている間は出さない */
   const placeEnvelope = (): void => {
     const l = sealedLetter();
     const show = l !== null && !app.handsBusy && !reader.isOpen;

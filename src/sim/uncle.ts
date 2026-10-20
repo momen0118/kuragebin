@@ -9,7 +9,7 @@ import { record } from './journal';
 import { updateResting } from './lifecycle';
 import { createRng, type Rng } from './rng';
 import { shownSex } from './sex';
-import { FIRST_LETTER_BROOD, isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Stage } from './state';
+import { isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Stage } from './state';
 
 export type SendResult = 'sent' | 'fixed' | 'missing';
 
@@ -148,7 +148,7 @@ export function openLetter(state: GameState, id: number): boolean {
 export function resetFirstLetter(state: GameState, jar: number): void {
   state.letters = state.letters.filter((l) => l.kind !== 'first');
   const now = state.time + state.pending;
-  addLetter(state, { kind: 'first', topic: null, pick: FIRST_LETTER_BROOD, about: null, arrivedAt: now, wallTime: wallAt(state, now), sealed: true, jar, gift: null });
+  addLetter(state, { kind: 'first', topic: null, pick: 0, about: null, arrivedAt: now, wallTime: wallAt(state, now), sealed: true, jar, gift: null });
 }
 
 /**

@@ -117,7 +117,6 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
   // 10：雌雄とプラヌラ。最初の一匹（番号1）はメス、ほかの成体・エフィラは個体の種から半々。
   // 成体になってからの時間は、年齢からエフィラの期間（真ん中）を引いて見積もる（親のない個体は年齢のまま）。
   // 送った子も同じ決め方（エフィラは null で出さない）。
-  // 最初の手紙は前の文面のまま（pick 0。最初の一匹はプラヌラを抱えていないので）
   9: (d) => {
     const jars = Array.isArray(d.jars) ? d.jars : [];
     const [elo, ehi] = LIFE.ephyra;
