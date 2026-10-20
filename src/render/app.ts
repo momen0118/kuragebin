@@ -29,6 +29,7 @@ import { BELL, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, Q
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState, Specimen } from '../sim/state';
+import type { SoundName, SoundOptions } from '../sound/sound';
 import type { Kick } from '../ui/motionFilter';
 import { Bloom } from './bloom';
 import { Box } from './box';
@@ -179,6 +180,8 @@ export class App {
   loupeStretch = false;
   /** 最後に重ねたレンズ：写っている画像と、それが写している所（画面の画素） */
   private lensShot: { src: Texture; origin: Vector2; size: number } | null = null;
+  /** 音を鳴らす出来事（ガラスをつついた、カップや沈める物が水に入った、拾いものが瓶底に着いた）。鳴らすのは main.ts */
+  onSound: ((name: SoundName, opts?: SoundOptions) => void) | null = null;
   /** 確認用：中間の画像をそのまま出す（'bg' | 'contents' | 'glow' | 'room'） */
   debugView: string | null = null;
   /** 確認用：部品ごとに表示を切り替える */
@@ -232,7 +235,14 @@ export class App {
     this.jars = Array.from({ length: SIM.jarCount }, () => new Creatures(this.shared, GLOW_LAYER, this.carried));
     this.ripples = this.jars.map(() => [0, 1, 2, 3].map(() => new Vector4()));
     this.finds = this.jars.map((c, i) => {
-      const f = new Finds(this.shared, (x, z) => this.addRipple(i, x, z, FIND_LOOK.dropRipple, FIND_LOOK.dropRippleRadius));
+      const f = new Finds(
+        this.shared,
+        (x, z) => {
+          this.addRipple(i, x, z, FIND_LOOK.dropRipple, FIND_LOOK.dropRippleRadius);
+          this.onSound?.('water', { strength: FIND_LOOK.dropSound });
+        },
+        (kind) => this.onSound?.('land', { kind }),
+      );
       c.floorExtras = f.sortables;
       return f;
     });
@@ -253,6 +263,7 @@ export class App {
           return app.spacing - JAR.radius - SWIPE.gap - CUP.radiusTop - CUP.spout - 0.03;
         },
         ripple: (jar, x, z, strength, radius) => this.addRipple(jar, x, z, strength, radius),
+        water: (strength) => this.onSound?.('water', { strength }),
         obstruct: (jar, center, radius) => this.jars[jar]?.setObstacle(center, radius),
         adopt: (jar, id, jelly) => this.jars[jar]?.adopt(id, jelly),
         // 箱は見ている所（画面の真ん中）の手前
@@ -621,6 +632,7 @@ export class App {
     const hit = this.tmpV.copy(o).addScaledVector(d, t);
     if (t <= 0 || hit.y < 0 || hit.y > JAR.height) return false;
     this.agitations[i] = Math.min(1, this.agitations[i]! + 0.3);
+    this.onSound?.('poke', { height: hit.y / JAR.height, underwater: hit.y < JAR.waterLevel });
     return this.jars[i]!.poke(hit);
   }
 

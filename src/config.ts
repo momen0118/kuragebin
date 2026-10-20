@@ -1061,6 +1061,8 @@ export const FIND_LOOK = {
   /** 沈めた物が水面から入るときの、水面の小さな波紋（強さと、広がりはじめる半径） */
   dropRipple: 0.5,
   dropRippleRadius: 0.02,
+  /** そのときの水の音の強さ（0〜1） */
+  dropSound: 0.55,
   /** 指で押せる大きさ（見かけの半径に対する倍率） */
   pickScale: 1.6,
 } as const;
@@ -1287,6 +1289,9 @@ export const SCOOP = {
   /** 波紋の強さ：カップが水面を通って沈むとき、口まで沈むとき、口が水面から出るとき、底が水面から離れるとき */
   rippleEnter: 0.6,
   rippleSubmerge: 0.35,
+  /** 水の音の強さ（0〜1）：カップの底が水に入るとき、口が沈むとき */
+  soundEnter: 1,
+  soundSubmerge: 0.6,
   rippleEmerge: 0.45,
   rippleLeave: 0.35,
 } as const;
@@ -1620,6 +1625,70 @@ export const STIRRED_SEDIMENT = {
   floorThin: 0.6,
   /** 粒の大きさ（瓶の高さ、直径） */
   size: [0.0016, 0.0045] as const,
+} as const;
+
+/**
+ * 音（4-5）。素材ファイルは使わず Web Audio で合成する。BGM はない。音がなくても成り立つゲームのまま、気づいた人だけ得をする程度に小さく。
+ * 初期はオフ（日誌の設定で「鳴らす」）。iOS は最初のタップまで鳴らせないので、タップで有効にする。
+ * どの音も毎回まったく同じにならないよう、高さ（jitter：割合）と長さ（lengthJitter：割合）を少しずつ揺らす。
+ * gain は音の大きさ（全体 master に掛ける）。つつく音がいちばん大きく、ほかは控えめ
+ */
+export const SOUND = {
+  master: 0.8,
+  /**
+   * ガラスをつつく音：澄んだ音を数本重ねて短く減衰させる（基音に対する高さ・大きさ・減衰の時間）。水が入っているので、高すぎず少しこもった響き
+   * （lowpass で上を落とす）。つついた高さで音の高さが少し変わり（瓶の下ほど低い）、水面より下は少し早く減衰する。はじめに小さなコツという音
+   */
+  poke: {
+    gain: 0.22,
+    base: 760,
+    /** つついた高さ（瓶の高さ 0〜1）による音の高さの幅（割合）。真ん中で base */
+    heightRange: 0.22,
+    partials: [
+      { ratio: 1, gain: 1, decay: 0.42 },
+      { ratio: 2.71, gain: 0.42, decay: 0.24 },
+      { ratio: 5.2, gain: 0.18, decay: 0.12 },
+      { ratio: 8.6, gain: 0.07, decay: 0.06 },
+    ],
+    lowpass: 2600,
+    /** 水面より下をつついたときの、減衰の速まり（時間に掛ける）と lowpass の下がり */
+    underwaterDecay: 0.7,
+    underwaterLowpass: 0.7,
+    click: { gain: 0.25, freq: 3200, seconds: 0.012 },
+    jitter: 0.035,
+    lengthJitter: 0.15,
+  },
+  /**
+   * 水の音：カップから海月を放すとき（カップの底が水に入る・口が沈む）と、シーグラスを沈めるとき。
+   * 小さな泡のはじける音（高さが上がっていく短い音）を1〜3つと、水の擦れる音（こもったノイズ）
+   */
+  water: {
+    gain: 0.08,
+    bloopFreq: [380, 720] as const,
+    bloopRise: 1.7,
+    bloopSeconds: 0.09,
+    bloops: [1, 3] as const,
+    swishLowpass: 1100,
+    swishSeconds: 0.32,
+    swishGain: 0.5,
+    jitter: 0.1,
+    lengthJitter: 0.25,
+  },
+  /** メモ帳をめくる音（紙が擦れる短い音）。開く・閉じるは、それよりこもって短く小さく */
+  page: { gain: 0.06, center: 2600, q: 0.8, highpass: 700, seconds: 0.26, flutter: 6, jitter: 0.12, lengthJitter: 0.2 },
+  open: { gain: 0.035, center: 1300, q: 0.7, highpass: 300, seconds: 0.2, flutter: 3, jitter: 0.1, lengthJitter: 0.2 },
+  close: { gain: 0.035, center: 1000, q: 0.7, highpass: 250, seconds: 0.18, flutter: 3, jitter: 0.1, lengthJitter: 0.2 },
+  /** 拾いものが瓶底に着いたときの、ごく小さな音（水の中なのでこもる）。小石は鈍いコト、シーグラスと貝殻は小さなカチ */
+  land: {
+    gain: 0.035,
+    pebble: { freq: 210, seconds: 0.07, lowpass: 900 },
+    glass: { freq: 2300, seconds: 0.05, lowpass: 2600 },
+    shell: { freq: 1500, seconds: 0.045, lowpass: 2000 },
+    jitter: 0.08,
+    lengthJitter: 0.2,
+  },
+  /** 部屋の空気の音：ほとんど聞こえないくらいの低いノイズ（lowpass 2段）。夜はさらに静かに（night を掛ける）。変わるときは change 秒でなめらかに */
+  air: { gain: 0.014, lowpass: 320, night: 0.35, change: 2 },
 } as const;
 
 /** デバッグパネル（?debug のときだけ） */
