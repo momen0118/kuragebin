@@ -3,7 +3,8 @@
 import { CARE, FIND_VARIANTS, LIFE } from '../config';
 import { createBook, FACT_KEYS } from '../sim/book';
 import { BASE_GENES, sanitizeGenes } from '../sim/genes';
-import { DEFAULT_SETTINGS, firstLetter, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Stage } from '../sim/state';
+import { sexFromSeed } from '../sim/sex';
+import { DEFAULT_SETTINGS, firstLetter, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Sex, type Stage } from '../sim/state';
 
 type Raw = Record<string, unknown>;
 
@@ -112,6 +113,33 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
   7: (d) => ({ ...d, specimens: [] }),
   // 9：種のページ（豆知識と写真）。豆知識は、状態から分かるものを次に開いたときにまとめて足す（日付はその日）
   8: (d) => ({ ...d, book: createBook(isNumber(d.createdAt) ? d.createdAt : 0) }),
+  // 10：雌雄とプラヌラ。最初の一匹（番号1）はメス、ほかの成体・エフィラは個体の種から半々。
+  // 成体になってからの時間は、年齢からエフィラの期間（真ん中）を引いて見積もる（親のない個体は年齢のまま）。
+  // 送った子も同じ決め方（エフィラは null で出さない）。
+  // 最初の手紙は前の文面のまま（pick 0。最初の一匹はプラヌラを抱えていないので）
+  9: (d) => {
+    const jars = Array.isArray(d.jars) ? d.jars : [];
+    const [elo, ehi] = LIFE.ephyra;
+    const sexOf = (c: Raw): Sex => (c.id === 1 ? 'female' : sexFromSeed(isNumber(c.seed) ? c.seed : 0));
+    return {
+      ...d,
+      jars: jars.map((jar: unknown) => {
+        if (!isObject(jar) || !Array.isArray(jar.creatures)) return jar;
+        return {
+          ...jar,
+          planulae: [],
+          creatures: jar.creatures.map((c: unknown) => {
+            if (!isObject(c)) return c;
+            const swimmer = c.stage === 'adult' || c.stage === 'ephyra';
+            const age = isNumber(c.age) ? c.age : 0;
+            const adultAge = c.stage !== 'adult' ? 0 : c.parent === null ? age : Math.max(0, age - (elo + ehi) / 2);
+            return { ...c, sex: swimmer ? sexOf(c) : null, adultAge, brood: null };
+          }),
+        };
+      }),
+      sent: Array.isArray(d.sent) ? d.sent.map((r: unknown) => (isObject(r) ? { ...r, sex: r.stage === 'adult' ? sexOf(r) : null } : r)) : d.sent,
+    };
+  },
 };
 
 export class SchemaError extends Error {}
@@ -144,6 +172,10 @@ function isMeal(v: unknown): boolean {
   return v === null || (isObject(v) && isNumber(v.at) && isNumber(v.amount));
 }
 
+function isSex(v: unknown): v is Sex {
+  return v === 'male' || v === 'female';
+}
+
 function isLeftover(v: unknown): boolean {
   return v === null || (isObject(v) && isNumber(v.amount) && isNumber(v.goneAt));
 }
@@ -165,6 +197,10 @@ function validate(d: Raw): GameState {
     if (!(jar.cleanSince === null || isNumber(jar.cleanSince))) jar.cleanSince = null;
     if (!(jar.waterDue === null || isNumber(jar.waterDue))) jar.waterDue = null;
     if (!(jar.stirredUntil === null || isNumber(jar.stirredUntil))) jar.stirredUntil = null;
+    // 瓶底に付くのを待っているプラヌラ：読めないものだけ除く
+    jar.planulae = (Array.isArray(jar.planulae) ? jar.planulae : [])
+      .filter((p: unknown) => isObject(p) && isNumber(p.at))
+      .map((p: Raw) => ({ at: p.at, parent: isNumber(p.parent) ? p.parent : null, genes: sanitizeGenes(p.genes) }));
     for (const c of jar.creatures) {
       if (
         !isObject(c) ||
@@ -188,6 +224,13 @@ function validate(d: Raw): GameState {
       c.genes = sanitizeGenes(c.genes);
       // 来た日が読めなければ、始めた日にする
       if (!isNumber(c.arrivedWallTime)) c.arrivedWallTime = d.createdAt;
+      // 雌雄：泳ぐ個体だけ（読めなければ個体の種から）。成体になってからの時間と、抱えているプラヌラは成体だけ
+      const swimmer = c.stage === 'adult' || c.stage === 'ephyra';
+      if (!swimmer) c.sex = null;
+      else if (!isSex(c.sex)) c.sex = sexFromSeed(c.seed as number);
+      if (c.stage !== 'adult' || !isNumber(c.adultAge) || c.adultAge < 0) c.adultAge = 0;
+      const b = c.brood;
+      c.brood = c.stage === 'adult' && c.sex === 'female' && isObject(b) && isNumber(b.from) && isNumber(b.until) ? { from: b.from, until: b.until } : null;
     }
   }
   // 日誌は読めない出来事だけを除く（出来事ひとつのために全部を捨てない）
@@ -220,6 +263,7 @@ function validate(d: Raw): GameState {
     if (typeof r.species !== 'string') r.species = 'aurelia';
     if (!isNumber(r.jar)) r.jar = 0;
     if (!isNumber(r.sentAt)) r.sentAt = 0;
+    if (!isSex(r.sex)) r.sex = null;
   }
   const maxLetter = Math.max(0, ...(d.letters as Raw[]).map((l) => l.id as number));
   const u = isObject(d.uncle) ? d.uncle : {};

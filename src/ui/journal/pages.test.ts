@@ -100,6 +100,15 @@ describe('日誌のページ', () => {
     ]);
   });
 
+  test('見ていない間にプラヌラを抱えはじめた：名前で、なければ「一匹」', () => {
+    const pages = journalPages(
+      [entry('planula', 0, local(27, 12), 1), entry('planula', 1, local(27, 23), 1, 'ぽこ'), entry('planula', 2, local(27, 12), 1), entry('planula', 2, local(27, 13), 1)],
+      { sun },
+    );
+    const lines = pages[0]!.sections.map((x) => x.lines);
+    expect(lines).toEqual([['昼のうちに一匹が口腕にプラヌラを抱えていた'], ['夜のうちに、ぽこが口腕にプラヌラを抱えていた'], ['昼のうちに二匹が口腕にプラヌラを抱えていた']]);
+  });
+
   test('知らない出来事は書かない', () => {
     const odd = { ...entry('polyp', 0, local(27, 12)), kind: 'visitor' as JournalKind };
     expect(journalPages([odd], { sun })).toEqual([]);
@@ -121,5 +130,16 @@ describe('個体一覧', () => {
     expect(rows[0]!.rows.at(-1)!.id).toBe(e.id);
     expect(rows[0]!.rows.at(-1)!.arrived).toBe('9月23日');
     expect(rows[1]!.rows).toEqual([]);
+  });
+
+  test('雌雄：成体になったらオス・メス（成熟を待たない）。エフィラ・ポリプは出さない', () => {
+    const s = createInitialState(local(20, 12));
+    const young = spawnCreature(s, 0, 'adult');
+    young.sex = 'male';
+    young.adultAge = 0;
+    spawnCreature(s, 0, 'ephyra');
+    spawnCreature(s, 0, 'polyp');
+    const sexes = rosterPages(s)[0]!.rows.map((r) => r.sex);
+    expect(sexes).toEqual(['メス', 'オス', null, null]);
   });
 });

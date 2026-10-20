@@ -7,8 +7,9 @@ import { feedDay } from '../../sim/feed';
 import { sunTimes, type SunTimes } from '../../sim/sun';
 import { bookSpecimens } from '../../sim/finds';
 import { FACT_TEXT } from './facts';
-import type { GameState, JournalEntry, JournalKind, Letter, Stage } from '../../sim/state';
-import { FIND_NAMES, STAGE_LABELS } from '../labels';
+import type { Creature, GameState, JournalEntry, JournalKind, Letter, Stage } from '../../sim/state';
+import { FIND_NAMES, SEX_LABELS, STAGE_LABELS } from '../labels';
+import { shownSex } from '../../sim/sex';
 
 export type Daypart = 'dawn' | 'day' | 'dusk' | 'night';
 
@@ -116,6 +117,8 @@ function body(kind: JournalKind, count: number, name: string | null): string {
     case 'adult':
       if (name) return `${name}が成体になった`;
       return count > 1 ? `エフィラが${n}匹、成体になった` : 'エフィラが成体になった';
+    case 'planula':
+      return `${name ?? (count > 1 ? `${n}匹` : '一匹')}が口腕にプラヌラを抱えていた`;
     case 'rest':
       return name ? `瓶がいっぱいで、${name}が触手を畳んだ` : '瓶がいっぱいで、ポリプが触手を畳んだ';
     case 'wake':
@@ -143,8 +146,8 @@ export function lineText(part: Daypart, kind: JournalKind, count: number, name: 
 }
 
 /** 数を足してまとめる出来事（休み・再開・水換えは、まとめても一行のまま数えない） */
-const COUNTED: ReadonlySet<JournalKind> = new Set(['polyp', 'strobila', 'release', 'adult', 'sent', 'letter']);
-const KINDS: ReadonlySet<string> = new Set(['polyp', 'strobila', 'release', 'adult', 'rest', 'wake', 'water', 'sent', 'letter', 'firstLetter']);
+const COUNTED: ReadonlySet<JournalKind> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'sent', 'letter']);
+const KINDS: ReadonlySet<string> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'rest', 'wake', 'water', 'sent', 'letter', 'firstLetter']);
 
 interface Group {
   part: Daypart;
@@ -208,6 +211,8 @@ export interface RosterRow {
   /** 種の名前と段階の名前 */
   species: string;
   stage: string;
+  /** 雌雄（成体だけ「オス」「メス」。ほかは null で出さない） */
+  sex: string | null;
   /** この瓶に来た日（「9月27日」。日は朝4時で区切る） */
   arrived: string;
 }
@@ -235,10 +240,17 @@ export function rosterPages(state: GameState): RosterPage[] {
         name: r.name,
         species: SPECIES[r.species] ?? r.species,
         stage: STAGE_LABELS[r.stage as Stage],
+        sex: r.sex ? SEX_LABELS[r.sex] : null,
         arrived: dayTitle(feedDay(r.sentWallTime)),
       })),
   };
   return [...jars, sent];
+}
+
+/** 札と一覧に出す雌雄の言葉（成体だけ。ほかは null） */
+export function sexLabel(c: Pick<Creature, 'stage' | 'sex'>): string | null {
+  const s = shownSex(c);
+  return s ? SEX_LABELS[s] : null;
 }
 
 function rosterJars(state: GameState): RosterPage[] {
@@ -252,6 +264,7 @@ function rosterJars(state: GameState): RosterPage[] {
         name: c.name,
         species: SPECIES[c.species] ?? c.species,
         stage: STAGE_LABELS[c.stage as Stage],
+        sex: sexLabel(c),
         arrived: dayTitle(feedDay(c.arrivedWallTime)),
       })),
   }));

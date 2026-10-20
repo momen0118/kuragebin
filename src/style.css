@@ -740,7 +740,8 @@ body {
 .roster-head,
 .roster-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  /* 名前は少なくとも数文字ぶん残す（段階と雌雄が入りきらないときは、雌雄を次の罫線の行へ折り返す） */
+  grid-template-columns: minmax(4.5em, 1fr) auto auto;
   align-items: baseline;
   column-gap: 12px;
 }
@@ -800,6 +801,16 @@ body {
   color: var(--ink-soft);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* 種・段階と雌雄は、ひとかたまりずつ折り返す（折り返しても罫線の行に乗る） */
+.roster-row .what {
+  white-space: normal;
+}
+
+.roster-row .what > span {
+  display: inline-block;
+  white-space: nowrap;
 }
 
 /* 標本：拾った順に、写真（白い縁の小さな紙焼き）と名前と拾った日。写真は少しずつ傾けて貼る */
@@ -1593,11 +1604,22 @@ body {
   padding-top: 4px;
 }
 
+/* 一行ずつ頭に中黒。折り返した行は中黒の後ろに揃える */
 .leaf .fact {
   margin: 0;
+  padding-left: 1em;
+  text-indent: -1em;
   font-size: 13px;
   line-height: var(--line-h);
   letter-spacing: 0.02em;
+}
+
+.leaf .fact::before {
+  content: '・';
+}
+
+.leaf .fact .found {
+  text-indent: 0;
 }
 
 /* 見つけた日はいつも右端に。最後の行に入りきらなければ、次の行の右端（その行も罫線に乗る） */

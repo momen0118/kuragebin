@@ -25,6 +25,9 @@ describe('おじさん：最初の手紙', () => {
     expect(s.letters[0]).toMatchObject({ kind: 'first', sealed: true, jar: 0 });
     expect(s.journal).toHaveLength(0);
     expect(letterLines(s.letters[0]!).join('')).toContain('海には放さないでください');
+    // 最初の一匹はプラヌラを抱えているので、「餌はやりすぎないこと。」の次に一行
+    const lines = letterLines(s.letters[0]!);
+    expect(lines[lines.findIndex((l) => l.includes('餌はやりすぎないこと。')) + 1]).toBe('抱えているので、そのうち底に何か付きます。');
   });
 
   test('読むと、その日のページに留まる', () => {
@@ -53,6 +56,8 @@ describe('おじさん：最初の手紙', () => {
     expect(m.journal.length).toBeGreaterThan(m.journalSeen);
     const lines = journalPages(m.journal, { letters: m.letters }).flatMap((p) => p.sections.flatMap((x) => x.lines));
     expect(lines).toContain('手紙が届いていた');
+    // 最初の一匹はプラヌラを抱えていないので、前の文面のまま
+    expect(letterLines(m.letters[0]!).join('')).not.toContain('抱えている');
   });
 });
 
@@ -71,6 +76,11 @@ describe('おじさん：送る', () => {
     expect(lines).toContain('ぽこを、おじさんのところへ送った');
     const roster = rosterPages(s);
     expect(roster[roster.length - 1]).toMatchObject({ jar: -1, title: '送った子' });
+    // 雌雄も残る（最初の一匹はメス）。エフィラで送った子は出さない
+    expect(s.sent[0]!.sex).toBe('female');
+    const young = spawnCreature(s, 0, 'ephyra');
+    sendCreature(s, young.id);
+    expect(rosterPages(s).at(-1)!.rows.map((r) => r.sex)).toEqual(['メス', null]);
   });
 
   test('名無しの子は「一匹、おじさんのところへ送った」。同じ日はまとめる', () => {

@@ -1,5 +1,5 @@
 // 個体の札。海月（瓶底のポリプも）をタップすると数秒だけ出る。
-// 図鑑や標本の注記のように、個体から細い線を斜め上へ引き、その先の短い横線の上に名前、下に小さく段階と日数。
+// 図鑑や標本の注記のように、個体から細い線を斜め上へ引き、その先の短い横線の上に名前、下に小さく段階・雌雄と日数。
 // 線は瓶の縁や画面の外にはみ出さない側へ引く。名前（初めは「名無し」）をタップすると名前を付けられる。
 // 段階の下の「よく見る」で、虫眼鏡がその個体の上へ動いてしばらくついていく。「撮る」で、その個体を真ん中に一枚撮って種のページに貼る。
 import { TAG } from '../config';
@@ -11,6 +11,8 @@ import { STAGE_LABELS, UNNAMED } from './labels';
 export interface TagInfo {
   name: string | null;
   stage: Stage;
+  /** 雌雄（成体だけ「オス」「メス」。ほかは null で出さない） */
+  sex: string | null;
   /** この瓶に来て何日目か（来た日が 1） */
   day: number;
 }
@@ -177,7 +179,7 @@ export class CreatureTag {
     const info = this.opts.info(this.id);
     if (!info) return false;
     const name = info.name ?? UNNAMED;
-    const sub = `${STAGE_LABELS[info.stage]}・この瓶で${info.day}日目`;
+    const sub = `${STAGE_LABELS[info.stage]}${info.sex ? `・${info.sex}` : ''}・この瓶で${info.day}日目`;
     if (this.nameEl.textContent !== name || this.subEl.textContent !== sub) {
       this.nameEl.textContent = name;
       this.nameEl.classList.toggle('unnamed', info.name === null);

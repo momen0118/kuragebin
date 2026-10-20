@@ -1,10 +1,11 @@
 // 確認用の書き換え（デバッグパネルから）。状態をその場で書き換える。
 // 上限は見ない（見た目の確認のために、何匹でも出せる）。
-import { LIFE, type LifeRules } from '../config';
+import { LIFE, SEX, type LifeRules } from '../config';
 import { addFind, findSpots } from './finds';
 import { createCreature, enterStage, pickSpot, updateResting } from './lifecycle';
 import { BASE_GENES, inheritGenes, sanitizeGenes, type Genes } from './genes';
 import { createRng, type Rng } from './rng';
+import { startBrood } from './sex';
 import { isSwimmer, wallAt, type Creature, type GameState, type Stage } from './state';
 
 function withRng<T>(state: GameState, fn: (rng: Rng) => T): T {
@@ -143,4 +144,34 @@ export function clearFinds(state: GameState, jarIndex: number | null): void {
 /** 確認用：標本を空にする（瓶底の物はそのまま） */
 export function clearSpecimens(state: GameState): void {
   state.specimens = state.specimens.filter((s) => s.at !== null);
+}
+
+/** 確認用の雌雄の切り替え：オス・メス（成熟させて、色もはっきりさせる）、成熟前（成体になったばかりに戻す） */
+export type SexEdit = 'male' | 'female' | 'immature';
+
+export function editSex(state: GameState, id: number, edit: SexEdit): void {
+  const c = findCreature(state, id)?.creature;
+  if (!c || !isSwimmer(c.stage)) return;
+  if (edit === 'immature') {
+    c.adultAge = 0;
+    c.brood = null;
+    return;
+  }
+  c.sex = edit;
+  if (edit === 'male') c.brood = null;
+  if (c.stage === 'adult') c.adultAge = Math.max(c.adultAge, SEX.matureAfter + SEX.colorRamp);
+}
+
+/** 確認用：成熟までの時間を飛ばす（成熟したところ。色はまだ淡い） */
+export function skipMaturity(state: GameState, id: number): void {
+  const c = findCreature(state, id)?.creature;
+  if (c?.stage === 'adult') c.adultAge = Math.max(c.adultAge, SEX.matureAfter);
+}
+
+/** 確認用：メスにプラヌラを今から抱えさせる（成熟前なら成熟させる。上限と休みは見ない）。抱えていれば抱えなおす */
+export function broodNow(state: GameState, id: number): void {
+  const c = findCreature(state, id)?.creature;
+  if (!c || c.stage !== 'adult' || c.sex !== 'female') return;
+  c.adultAge = Math.max(c.adultAge, SEX.matureAfter);
+  withRng(state, (rng) => startBrood(c, state.time + state.pending, rng));
 }

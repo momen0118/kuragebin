@@ -13,7 +13,7 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
-import { BELL, JAR, JELLY_LOOK, ORAL_ARMS } from '../../config';
+import { BELL, JAR, JELLY_LOOK, ORAL_ARMS, PLANULA_LOOK } from '../../config';
 import type { Rng } from '../../sim/rng';
 import type { SharedUniforms } from '../uniforms';
 import { LAMP_GLSL, lampUniforms } from '../lamp';
@@ -30,18 +30,25 @@ const tmpFlow = new Vector3();
 /** 幅方向の頂点の位置（-1〜1） */
 const ACROSS = [-1, -0.6, -0.25, 0, 0.25, 0.6, 1];
 
+const f = (v: number): string => v.toFixed(5);
+const vec3 = (v: readonly number[]): string => `vec3(${v.map(f).join(', ')})`;
+const P = PLANULA_LOOK;
+
 const VERT = /* glsl */ `
 in float aU;
 in float aS;
+in float aArm;
 out vec3 vWorldPos;
 out vec3 vNormal;
 out float vU;
 out float vS;
+out float vArm;
 void main() {
   vWorldPos = position;
   vNormal = normal;
   vU = aU;
   vS = aS;
+  vArm = aArm;
   gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
 }
 `;
@@ -58,10 +65,58 @@ uniform vec3 uBody, uGlow, uGonad;
 uniform float uDensity;
 uniform sampler2D tRoom;
 uniform vec2 uResolution;
+// プラヌラ：粒の見え方（0〜1。少しずつ揃い、終わりに減る）と並びの種。口腕の長さと幅（瓶の高さ単位。粒を実寸で並べる）
+uniform float uBrood, uBroodSeed, uArmLen, uArmWidth;
 in vec3 vWorldPos;
 in vec3 vNormal;
 in float vU;
 in float vS;
+in float vArm;
+
+// 断面の中心から幅方向の位置 u までの、丸まった面に沿った長さ（幅 = 1）。断面は u² に比例して丸まる
+float curlArc(float u) {
+  float a = ${f(2 * ORAL_ARMS.curl)};
+  float q = sqrt(1.0 + a * a * u * u);
+  return 0.5 * u * q + log(a * u + q) / (2.0 * a);
+}
+
+// 口腕の縁に沿って並ぶプラヌラの粒（白く小さな粒がレースの縁取りのように）。縁に一列、その内側にひとつおきの二列目。
+// 粒は口腕の長さ・幅の実寸で並べ、画面で一画素より小さいときはうっすらした白い縁に見える（虫眼鏡で寄ると粒になる）
+float planulae() {
+  float s = vS;
+  float wid = uArmWidth * (1.0 - 0.6 * s * s) * min(1.0, 0.45 + s * 4.0);
+  float along = s * uArmLen;
+  // 縁からの距離は、内へ丸まった断面（樋の形）に沿って測る
+  float fromEdge = (curlArc(1.0) - curlArc(abs(vU))) * wid;
+  float side = vU < 0.0 ? 0.0 : 1.0;
+  float r = ${f(P.radius)};
+  float sp = r * ${f(P.spacing)};
+  float span = smoothstep(${f(P.rootGap)}, ${f(P.rootGap + 0.05)}, s) * (1.0 - smoothstep(${f(1 - P.tipGap - 0.05)}, ${f(1 - P.tipGap)}, s));
+  float aa = max(length(vec2(fwidth(along), fwidth(fromEdge))) * 0.7, 1e-6);
+  float acc = 0.0;
+  for (int row = 0; row < 2; row++) {
+    float fr = float(row);
+    float off = fr * 0.5 * sp;
+    float chance = row == 0 ? 1.0 : ${f(P.innerChance)};
+    float size = row == 0 ? 1.0 : ${f(P.innerSize)};
+    float k0 = floor((along - off) / sp);
+    for (int j = -1; j <= 1; j++) {
+      float k = k0 + float(j);
+      vec2 id = vec2(k, vArm * 7.0 + side * 3.0 + fr * 101.0 + uBroodSeed);
+      float h = hash12(id);
+      float h2 = hash12(id + 17.3);
+      // 粒の見え方が下がると、減っていく（どの粒が残るかは粒ごとに決まっている）
+      if (h > uBrood * chance) continue;
+      float rr = r * size * (0.8 + 0.4 * h2);
+      float ca = (k + 0.5) * sp + off + (h2 - 0.5) * 0.3 * sp;
+      float ce = rr * 1.05 + fr * r * 1.9;
+      float d = length(vec2(along - ca, fromEdge - ce));
+      acc = max(acc, smoothstep(rr + aa, rr - aa, d));
+    }
+  }
+  return acc * span;
+}
+
 void main() {
   clipToJar(vWorldPos);
   vec3 N = normalize(vNormal);
@@ -94,7 +149,15 @@ void main() {
   }
   // 夜はデスクライトの光がひだの縁で散る
   col += tint * uLampColor * lampSpot(vWorldPos) * scatter * ${JELLY_LOOK.lampScatter.toFixed(3)};
-  gl_FragColor = vec4(col + glow, density * 0.6 + refr) * uOpacity;
+  float alpha = density * 0.6 + refr;
+  // 抱えているプラヌラの粒（自分では光らず、部屋の光とデスクライトを受けて白く見える）
+  if (uBrood > 0.001) {
+    float a = planulae() * ${f(P.alpha)};
+    vec3 pc = ${vec3(P.color)} * (light * ${f(P.light)} + uLampColor * lampSpot(vWorldPos) * ${JELLY_LOOK.lampScatter.toFixed(3)} * 0.5);
+    col = col * (1.0 - a) + pc * a;
+    alpha = alpha * (1.0 - a) + a;
+  }
+  gl_FragColor = vec4(col + glow, alpha) * uOpacity;
 }
 `;
 
@@ -115,6 +178,9 @@ export class OralArms {
   private readonly geo: BufferGeometry;
   private initialized = false;
   private readonly radials: Vector3[] = [];
+  /** 口腕の長さと幅（瓶の高さ単位。プラヌラの粒を実寸で並べる） */
+  private readonly armLen = { value: 0 };
+  private readonly armWidth = { value: 0 };
 
   /** leaves は生殖腺の向き（口腕も同じ数・同じ向き）。なければ基準の4本 */
   constructor(shared: SharedUniforms, look: BellLook, rng: Rng, leaves: readonly Leaf[] | null = null) {
@@ -142,6 +208,7 @@ export class OralArms {
     normal.setUsage(DynamicDrawUsage);
     const au = new Float32Array(verts);
     const as = new Float32Array(verts);
+    const aarm = new Float32Array(verts);
     const idx: number[] = [];
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < m; j++) {
@@ -149,6 +216,7 @@ export class OralArms {
           const v = (i * m + j) * w + k;
           au[v] = ACROSS[k]!;
           as[v] = j / (m - 1);
+          aarm[v] = i;
           if (j < m - 1 && k < w - 1) {
             const a = v;
             const b = v + w;
@@ -161,6 +229,7 @@ export class OralArms {
     geo.setAttribute('normal', normal);
     geo.setAttribute('aU', new Float32BufferAttribute(au, 1));
     geo.setAttribute('aS', new Float32BufferAttribute(as, 1));
+    geo.setAttribute('aArm', new Float32BufferAttribute(aarm, 1));
     geo.setIndex(idx);
     this.geo = geo;
 
@@ -191,6 +260,10 @@ export class OralArms {
           uGonad: look.uGonad,
           uOpacity: look.uOpacity,
           uDensity: look.uDensity,
+          uBrood: look.uBrood,
+          uBroodSeed: look.uBroodSeed,
+          uArmLen: this.armLen,
+          uArmWidth: this.armWidth,
         },
       }),
     );
@@ -223,6 +296,8 @@ export class OralArms {
     this.radius = radius;
     this.lengthFrac = lengthFrac;
     this.seg = (ORAL_ARMS.length * radius * lengthFrac) / (this.nodes - 1);
+    this.armLen.value = this.seg * (this.nodes - 1);
+    this.armWidth.value = ORAL_ARMS.width * radius * (0.6 + 0.4 * lengthFrac);
   }
 
   /**

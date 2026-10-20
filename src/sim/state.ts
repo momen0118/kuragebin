@@ -1,17 +1,36 @@
 // ゲームの状態。瓶・個体・日誌・標本・設定を1つの状態として持ち、そのまま保存する。
 // 描画・DOM・three.js には依存しない。
-import { CARE, LIFE, SIM } from '../config';
+import { CARE, LIFE, SEX, SIM } from '../config';
 import { createBook, type BookState } from './book';
 import { BASE_GENES, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
 
 export const STAGES: readonly Stage[] = ['polyp', 'strobila', 'ephyra', 'adult'];
+
+/** 雌雄。成体・エフィラは生まれたときに決まる（ポリプとストロビラは持たない） */
+export type Sex = 'male' | 'female';
+
+/** プラヌラを抱えている間：抱えはじめた時刻と、粒がなくなる時刻（ゲーム内の秒） */
+export interface Brood {
+  from: number;
+  until: number;
+}
+
+/** 抱えていた粒が離れて、瓶底に付くのを待っているプラヌラ */
+export interface Planula {
+  /** 瓶底に付く時刻（ゲーム内の秒） */
+  at: number;
+  /** 抱えていたメスの番号 */
+  parent: number | null;
+  /** 付いたポリプが受け継ぐ遺伝子（離れたときに決める） */
+  genes: Genes;
+}
 
 export interface Creature {
   /** 保存データの中で一意な番号 */
@@ -45,6 +64,12 @@ export interface Creature {
   meal: Meal | null;
   /** 遺伝子（見た目と動きの個体差）。最初の1匹と、版5までにいた個体は基準のまま */
   genes: Genes;
+  /** 雌雄（成体・エフィラ。ポリプとストロビラは null）。成熟するまでは見た目にも札にも出ない */
+  sex: Sex | null;
+  /** 成体になってからの時間（秒、ゲーム内。成体でなければ 0）。SEX.matureAfter で成熟する */
+  adultAge: number;
+  /** プラヌラを抱えている間（成熟したメスだけ。なければ null） */
+  brood: Brood | null;
 }
 
 export interface Meal {
@@ -79,6 +104,8 @@ export interface JarState {
    * 揺らすたびに今から数えなおす（延びるだけで、量は増えない）
    */
   stirredUntil: number | null;
+  /** 抱えていた粒が離れて、瓶底に付くのを待っているプラヌラ（付いたら除く） */
+  planulae: Planula[];
 }
 
 /** 日誌に載せる出来事の種類 */
@@ -91,6 +118,8 @@ export type JournalKind =
   | 'release'
   /** エフィラが成体になった */
   | 'adult'
+  /** 口腕にプラヌラを抱えていた（count 匹） */
+  | 'planula'
   /** 瓶がいっぱいで、ポリプが休みに入った */
   | 'rest'
   /** 空きができて、ポリプがまた動き出した */
@@ -130,6 +159,8 @@ export interface SentRecord {
   species: Species;
   stage: Stage;
   genes: Genes;
+  /** 雌雄（成体のとき。エフィラは null で出さない） */
+  sex: Sex | null;
   /** 送った瓶と、送った時刻（ゲーム内の秒と端末のミリ秒） */
   jar: number;
   sentAt: number;
@@ -144,7 +175,7 @@ export interface Letter {
   id: number;
   /** 最初の手紙か、送った子への返事か */
   kind: 'first' | 'reply';
-  /** 返事で触れる特徴と、その中の何番目の文面か */
+  /** 返事で触れる特徴と、その中の何番目の文面か（最初の手紙は文面の版。FIRST_LETTER_BROOD） */
   topic: LetterTopic | null;
   pick: number;
   /** 返事で触れる送った子（SentRecord の番号） */
@@ -279,19 +310,27 @@ export function isSwimmer(stage: Stage): boolean {
   return stage === 'adult' || stage === 'ephyra';
 }
 
-/** 最初の状態：1番の瓶にミズクラゲの成体が1匹。2番と3番は水だけ */
+/**
+ * 最初の状態：1番の瓶にミズクラゲの成体が1匹。2番と3番は水だけ。
+ * 最初の一匹は成熟したメスで、最初から口腕にプラヌラを抱えている（最初のポリプはこのプラヌラから付く）
+ */
 export function createInitialState(nowMs: number, seed: number = SIM.seed): GameState {
   const rng = createRng(seed);
   const [lo, hi] = LIFE.adultPolyp;
+  // 種を先に引く（今の1匹の見た目と動きを変えないため）
+  const firstSeed = Math.floor(rng.next() * 2 ** 32) >>> 0;
+  const cycle = rng.range(lo, hi);
+  const until = rng.range(SEX.brood[0], SEX.brood[1]);
   const first: Creature = {
     id: 1,
     species: 'aurelia',
     stage: 'adult',
-    seed: Math.floor(rng.next() * 2 ** 32) >>> 0,
+    seed: firstSeed,
     age: 0,
     stageAge: 0,
     progress: 0,
-    stageLength: rng.range(lo, hi),
+    // 最初のポリプがプラヌラから付くよう、自分の「次のポリプまで」はそのあとにする
+    stageLength: cycle + until + SEX.settle[1],
     arrivedAt: 0,
     arrivedWallTime: nowMs,
     name: null,
@@ -300,6 +339,9 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     discs: 0,
     meal: null,
     genes: { ...BASE_GENES },
+    sex: 'female',
+    adultAge: SEX.matureAfter + SEX.colorRamp,
+    brood: { from: 0, until },
   };
   const jars: JarState[] = Array.from({ length: SIM.jarCount }, (_, i) => ({
     creatures: i === 0 ? [first] : [],
@@ -310,6 +352,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     cleanSince: null,
     waterDue: null,
     stirredUntil: null,
+    planulae: [],
   }));
   return {
     schema: SCHEMA_VERSION,
@@ -324,7 +367,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     journalSeen: 0,
     specimens: [],
     // 最初の成体1匹と一緒に、瓶の横に封筒が置いてある
-    letters: [firstLetter(1, 0, nowMs, 0)],
+    letters: [firstLetter(1, 0, nowMs, 0, FIRST_LETTER_BROOD)],
     sent: [],
     uncle: { nextLetterId: 2, reply: null, lastReplyAt: null },
     book: createBook(nowMs),
@@ -332,7 +375,13 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
   };
 }
 
-/** 最初の手紙（封筒のまま、瓶 jar の横に置いてある） */
-export function firstLetter(id: number, time: number, wallMs: number, jar: number): Letter {
-  return { id, kind: 'first', topic: null, pick: 0, about: null, arrivedAt: time, wallTime: wallMs, sealed: true, jar, gift: null };
+/**
+ * 最初の手紙の文面の版（Letter.pick）。0 は版9までの文面、1 は最初の一匹がプラヌラを抱えている人への文面
+ * （「抱えているので、そのうち底に何か付きます。」の一行がある）
+ */
+export const FIRST_LETTER_BROOD = 1;
+
+/** 最初の手紙（封筒のまま、瓶 jar の横に置いてある）。pick は文面の版 */
+export function firstLetter(id: number, time: number, wallMs: number, jar: number, pick = 0): Letter {
+  return { id, kind: 'first', topic: null, pick, about: null, arrivedAt: time, wallTime: wallMs, sealed: true, jar, gift: null };
 }

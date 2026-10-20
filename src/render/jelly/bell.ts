@@ -186,6 +186,10 @@ uniform vec3 uBody, uGlow, uGonad;
 uniform vec3 uGonadTint;
 // 個体差：濃さの倍率と、生殖腺の数（ふだん4）・1つずつの向き・中心からの距離の倍率・大きさの倍率
 uniform float uDensity;
+// 雌雄：成熟すると四つ葉の輪（輪郭）だけが雌雄の色へ寄る（オスは乳白色、メスはうっすら褐色〜紫）。
+// uSexAmount は寄せる割合（成熟前は 0）、uSexDensity は輪の濃さの足し分
+uniform vec3 uSexTint;
+uniform float uSexAmount, uSexDensity;
 uniform int uLeafCount;
 uniform vec3 uLeaf[5];
 uniform sampler2D tRoom;
@@ -234,12 +238,6 @@ void gonadParts(float s, float th, out float ring, out float fill) {
   fill *= edge;
 }
 
-float gonads(float s, float th) {
-  float ring, fill;
-  gonadParts(s, th, ring, fill);
-  return ring + fill;
-}
-
 // 胃の中の餌（エフィラ）：真ん中の胃と、8本の腕へ伸びる管の付け根。
 // 育って四つ葉が浮かぶにつれて消える（成体は四つ葉の輪郭だけが色づく）
 float bellStomach(float s, float th) {
@@ -262,7 +260,12 @@ void main() {
   bool gonad = uLayer > 1.5;
 
   float canal = inner ? canals(s, th) : 0.0;
-  float gon = gonad ? gonads(s, th) * uGonads : 0.0;
+  float gRing = 0.0, gFill = 0.0;
+  if (gonad) gonadParts(s, th, gRing, gFill);
+  float gon = (gRing + gFill) * uGonads;
+  // 雌雄の色は輪郭の輪の所だけ（内側のうっすらした面は個体差の色のまま）
+  float sexK = gonad ? uSexAmount * gRing / (gRing + gFill + 1e-4) : 0.0;
+  vec3 gonadTint = mix(uGonadTint, uSexTint, sexK);
   // 縁の近くの細い輪（筋肉）
   float rings = inner ? (0.5 + 0.5 * cos(s * 150.0)) * smoothstep(0.62, 0.9, s) * 0.5 * uCanals : 0.0;
 
@@ -288,8 +291,8 @@ void main() {
   float density;
   vec3 tint = uBody;
   if (gonad) {
-    density = 0.18 * gon;
-    tint = uGonadTint;
+    density = 0.18 * gon * (1.0 + uSexDensity * sexK);
+    tint = gonadTint;
   } else if (inner) {
     density = 0.004 + 0.08 * rim + 0.03 * canal * (1.0 + 1.5 * uYoung) + 0.012 * rings + 0.02 * margin + 0.012 * uYoung;
   } else {
@@ -306,9 +309,7 @@ void main() {
   float meal = 0.0;
   if (uMeal > 0.001) {
     if (gonad) {
-      float ring, fill;
-      gonadParts(s, th, ring, fill);
-      meal = STOMACH_POUCH * ring * uGonads;
+      meal = STOMACH_POUCH * gRing * uGonads;
     } else if (inner) {
       meal = STOMACH_BELL * bellStomach(s, th);
     }
@@ -323,7 +324,7 @@ void main() {
   vec3 scatterTint = uBody;
   if (gonad) {
     scatter = gon * 0.32;
-    scatterTint = uGonadTint;
+    scatterTint = gonadTint;
   } else if (inner) {
     scatter = 0.03 * rim + 0.06 * canal + 0.1 * margin;
   } else {
@@ -383,6 +384,12 @@ export interface BellLook {
   uLeafCount: { value: number };
   uLeaf: { value: Vector3[] };
   uNick: { value: Vector3[] };
+  /** 雌雄：輪の色、寄せる割合（成熟前は 0）、輪の濃さの足し分。口腕のプラヌラの粒の見え方（0〜1）と、粒の並びの種 */
+  uSexTint: { value: Vector3 };
+  uSexAmount: { value: number };
+  uSexDensity: { value: number };
+  uBrood: { value: number };
+  uBroodSeed: { value: number };
 }
 
 export interface Bell {
@@ -468,6 +475,9 @@ export function createBell(shared: SharedUniforms, look: BellLook, lobes: number
         uLeafCount: look.uLeafCount,
         uLeaf: look.uLeaf,
         uNick: look.uNick,
+        uSexTint: look.uSexTint,
+        uSexAmount: look.uSexAmount,
+        uSexDensity: look.uSexDensity,
       },
     });
     const m = new Mesh(geo, mat);

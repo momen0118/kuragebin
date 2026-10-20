@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest';
-import { LIFE, type LifeRules } from '../config';
+import { LIFE, SEX, type LifeRules } from '../config';
 import { advance, catchUp } from './advance';
 import { fillAdults, spawnCreature } from './edit';
 import { record } from './journal';
 import { freeSwimmerSlots, jarCounts } from './lifecycle';
+import { isMature } from './sex';
 import { createInitialState, isSwimmer, type GameState } from './state';
 
 const T0 = Date.UTC(2026, 8, 25, 3, 0, 0);
@@ -21,8 +22,13 @@ function run(state: GameState, days: number, rules: LifeRules = LIFE, hours = 6)
 }
 
 describe('生活環', () => {
-  test('成体がいると、約1日で瓶底にポリプが付く', () => {
+  test('成体がいると、約1日で瓶底にポリプが付く（メスのいない瓶）', () => {
     const s = createInitialState(T0);
+    // 最初の一匹をオスにして、プラヌラを抱えていないことにする
+    const first = s.jars[0]!.creatures[0]!;
+    first.sex = 'male';
+    first.brood = null;
+    first.stageLength = DAY;
     expect(jarCounts(advance(s, 0.75 * DAY).jars[0]!).polyps).toBe(0);
     const n = advance(s, 1.25 * DAY);
     const polyps = n.jars[0]!.creatures.filter((c) => c.stage === 'polyp');
@@ -33,6 +39,90 @@ describe('生活環', () => {
     expect(Math.abs(p.spot![0])).toBeLessThanOrEqual(LIFE.spotMaxX);
     expect(Math.hypot(...p.spot!)).toBeLessThanOrEqual(LIFE.spotRadius + 1e-9);
     expect(n.journal.map((e) => e.kind)).toEqual(['polyp']);
+  });
+
+  test('最初の一匹は成熟したメスで、プラヌラを抱えている。粒がなくなってしばらくすると、最初のポリプが付く', () => {
+    const s = createInitialState(T0);
+    const first = s.jars[0]!.creatures[0]!;
+    expect(first.sex).toBe('female');
+    expect(isMature(first)).toBe(true);
+    const until = first.brood!.until;
+    expect(until).toBeGreaterThanOrEqual(SEX.brood[0]);
+    expect(until).toBeLessThanOrEqual(SEX.brood[1]);
+    // 抱えている間は、瓶底の数に入っている（まだ付いていない）
+    const holding = advance(s, until - 120);
+    expect(holding.jars[0]!.creatures[0]!.brood).not.toBeNull();
+    expect(holding.jars[0]!.creatures.some((c) => c.stage === 'polyp')).toBe(false);
+    expect(jarCounts(holding.jars[0]!).polyps).toBe(1);
+    // 粒がなくなると、付くのを待つ
+    const released = advance(s, until + 120);
+    expect(released.jars[0]!.creatures[0]!.brood).toBeNull();
+    expect(released.jars[0]!.planulae).toHaveLength(1);
+    // しばらくして付く（自分の「次のポリプまで」はそのあと）
+    const n = advance(s, until + SEX.settle[1] + 120);
+    const polyps = n.jars[0]!.creatures.filter((c) => c.stage === 'polyp');
+    expect(polyps).toHaveLength(1);
+    expect(polyps[0]!.parent).toBe(1);
+    expect(n.jars[0]!.planulae).toHaveLength(0);
+    // 最初から抱えていたので、日誌には「抱えていた」は書かない。ポリプが付いたことだけ
+    expect(n.journal.map((e) => e.kind)).toEqual(['polyp']);
+  });
+
+  test('ポリプが付くとき、成熟したメスがいれば先にそのメスがプラヌラを抱え、日誌に名前で書く', () => {
+    const s = createInitialState(T0);
+    const female = s.jars[0]!.creatures[0]!;
+    female.brood = null;
+    female.name = 'ぽこ';
+    female.stageLength = 10 * DAY;
+    // オスの成体を足す（こちらが先にポリプを付けることになる）
+    fillAdults(s, 0, 2);
+    const male = s.jars[0]!.creatures.find((c) => c.id !== 1)!;
+    male.sex = 'male';
+    male.stageLength = DAY;
+    male.progress = 0;
+    const n = advance(s, 1.1 * DAY);
+    const f = n.jars[0]!.creatures.find((c) => c.id === 1)!;
+    expect(f.brood).not.toBeNull();
+    expect(n.jars[0]!.creatures.some((c) => c.stage === 'polyp')).toBe(false);
+    const e = n.journal.find((x) => x.kind === 'planula')!;
+    expect(e.ids).toEqual([1]);
+    expect(e.name).toBe('ぽこ');
+    // 粒がなくなってしばらくすると付く（親は抱えていたメス）
+    // （抱えている間にオスの次の番が来たら、そちらは今まで通りそのまま付く）
+    const later = advance(n, SEX.brood[1] + SEX.settle[1]);
+    expect(later.jars[0]!.creatures.some((c) => c.stage === 'polyp' && c.parent === 1)).toBe(true);
+  });
+
+  test('成熟前のメスと、瓶がいっぱいで休んでいる間は抱えない（今まで通りそのまま付く）', () => {
+    for (const kind of ['young', 'resting'] as const) {
+      const s = createInitialState(T0);
+      const c = s.jars[0]!.creatures[0]!;
+      c.brood = null;
+      c.stageLength = DAY;
+      // 休ませるには、泳ぐ個体の上限を1にして、くびれを待つポリプを置く
+      const rules = kind === 'resting' ? { ...LIFE, maxSwimmers: 1 } : LIFE;
+      if (kind === 'young') c.adultAge = 0;
+      else spawnCreature(s, 0, 'polyp', rules);
+      const n = advance(s, 1.1 * DAY, rules);
+      if (kind === 'resting') expect(n.jars[0]!.resting).toBe(true);
+      expect(n.jars[0]!.creatures.filter((x) => x.stage === 'polyp')).toHaveLength(kind === 'resting' ? 2 : 1);
+      expect(n.jars[0]!.creatures[0]!.brood).toBeNull();
+      expect(n.journal.some((e) => e.kind === 'planula')).toBe(false);
+    }
+  });
+
+  test('成体・エフィラは生まれたときに雌雄が決まり、成体になってしばらくすると成熟する。ポリプは雌雄を持たない', () => {
+    const states = run(createInitialState(T0), 20);
+    const all = states.flatMap((st) => st.jars.flatMap((j) => j.creatures));
+    for (const c of all) {
+      if (isSwimmer(c.stage)) expect(['male', 'female']).toContain(c.sex);
+      else expect(c.sex).toBeNull();
+      if (c.stage !== 'adult') expect(c.adultAge).toBe(0);
+    }
+    const last = states.at(-1)!;
+    const grown = last.jars[0]!.creatures.filter((c) => c.stage === 'adult' && c.parent !== null);
+    expect(grown.length).toBeGreaterThan(0);
+    for (const c of grown) expect(c.adultAge).toBeLessThan(20 * DAY);
   });
 
   test('ポリプ → ストロビラ → エフィラ → 成体と進み、ストロビラはポリプに戻る', () => {

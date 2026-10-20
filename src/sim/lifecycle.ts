@@ -2,21 +2,22 @@
 // エフィラは育って成体になる。泳ぐ個体が上限に達した瓶では、ポリプは休んで進まない。
 // 出来事は日誌に書く。ただし見ている瓶（ctx.watching）の出来事は書かない（見ていたので）。
 // advance.ts の1刻みごとに呼ぶ（状態をその場で書き換える）。
-import { LIFE, type LifeRules } from '../config';
+import { LIFE, SEX, type LifeRules } from '../config';
 import { stepCare } from './care';
 import { findSpots } from './finds';
 import { BASE_GENES, inheritGenes } from './genes';
 import { growthRate } from './growth';
 import { record } from './journal';
 import type { Rng } from './rng';
-import { isSwimmer, stageRange, wallAt, type Creature, type GameState, type JarState, type Stage } from './state';
+import { broodMother, pickSex, reservedSpots, startBrood } from './sex';
+import { isSwimmer, stageRange, wallAt, type Creature, type GameState, type JarState, type Planula, type Stage } from './state';
 
 export interface JarCounts {
   /** 泳ぐ個体（成体＋エフィラ） */
   swimmers: number;
   /** ストロビラが放す予定のエフィラの数 */
   pending: number;
-  /** 瓶底の個体（ポリプ＋ストロビラ） */
+  /** 瓶底の個体（ポリプ＋ストロビラ）と、これから付くプラヌラ（抱えている分と、離れて付くのを待つ分） */
   polyps: number;
 }
 
@@ -31,7 +32,7 @@ export function jarCounts(jar: JarState): JarCounts {
       if (c.stage === 'strobila') pending += c.discs;
     }
   }
-  return { swimmers, pending, polyps };
+  return { swimmers, pending, polyps: polyps + reservedSpots(jar) };
 }
 
 /** 泳ぐ個体をあと何匹入れられるか（ストロビラが放す予定の数も数える） */
@@ -46,7 +47,10 @@ export function pickStageLength(stage: Stage, rng: Rng, rules: LifeRules = LIFE)
   return rng.range(lo, hi);
 }
 
-/** 新しい段階に入る（進みは 0 から、長さは選び直す） */
+/**
+ * 新しい段階に入る（進みは 0 から、長さは選び直す）。成体が次のポリプへ数えなおすときも呼ぶ（成体になってからの時間はそのまま）。
+ * 泳ぐ段階で雌雄がまだなければ決める（確認用に段階を変えたとき）。瓶底の段階は雌雄を持たない
+ */
 export function enterStage(c: Creature, stage: Stage, rng: Rng, rules: LifeRules = LIFE): void {
   c.stage = stage;
   c.stageAge = 0;
@@ -54,6 +58,12 @@ export function enterStage(c: Creature, stage: Stage, rng: Rng, rules: LifeRules
   c.stageLength = pickStageLength(stage, rng, rules);
   if (stage !== 'strobila') c.discs = 0;
   if (isSwimmer(stage)) c.spot = null;
+  if (stage !== 'adult') {
+    c.adultAge = 0;
+    c.brood = null;
+  }
+  if (!isSwimmer(stage)) c.sex = null;
+  else if (c.sex === null) c.sex = pickSex(rng);
 }
 
 /**
@@ -61,15 +71,19 @@ export function enterStage(c: Creature, stage: Stage, rng: Rng, rules: LifeRules
  * 来た時刻は今（進めている途中なら、extra に arrivedWallTime として刻みの端末の時刻を渡す）
  */
 export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: LifeRules = LIFE, extra: Partial<Creature> = {}): Creature {
+  const seed = Math.floor(rng.next() * 2 ** 32) >>> 0;
+  const stageLength = pickStageLength(stage, rng, rules);
+  // 成体・エフィラは生まれたときに雌雄が決まる
+  const sex = isSwimmer(stage) ? pickSex(rng) : null;
   return {
     id: state.nextId++,
     species: 'aurelia',
     stage,
-    seed: Math.floor(rng.next() * 2 ** 32) >>> 0,
+    seed,
     age: 0,
     stageAge: 0,
     progress: 0,
-    stageLength: pickStageLength(stage, rng, rules),
+    stageLength,
     arrivedAt: state.time,
     arrivedWallTime: wallAt(state, state.time),
     name: null,
@@ -78,6 +92,9 @@ export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: 
     discs: 0,
     meal: null,
     genes: { ...BASE_GENES },
+    sex,
+    adultAge: 0,
+    brood: null,
     ...extra,
   };
 }
@@ -142,20 +159,35 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
   for (const c of jar.creatures) {
     switch (c.stage) {
       case 'adult': {
+        c.adultAge += dt;
+        // 抱えていたプラヌラの粒がなくなった：しばらくして、今いる瓶の瓶底に付く
+        if (c.brood && state.time >= c.brood.until) {
+          jar.planulae.push({ at: state.time + rng.range(SEX.settle[0], SEX.settle[1]), parent: c.id, genes: inheritGenes(c.genes, rng, false) });
+          c.brood = null;
+        }
         // 約1日ごとに瓶底へポリプを付ける。瓶底がいっぱいなら、空くまで待つ
         c.progress = Math.min(1, c.progress + dt / c.stageLength);
-        if (c.progress >= 1 && counts.polyps < rules.maxPolyps) {
-          const polyp = createCreature(state, 'polyp', rng, rules, {
-            parent: c.id,
-            genes: inheritGenes(c.genes, rng, false),
-            spot: pickSpot(spotsIn(state, index, jar, born), rng, rules),
-            arrivedWallTime: wall,
-          });
-          born.push(polyp);
+        if (c.progress < 1 || counts.polyps >= rules.maxPolyps) break;
+        // 成熟したメスがいれば、先にそのメスが口腕にプラヌラを抱える（瓶がいっぱいでポリプが休んでいる間は抱えない）。
+        // 抱えられるメスがいなければ、今まで通りそのまま付く
+        const mother = jar.resting ? null : broodMother(jar, c);
+        if (mother) {
+          startBrood(mother, state.time, rng);
           counts.polyps++;
           enterStage(c, 'adult', rng, rules);
-          if (log) record(state, 'polyp', index, 1, [polyp.id], wall);
+          if (log) record(state, 'planula', index, 1, [mother.id], wall, mother.name);
+          break;
         }
+        const polyp = createCreature(state, 'polyp', rng, rules, {
+          parent: c.id,
+          genes: inheritGenes(c.genes, rng, false),
+          spot: pickSpot(spotsIn(state, index, jar, born), rng, rules),
+          arrivedWallTime: wall,
+        });
+        born.push(polyp);
+        counts.polyps++;
+        enterStage(c, 'adult', rng, rules);
+        if (log) record(state, 'polyp', index, 1, [polyp.id], wall);
         break;
       }
       case 'polyp': {
@@ -205,7 +237,30 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
     }
   }
   if (born.length) jar.creatures.push(...born);
+  settlePlanulae(state, jar, index, rules, ctx, log);
   updateResting(state, jar, index, rules, log ? wall : null);
+}
+
+/** 付く時刻になったプラヌラを瓶底にポリプとして付ける。瓶底がいっぱいなら、空くまで待つ */
+function settlePlanulae(state: GameState, jar: JarState, index: number, rules: LifeRules, ctx: StepContext, log: boolean): void {
+  if (!jar.planulae.length) return;
+  const waiting: Planula[] = [];
+  for (const p of jar.planulae) {
+    const bottom = jar.creatures.filter((c) => !isSwimmer(c.stage)).length;
+    if (state.time < p.at || bottom >= rules.maxPolyps) {
+      waiting.push(p);
+      continue;
+    }
+    const polyp = createCreature(state, 'polyp', ctx.rng, rules, {
+      parent: p.parent,
+      genes: p.genes,
+      spot: pickSpot(spotsIn(state, index, jar), ctx.rng, rules),
+      arrivedWallTime: ctx.wall,
+    });
+    jar.creatures.push(polyp);
+    if (log) record(state, 'polyp', index, 1, [polyp.id], ctx.wall);
+  }
+  jar.planulae = waiting;
 }
 
 /**
