@@ -985,13 +985,38 @@ body {
 }
 
 .index-tab.to-roster {
-  top: 44%;
+  top: 40%;
   background: #ecc0c9;
   transform: rotate(-3deg);
 }
 
+.index-tab.to-species {
+  top: 49%;
+  right: -32px;
+  padding-left: 48px;
+  background: #c4cfe0;
+  transform: rotate(1.5deg);
+}
+
+/* 豆知識が増えたら、付箋「種」に小さな点 */
+.index-tab .new {
+  position: absolute;
+  top: 4px;
+  right: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+.index-tab.has-new .new {
+  opacity: 0.7;
+}
+
 .index-tab.to-specimens {
-  top: 54%;
+  top: 58%;
   right: -36px;
   padding-left: 44px;
   background: #bfd2c6;
@@ -999,7 +1024,7 @@ body {
 }
 
 .index-tab.to-settings {
-  top: 64%;
+  top: 67%;
   right: -30px;
   padding-left: 50px;
   background: #ece2b4;
@@ -1504,4 +1529,155 @@ body {
 .journal-button.absorb svg {
   opacity: 1;
   transition: opacity 0.12s ease;
+}
+
+/*
+ * 種のページ：種の名前、初めて瓶に来た日、写真（標本と同じ白い縁の写真）、豆知識（見つけた順に一行ずつ。見つけた日を小さく）。
+ * どの行も罫線の行に乗せる
+ */
+.leaf .sp-since {
+  margin: 0;
+  font-size: 11px;
+  line-height: var(--line-h);
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.sp-photos .photo {
+  cursor: pointer;
+}
+
+/* 入れ替える写真を選んでいる間は、写真が少し浮く */
+.sp-photos.choosing .photo {
+  box-shadow: 0 0 0 1px rgba(42, 39, 35, 0.35), 0 3px 6px rgba(0, 0, 0, 0.25);
+}
+
+.sp-replace {
+  display: grid;
+  grid-template-columns: 52px 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+  margin: 0 0 var(--line-h);
+  min-height: calc(var(--line-h) * 2);
+}
+
+.sp-replace .photo {
+  width: 46px;
+  aspect-ratio: 1;
+  border: 2px solid #f1ede4;
+  border-bottom-width: 5px;
+  background: #1a1a1a center / cover no-repeat;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.sp-replace p {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.sp-replace .replace-cancel {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-decoration: underline;
+  text-decoration-color: rgba(59, 55, 50, 0.3);
+  text-underline-offset: 3px;
+}
+
+.leaf .facts {
+  padding-top: 4px;
+}
+
+.leaf .fact {
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--line-h);
+  letter-spacing: 0.02em;
+}
+
+.leaf .fact .found {
+  margin-left: 0.6em;
+  font-size: 10px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 写真を大きく見る：紙の上に重ねる。外をタップすると閉じる。「はがす」は一度だけ確かめる */
+.photo-view {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.82);
+  pointer-events: auto;
+  color: #e9e4d8;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.photo-view[hidden] {
+  display: none;
+}
+
+.photo-view .pv-photo {
+  width: min(78vw, 360px);
+  aspect-ratio: 1;
+  border: 6px solid #f1ede4;
+  border-bottom-width: 18px;
+  background: #1a1a1a center / cover no-repeat;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  filter: brightness(var(--lum, 1));
+}
+
+.photo-view p {
+  margin: 0;
+}
+
+.photo-view button {
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(233, 228, 216, 0.4);
+  text-underline-offset: 3px;
+}
+
+.photo-view .pv-confirm {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+
+.photo-view .pv-confirm[hidden] {
+  display: none;
+}
+
+.photo-view .data-buttons button {
+  font-size: 12px;
+}
+
+/* 撮ったとき、画面がふっと白くなる */
+.shutter {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #fff;
+  opacity: var(--a, 0.35);
+  pointer-events: none;
+  transition: opacity var(--s, 0.35s) ease-out;
+}
+
+.shutter.done {
+  opacity: 0;
 }

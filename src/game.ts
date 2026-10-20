@@ -4,6 +4,7 @@
 // 保存は設定を変えたとき、開いている間は一定の間隔で、画面を離れる直前に。
 import { LIFE, SIM, type LifeRules } from './config';
 import { canMove, moveCreature, renameCreature, type MoveResult } from './sim/actions';
+import { addPhoto, checkFacts, hasFact, hasNewFacts, markFactsSeen, noteFact, photoIds, removePhoto, replacePhoto, type FactKey, type PhotoResult, type SpeciesPhoto } from './sim/book';
 import { catchUp } from './sim/advance';
 import type { Clock } from './sim/clock';
 import { canFeed, feedJar, type FeedResult } from './sim/feed';
@@ -11,9 +12,9 @@ import { canPlace, pickFind, placeFind, setFindPhoto, type PlaceResult } from '.
 import { stirJar } from './sim/growth';
 import { canSend, openLetter, sendCreature, type SendResult } from './sim/uncle';
 import { hasUnread } from './sim/journal';
-import { createInitialState, type GameState, type Settings } from './sim/state';
-import { openStateStore, type StateStore } from './storage/db';
-import { exportState, importState } from './storage/io';
+import { createInitialState, type GameState, type Settings, type Species } from './sim/state';
+import { memoryPhotos, openStores, type PhotoStore, type StateStore } from './storage/db';
+import { exportState, importAll } from './storage/io';
 import { migrate, SchemaError } from './storage/schema';
 
 export interface GameInfo {
@@ -45,13 +46,17 @@ export class Game {
     state: GameState,
     /** 読めない新しい版のデータがあったときは、上書きしないよう保存しない */
     private readonly readOnly: boolean,
+    /** 種のページの写真の入れ物と、読み込んだ写真（番号 → 画像） */
+    private readonly photoStore: PhotoStore,
+    private readonly photos: Map<number, string>,
   ) {
     this.current = state;
   }
 
   /** 保存を読み込み、閉じていた分を進めて始める */
-  static async start(clock: Clock, store?: StateStore): Promise<Game> {
-    const s = store ?? (await openStateStore());
+  static async start(clock: Clock, store?: StateStore, photoStore?: PhotoStore): Promise<Game> {
+    const opened = store ? { state: store, photos: photoStore ?? memoryPhotos() } : await openStores();
+    const s = opened.state;
     const now = clock.now();
     let state: GameState | null = null;
     let readOnly = false;
@@ -72,8 +77,17 @@ export class Game {
     } catch {
       // 読み込みに失敗しても、新しい状態で動く
     }
-    const game = new Game(clock, s, state ?? createInitialState(now), readOnly);
+    let photos = new Map<number, string>();
+    try {
+      photos = await opened.photos.load();
+    } catch {
+      // 写真が読めなくても動く
+    }
+    const game = new Game(clock, s, state ?? createInitialState(now), readOnly, opened.photos, photos);
     game.catchUpNow(true, null);
+    // 最初に瓶を開いたとき（の豆知識）
+    game.noteFact('open');
+    game.prunePhotos();
     await game.save();
     return game;
   }
@@ -107,6 +121,97 @@ export class Game {
     void this.save();
   }
 
+  /** 種のページに、まだ読んでいない豆知識があるか（付箋「種」と日誌のアイコンに点） */
+  get newFacts(): boolean {
+    return hasNewFacts(this.current);
+  }
+
+  /** 豆知識のきっかけ（画面の出来事：つついた、虫眼鏡を当てた、種のページを開いた、逆さまになった など）。足したら true */
+  noteFact(key: FactKey): boolean {
+    if (hasFact(this.current, key)) return false;
+    const next = structuredClone(this.current);
+    if (!noteFact(next, key, this.clock.now())) return false;
+    this.current = next;
+    this.emit();
+    void this.save();
+    return true;
+  }
+
+  /** 逆さまから起き直るのを見た（回数を数え、五回で豆知識） */
+  countRighted(): void {
+    const next = structuredClone(this.current);
+    next.book.counts.righted++;
+    checkFacts(next, this.clock.now());
+    this.current = next;
+    this.emit();
+    void this.save();
+  }
+
+  /** 種のページを開いた：豆知識をすべて読んだことにする */
+  markFactsSeen(): void {
+    const next = structuredClone(this.current);
+    if (!markFactsSeen(next)) return;
+    this.current = next;
+    this.emit();
+    void this.save();
+  }
+
+  /** 種のページの写真（なければ undefined） */
+  photo(id: number): string | undefined {
+    return this.photos.get(id);
+  }
+
+  /** 種のページに写真を貼る。いっぱいなら 'full'（replacePhoto で入れ替える） */
+  addPhoto(species: Species, url: string, meta: Omit<SpeciesPhoto, 'id'>): PhotoResult {
+    const next = structuredClone(this.current);
+    const r = addPhoto(next, species, meta);
+    if (r.result !== 'added') return r.result;
+    this.storePhoto(r.id, url);
+    this.current = next;
+    this.emit();
+    void this.save();
+    return 'added';
+  }
+
+  /** 写真 oldId を新しい写真と入れ替える */
+  replacePhoto(oldId: number, url: string, meta: Omit<SpeciesPhoto, 'id'>): boolean {
+    const next = structuredClone(this.current);
+    const id = replacePhoto(next, oldId, meta);
+    if (id < 0) return false;
+    this.storePhoto(id, url);
+    this.dropPhoto(oldId);
+    this.current = next;
+    this.emit();
+    void this.save();
+    return true;
+  }
+
+  /** 写真をはがす（取り消せない） */
+  removePhoto(id: number): void {
+    const next = structuredClone(this.current);
+    if (!removePhoto(next, id)) return;
+    this.dropPhoto(id);
+    this.current = next;
+    this.emit();
+    void this.save();
+  }
+
+  private storePhoto(id: number, url: string): void {
+    this.photos.set(id, url);
+    if (!this.readOnly) void this.photoStore.put(id, url).catch(() => {});
+  }
+
+  private dropPhoto(id: number): void {
+    this.photos.delete(id);
+    if (!this.readOnly) void this.photoStore.remove(id).catch(() => {});
+  }
+
+  /** 状態が持っていない写真を消す（入れ替えや読み込みの途中で閉じたときの残り） */
+  private prunePhotos(): void {
+    const keep = photoIds(this.current);
+    for (const id of [...this.photos.keys()]) if (!keep.has(id)) this.dropPhoto(id);
+  }
+
   /** 日誌に未読の出来事があるか */
   get unread(): boolean {
     return hasUnread(this.current);
@@ -136,6 +241,7 @@ export class Game {
     const next = structuredClone(this.current);
     const result = moveCreature(next, id, toJar, this.rules);
     if (result !== 'moved') return result;
+    noteFact(next, 'move', this.clock.now());
     this.current = next;
     this.emit();
     void this.save();
@@ -154,6 +260,9 @@ export class Game {
     const next = structuredClone(this.current);
     const result = feedJar(next, jar, this.clock.now());
     if (result !== 'fed') return result;
+    // 餌をやった回数（豆知識のきっかけ）
+    next.book.counts.feeds++;
+    checkFacts(next, this.clock.now());
     this.current = next;
     this.emit();
     void this.save();
@@ -269,6 +378,7 @@ export class Game {
 
   /** 状態を最初からにする（確認用） */
   reset(): void {
+    for (const id of [...this.photos.keys()]) this.dropPhoto(id);
     this.current = createInitialState(this.clock.now());
     this.lastCatchUp = 0;
     this.rewound = false;
@@ -277,13 +387,17 @@ export class Game {
   }
 
   exportJson(): string {
-    return exportState(this.current, this.clock.now());
+    return exportState(this.current, this.clock.now(), this.photos);
   }
 
-  /** 書き出したデータを読み込む。読み込んだ時点から先へ進む（書き出してからの分は進めない） */
+  /** 書き出したデータを読み込む（種のページの写真も）。読み込んだ時点から先へ進む（書き出してからの分は進めない） */
   importJson(text: string): void {
-    const state = importState(text);
+    const { state, photos } = importAll(text);
     state.lastTick = this.clock.now();
+    // 画像のない写真は貼っていないことにする
+    for (const r of state.book.species) r.photos = r.photos.filter((p) => photos.has(p.id));
+    for (const id of [...this.photos.keys()]) this.dropPhoto(id);
+    for (const [id, url] of photos) this.storePhoto(id, url);
     this.current = state;
     this.lastCatchUp = 0;
     this.rewound = false;
@@ -310,6 +424,8 @@ export class Game {
   /** 時計に合わせて進める。record なら、進めた分と巻き戻しの有無を覚えておく（確認用の表示）。watching は見ている瓶 */
   private catchUpNow(record: boolean, watching: number | null): void {
     const r = catchUp(this.current, this.clock.now(), this.rules, watching);
+    // 状態から分かる豆知識のきっかけ（見つけた日は今日）
+    checkFacts(r.state, this.clock.now());
     this.current = r.state;
     if (record) {
       this.lastCatchUp = r.elapsed;

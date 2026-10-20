@@ -63,6 +63,9 @@ export interface DebugPanelOptions {
   onFindSpawn(variant: string | null): void;
   onFindsClear(): void;
   onSpecimensClear(): void;
+  /** 種のページ：豆知識をすべて開く・すべて閉じる、写真をダミーで1枚足す（6枚なら入れ替えを選ぶ） */
+  onFactsAll(open: boolean): void;
+  onDummyPhoto(): void;
   /** 音：設定によらず鳴らす（確かめる用）、部屋の空気の音を大きくして聞く（1 でふだん） */
   onSound(name: SoundName, opts?: SoundOptions): void;
   onAirBoost(boost: number): void;
@@ -136,6 +139,7 @@ export class DebugPanel {
   private readonly motionEl: HTMLDivElement;
   private readonly uncleEl: HTMLDivElement;
   private readonly findsEl: HTMLDivElement;
+  private readonly bookEl: HTMLDivElement;
   /** 選んでいる個体と、進みのつまみを動かしている最中か */
   private selected: number | null = null;
   private pickNewest = false;
@@ -245,6 +249,15 @@ export class DebugPanel {
         </div>
       </details>
       <details>
+        <summary>種のページ</summary>
+        <div class="book sub"></div>
+        <div class="row buttons">
+          <button type="button" class="facts-open">豆知識をすべて開く</button>
+          <button type="button" class="facts-close">すべて閉じる</button>
+          <button type="button" class="dummy-photo">写真をダミーで1枚</button>
+        </div>
+      </details>
+      <details>
         <summary>音</summary>
         <div class="sub">設定のオン・オフによらず鳴らす</div>
         <div class="row buttons">
@@ -326,6 +339,10 @@ export class DebugPanel {
     root.querySelector('.find-spawn')!.addEventListener('click', () => this.opts.onFindSpawn(variant.value || null));
     root.querySelector('.finds-clear')!.addEventListener('click', () => this.opts.onFindsClear());
     root.querySelector('.specimens-clear')!.addEventListener('click', () => this.opts.onSpecimensClear());
+    this.bookEl = root.querySelector('.book')!;
+    root.querySelector('.facts-open')!.addEventListener('click', () => this.opts.onFactsAll(true));
+    root.querySelector('.facts-close')!.addEventListener('click', () => this.opts.onFactsAll(false));
+    root.querySelector('.dummy-photo')!.addEventListener('click', () => this.opts.onDummyPhoto());
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-sound]')) {
       b.addEventListener('click', () => this.opts.onSound(b.dataset.sound as SoundName, b.dataset.opts ? (JSON.parse(b.dataset.opts) as SoundOptions) : {}));
     }
@@ -513,6 +530,15 @@ export class DebugPanel {
     const sealed = state.letters.filter((l) => l.sealed).length;
     const text = `送った ${state.sent.length}匹　${reply}　手紙 ${state.letters.length}通${sealed ? `（封筒 ${sealed}）` : ''}`;
     if (this.uncleEl.textContent !== text) this.uncleEl.textContent = text;
+  }
+
+  /** 種のページ：豆知識の数（読んだ数）、写真の数、数えているもの */
+  showBook(state: GameState): void {
+    const b = state.book;
+    const facts = b.species.reduce((n, r) => n + r.facts.length, 0);
+    const photos = b.species.reduce((n, r) => n + r.photos.length, 0);
+    const text = `豆知識 ${facts}（読んだ ${b.factsSeen}）　写真 ${photos}　餌 ${b.counts.feeds}回・起き直り ${b.counts.righted}回`;
+    if (this.bookEl.textContent !== text) this.bookEl.textContent = text;
   }
 
   /** 拾いもの：瓶ごとの瓶底の物（置いた物）と、標本の数 */

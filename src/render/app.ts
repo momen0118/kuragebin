@@ -25,7 +25,7 @@ import {
   type Object3D,
   type Texture,
 } from 'three';
-import { BELL, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, QUALITY, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, BOOK, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, QUALITY, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState, Specimen } from '../sim/state';
@@ -610,7 +610,7 @@ export class App {
 
   /**
    * 画面をタップした（ndc は -1〜1）。瓶の空いたところなら、ガラスをつついて近くの海月が反応する。
-   * 反応した個体がいれば true
+   * ガラスに当たったら true
    */
   poke(ndcX: number, ndcY: number): boolean {
     if (!this.atRest) return false;
@@ -633,7 +633,8 @@ export class App {
     if (t <= 0 || hit.y < 0 || hit.y > JAR.height) return false;
     this.agitations[i] = Math.min(1, this.agitations[i]! + 0.3);
     this.onSound?.('poke', { height: hit.y / JAR.height, underwater: hit.y < JAR.waterLevel });
-    return this.jars[i]!.poke(hit);
+    this.jars[i]!.poke(hit);
+    return true;
   }
 
   /** 瓶 i のカメラから画面上の点（ndc）へ向かう線が、奥行き z の面と交わる所（瓶の中心が原点） */
@@ -760,17 +761,57 @@ export class App {
    */
   photoFind(id: number): string | null {
     if (!this.atRest) return null;
-    const r = this.renderer;
-    const ratio = r.getPixelRatio();
-    const cssW = this.width / ratio;
-    const cssH = this.height / ratio;
-    const at = this.findScreen(id, cssW, cssH);
+    const ratio = this.renderer.getPixelRatio();
+    const at = this.findScreen(id, this.width / ratio, this.height / ratio);
     if (!at) return null;
     const hs = Math.max(at.r * FIND_PHOTO.frame, FIND_PHOTO.minHalfPx);
+    return this.regionPhoto(at.x, at.y, hs, FIND_PHOTO.px, FIND_PHOTO.quality);
+  }
+
+  /**
+   * 表示中の瓶の個体 id を真ん中にした写真（種のページに貼る）。その所を狭い画角で描き直して撮る（そのときの光のまま、暗すぎるときだけ持ち上げる）。
+   * JPEG の data URL。撮れなければ null
+   */
+  photoCreature(id: number): string | null {
+    if (!this.atRest) return null;
+    const ratio = this.renderer.getPixelRatio();
+    const a = this.noteAnchor(id, this.width / ratio, this.height / ratio);
+    if (!a) return null;
+    const hs = Math.max(a.r * BOOK.photoFrame, BOOK.photoMinHalfPx);
+    return this.regionPhoto(a.x, a.y + (a.swimmer ? a.r * BOOK.photoDrop : 0), hs, BOOK.photoPx, BOOK.photoQuality);
+  }
+
+  /** 虫眼鏡のレンズの中身を写真に（丸の内側を正方形に切り抜く）。JPEG の data URL。使っていなければ null */
+  photoLens(): string | null {
+    const px = Math.round(BOOK.photoPx * Math.SQRT2);
+    const img = this.captureLens(px);
+    if (!img) return null;
+    const full = document.createElement('canvas');
+    full.width = full.height = px;
+    full.getContext('2d')?.putImageData(img, 0, 0);
+    // 丸に内接する正方形（縁のゆがみと映り込みは少し内側まで来るので、さらにわずかに内側）
+    const side = (px / Math.SQRT2) * 0.96;
+    const out = document.createElement('canvas');
+    out.width = out.height = BOOK.photoPx;
+    const ctx = out.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(full, (px - side) / 2, (px - side) / 2, side, side, 0, 0, BOOK.photoPx, BOOK.photoPx);
+    try {
+      return out.toDataURL('image/jpeg', BOOK.photoQuality);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 画面の (cx, cy)（CSS px）を真ん中に、半径 hs の所を狭い画角で描き直して、一辺 px の JPEG にする。
+   * そのときの光のまま、真ん中の明るさで測って暗すぎるときだけ持ち上げる
+   */
+  private regionPhoto(cx: number, cy: number, hs: number, px: number, quality: number): string | null {
+    const r = this.renderer;
     const vis = this.visibleJars();
     const xs = vis.map((i) => this.jarX(i));
-    const px = FIND_PHOTO.px;
-    this.renderRegion(vis, xs, at.x - hs, at.y - hs, 2 * hs, px);
+    this.renderRegion(vis, xs, cx - hs, cy - hs, 2 * hs, px);
     const rt = new WebGLRenderTarget(px, px, { type: UnsignedByteType, depthBuffer: false });
     this.copy.uniforms.tSrc.value = this.lens.out.texture;
     this.copy.render(r, rt);
@@ -778,7 +819,6 @@ export class App {
     r.readRenderTargetPixels(rt, 0, 0, px, px, data);
     rt.dispose();
     r.setRenderTarget(null);
-    // 暗すぎるときだけ持ち上げる（拾いもののあたり、真ん中の明るさで測る）
     let sum = 0;
     let count = 0;
     const lo = Math.floor(px * (0.5 - FIND_PHOTO.meter / 2));
@@ -810,7 +850,7 @@ export class App {
     }
     ctx.putImageData(img, 0, 0);
     try {
-      return canvas.toDataURL('image/jpeg', FIND_PHOTO.quality);
+      return canvas.toDataURL('image/jpeg', quality);
     } catch {
       return null;
     }
@@ -931,6 +971,26 @@ export class App {
       splash: this.splash.active,
       dust: this.dust.suspended,
       righting: this.creatures.swimmers.filter((j) => j.righting).length,
+    };
+  }
+
+  /** 表示中の瓶で、逆さまになって起き直りはじめた回数と起き直った回数（読むと 0 に戻る。豆知識のきっかけ） */
+  takeRighting(): { flips: number; righted: number } {
+    return this.creatures.takeRighting();
+  }
+
+  /** 表示中の瓶の輪郭（CSS px）：胴の左右の縁、口の縁の上端、瓶底 */
+  jarBounds(cssWidth: number, cssHeight: number): { left: number; right: number; top: number; bottom: number } {
+    const cam = this.placeJarCamera(this.jarIndex);
+    const at = (x: number, y: number, z: number): [number, number] => {
+      const p = this.tmpV.set(x, y, z).project(cam);
+      return [((p.x + 1) / 2) * cssWidth, ((1 - p.y) / 2) * cssHeight];
+    };
+    return {
+      left: at(-JAR.radius, JAR.height * 0.5, 0)[0],
+      right: at(JAR.radius, JAR.height * 0.5, 0)[0],
+      top: at(0, JAR.height, -JAR.neckRadius)[1],
+      bottom: at(0, 0, JAR.radius)[1],
     };
   }
 
