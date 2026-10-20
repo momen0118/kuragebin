@@ -102,6 +102,8 @@ export class Notebook {
   /** めくっている最中（アニメーション） */
   private busy = false;
   private suppressClick = false;
+  /** 最後に書いた中身の目印（refresh で変わっていなければ書き直さない） */
+  private rendered = '';
   /** 写真を大きく見る所と、見ている写真 */
   private viewer!: HTMLElement;
   private viewing: number | null = null;
@@ -219,9 +221,19 @@ export class Notebook {
     if (!this.shown || this.editing || this.busy) return;
     const key = this.leaves[this.cur]?.key;
     this.build();
+    // 開いている間もゲームの時間は1秒ごとに進むので、中身が変わっていなければ書き直さない（読んでいる所が先頭へ戻らないように）
+    if (this.signature() === this.rendered) return;
     const i = this.leaves.findIndex((l) => l.key === key);
     this.cur = i >= 0 ? i : 0;
+    // 同じページなら、読んでいた所のまま
+    const top = i >= 0 ? (this.body()?.scrollTop ?? 0) : 0;
     this.renderAll();
+    if (top > 0) this.body()?.scrollTo(0, top);
+  }
+
+  /** 書いた中身の目印（ページの中身と、設定のページに出す値） */
+  private signature(): string {
+    return JSON.stringify([this.leaves, this.opts.motion(), this.opts.sound(), this.opts.quality()]);
   }
 
   /** 部屋の明るさに合わせた紙の明るさ（1 で昼） */
@@ -250,6 +262,7 @@ export class Notebook {
     this.setAngle(this.current, 0);
     this.setAngle(this.over, 180);
     this.current.querySelector('.leaf-body')?.scrollTo(0, 0);
+    this.rendered = this.signature();
     // 種のページを開いた：豆知識を読んだことにする（「初めて種のページを開いたとき」の行も、ここで増える）
     if (this.leaves[this.cur]?.kind === 'species') queueMicrotask(() => this.opts.speciesShown());
   }
