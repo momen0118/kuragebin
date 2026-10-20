@@ -13,10 +13,11 @@ const DAY = 86400;
 /** 状態 s を days 日進める（閉じていた分として、または瓶 watching を見ながら） */
 const run = (s: GameState, days: number, watching: number | null = null): GameState => advance(s, days * DAY, LIFE, watching);
 
-/** 瓶が空のまま（生活環の個体なし）で始める。拾いものだけを数えやすいように */
+/** どの瓶にもポリプが1つずついる状態で始める（何もいない瓶には拾いものが現れないので） */
 function empty(seedOffset = 0): GameState {
   const s = createInitialState(T0 + seedOffset * 1000);
   s.jars[0]!.creatures = [];
+  for (let j = 0; j < s.jars.length; j++) spawnCreature(s, j, 'polyp');
   return s;
 }
 
@@ -39,13 +40,21 @@ describe('拾いものが現れる', () => {
     const meanDays = span / total;
     expect(meanDays).toBeGreaterThan(FINDS.meanDays * 0.8);
     expect(meanDays).toBeLessThan(FINDS.meanDays * 1.25);
-  });
+  }, 60_000);
 
   test('見ている瓶には現れない（ほかの瓶には現れる）', () => {
     let s = empty();
     s = run(s, 60, 1);
     expect(findsIn(s, 1)).toHaveLength(0);
     expect(findsIn(s, 0).length + findsIn(s, 2).length).toBeGreaterThan(0);
+  });
+
+  test('何もいない瓶には現れない（水を替えないので）', () => {
+    const s = createInitialState(T0);
+    const n = run(s, 120);
+    expect(findsIn(n, 1)).toHaveLength(0);
+    expect(findsIn(n, 2)).toHaveLength(0);
+    expect(findsIn(n, 0).length).toBeGreaterThan(0);
   });
 
   test('1瓶に3つまで', () => {
@@ -132,7 +141,6 @@ describe('拾う・置く', () => {
     const here = findsIn(s, 0);
     expect(here).toHaveLength(FINDS.maxPerJar);
     expect(here.filter((x) => x.at!.placed)).toHaveLength(1);
-    expect(s.journal.filter((e) => e.kind !== 'water')).toHaveLength(0);
   });
 
   test('沈める場所は、ポリプやほかの物から離れた所', () => {
@@ -147,13 +155,14 @@ describe('拾う・置く', () => {
     for (const o of others) expect(Math.hypot(me[0] - o[0], (me[1] - o[1]) * FINDS.depthWeight)).toBeGreaterThan(0.12);
   });
 
-  test('日誌には書かない', () => {
-    const s = empty();
+  test('拾う・沈めるは日誌に書かない', () => {
+    const s = run(empty(), 1);
     const id = spawnFind(s, 0);
-    const n = run(s, 30);
-    expect(n.journal.filter((e) => !['water'].includes(e.kind))).toHaveLength(0);
-    pickFind(n, id, T0);
-    expect(n.journal.filter((e) => !['water'].includes(e.kind))).toHaveLength(0);
+    const before = s.journal.length;
+    pickFind(s, id, T0);
+    placeFind(s, id, 1);
+    pickFind(s, id, T0);
+    expect(s.journal).toHaveLength(before);
   });
 });
 

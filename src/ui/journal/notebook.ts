@@ -284,7 +284,7 @@ export class Notebook {
     }
     const on = this.opts.motion();
     const quality = this.opts.quality();
-    return `<div class="leaf-body"><div class="leaf-head"><span></span><button type="button" class="to-journal">日誌へ</button></div>
+    return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">設定</h2><button type="button" class="to-journal">日誌へ</button></div>
       <div class="settings">
       <div class="motion">
         <p class="label">揺れ</p>
