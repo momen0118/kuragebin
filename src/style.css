@@ -1604,11 +1604,22 @@ body {
   padding-top: 4px;
 }
 
+/* 一行ずつ頭に中黒。折り返した行は中黒の後ろに揃える */
 .leaf .fact {
   margin: 0;
+  padding-left: 1em;
+  text-indent: -1em;
   font-size: 13px;
   line-height: var(--line-h);
   letter-spacing: 0.02em;
+}
+
+.leaf .fact::before {
+  content: '・';
+}
+
+.leaf .fact .found {
+  text-indent: 0;
 }
 
 /* 見つけた日はいつも右端に。最後の行に入りきらなければ、次の行の右端（その行も罫線に乗る） */
