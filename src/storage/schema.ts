@@ -1,8 +1,9 @@
 // 保存データの版とマイグレーション。古い版のデータは1版ずつ順に今の形へ直す。
 // 形が合わないデータは読み込まない（呼び出し側で新しい状態から始める）。
-import { CARE, FIND_VARIANTS, LIFE } from '../config';
+import { ADULT_GROWTH, CARE, FIND_VARIANTS, LIFE } from '../config';
 import { createBook, FACT_KEYS } from '../sim/book';
 import { BASE_GENES, sanitizeGenes } from '../sim/genes';
+import { createRng } from '../sim/rng';
 import { sexFromSeed } from '../sim/sex';
 import { DEFAULT_SETTINGS, firstLetter, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Sex, type Stage } from '../sim/state';
 
@@ -116,7 +117,6 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
   // 10：雌雄とプラヌラ。最初の一匹（番号1）はメス、ほかの成体・エフィラは個体の種から半々。
   // 成体になってからの時間は、年齢からエフィラの期間（真ん中）を引いて見積もる（親のない個体は年齢のまま）。
   // 送った子も同じ決め方（エフィラは null で出さない）。
-  // 最初の手紙は前の文面のまま（pick 0。最初の一匹はプラヌラを抱えていないので）
   9: (d) => {
     const jars = Array.isArray(d.jars) ? d.jars : [];
     const [elo, ehi] = LIFE.ephyra;
@@ -140,7 +140,32 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
       sent: Array.isArray(d.sent) ? d.sent.map((r: unknown) => (isObject(r) ? { ...r, sex: r.stage === 'adult' ? sexOf(r) : null } : r)) : d.sent,
     };
   },
+  // 11：成体になってからの成長。すでにいる成体は育ちきった今の大きさのまま（更新した途端に縮まない）。
+  // エフィラ（とほかの段階）の育ちきった大きさは、個体の種から決める
+  10: (d) => {
+    const jars = Array.isArray(d.jars) ? d.jars : [];
+    return {
+      ...d,
+      jars: jars.map((jar: unknown) => {
+        if (!isObject(jar) || !Array.isArray(jar.creatures)) return jar;
+        return {
+          ...jar,
+          creatures: jar.creatures.map((c: unknown) => {
+            if (!isObject(c)) return c;
+            const adult = c.stage === 'adult';
+            return { ...c, adultGrowth: adult ? 1 : 0, fullSize: adult ? 1 : fullSizeFromSeed(isNumber(c.seed) ? c.seed : 0) };
+          }),
+        };
+      }),
+    };
+  },
 };
+
+/** 個体の種から育ちきった大きさを決める（版10までのエフィラなど。乱数の並びを変えないため） */
+function fullSizeFromSeed(seed: number): number {
+  const [lo, hi] = ADULT_GROWTH.fullSize;
+  return createRng((seed ^ 0x5bd1e995) >>> 0).range(lo, hi);
+}
 
 export class SchemaError extends Error {}
 
@@ -229,6 +254,12 @@ function validate(d: Raw): GameState {
       if (!swimmer) c.sex = null;
       else if (!isSex(c.sex)) c.sex = sexFromSeed(c.seed as number);
       if (c.stage !== 'adult' || !isNumber(c.adultAge) || c.adultAge < 0) c.adultAge = 0;
+      // 成体になってからの育ちと、育ちきった大きさ。読めなければ育ちきった今までの大きさ
+      if (c.stage !== 'adult') c.adultGrowth = 0;
+      else if (!isNumber(c.adultGrowth)) c.adultGrowth = 1;
+      else c.adultGrowth = Math.min(Math.max(c.adultGrowth, 0), 1);
+      const [lo, hi] = ADULT_GROWTH.fullSize;
+      c.fullSize = isNumber(c.fullSize) ? Math.min(Math.max(c.fullSize, lo), hi) : 1;
       const b = c.brood;
       c.brood = c.stage === 'adult' && c.sex === 'female' && isObject(b) && isNumber(b.from) && isNumber(b.until) ? { from: b.from, until: b.until } : null;
     }

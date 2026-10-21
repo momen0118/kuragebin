@@ -25,9 +25,6 @@ describe('おじさん：最初の手紙', () => {
     expect(s.letters[0]).toMatchObject({ kind: 'first', sealed: true, jar: 0 });
     expect(s.journal).toHaveLength(0);
     expect(letterLines(s.letters[0]!).join('')).toContain('海には放さないでください');
-    // 最初の一匹はプラヌラを抱えているので、「餌はやりすぎないこと。」の次に一行
-    const lines = letterLines(s.letters[0]!);
-    expect(lines[lines.findIndex((l) => l.includes('餌はやりすぎないこと。')) + 1]).toBe('抱えているので、そのうち底に何か付きます。');
   });
 
   test('読むと、その日のページに留まる', () => {
@@ -56,8 +53,6 @@ describe('おじさん：最初の手紙', () => {
     expect(m.journal.length).toBeGreaterThan(m.journalSeen);
     const lines = journalPages(m.journal, { letters: m.letters }).flatMap((p) => p.sections.flatMap((x) => x.lines));
     expect(lines).toContain('手紙が届いていた');
-    // 最初の一匹はプラヌラを抱えていないので、前の文面のまま
-    expect(letterLines(m.letters[0]!).join('')).not.toContain('抱えている');
   });
 });
 

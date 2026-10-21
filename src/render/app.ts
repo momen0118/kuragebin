@@ -559,12 +559,13 @@ export class App {
   }
 
   /**
-   * 天板の上の点（瓶 jar の座標の x, z）が画面のどこに見えるか（CSS px）と、近さによる大きさの倍率（瓶の真下で 1）。
-   * 机の上に置いてあるもの（封筒・虫眼鏡）を、瓶と一緒に動かす
+   * 部屋の天板に置いてある物（虫眼鏡・封筒）の画面上の位置（CSS px）と、近いほど大きく見える倍率（瓶の真下で 1）。
+   * 瓶ではなく部屋の側に一つだけあり、瓶を切り替えても動かない（画面に固定。天板の写真の視差にも合わせない。
+   * 合わせると、わずかにずれるのがかえって気になった）。x, z は、止まっている瓶の座標での天板の上の位置
    */
-  tablePoint(jar: number, x: number, z: number, cssWidth: number, cssHeight: number): { x: number; y: number; scale: number } {
+  roomPoint(x: number, z: number, cssWidth: number, cssHeight: number): { x: number; y: number; scale: number } {
     const cam = this.camera;
-    const p = this.tmpV.set(x + this.jarX(jar), 0, z);
+    const p = this.tmpV.set(x, 0, z);
     const eye = this.tmpV2.setFromMatrixPosition(cam.matrixWorld);
     const scale = eye.length() / Math.max(p.distanceTo(eye), 1e-3);
     p.project(cam);

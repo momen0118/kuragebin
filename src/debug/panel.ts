@@ -6,6 +6,7 @@
 // 状態の表示・リセット・書き出し・読み込み。
 import { DEBUG, FIND_VARIANTS, LOUPE, SEX, type PhotoName } from '../config';
 import { broodAmount, isMature, sexColorAmount } from '../sim/sex';
+import { bodySize } from '../sim/size';
 import type { GameInfo } from '../game';
 import type { GeneEdit, SexEdit } from '../sim/edit';
 import type { SoundName, SoundOptions } from '../sound/sound';
@@ -40,6 +41,8 @@ export interface DebugPanelOptions {
   onGenes(id: number, edit: GeneEdit): void;
   /** 雌雄（選んでいる個体）：オス・メス・成熟前に切り替える、成熟までの時間を飛ばす、メスにプラヌラを抱えさせる */
   onSex(id: number, edit: SexEdit | 'mature' | 'brood'): void;
+  /** 成体になってからの成長（選んでいる個体）：1日ぶん進める、育ちきった大きさにする */
+  onGrow(id: number, edit: 'day' | 'full'): void;
   /** 泳ぐ個体を成体 n 匹にする（混み具合の確認） */
   onFill(n: number): void;
   /** 泳ぐ個体の上限を差し替える（保存しない） */
@@ -111,9 +114,13 @@ function span(seconds: number): string {
   return parts.slice(0, 2).join(' ');
 }
 
-/** 選んでいる個体の雌雄：雌雄、成熟まで（または色の出かた）、プラヌラを抱えている残り */
+/** 選んでいる個体の雌雄：雌雄、成熟まで（または色の出かた）、プラヌラを抱えている残り。泳ぐ個体は大きさも */
 function sexInfo(c: Creature, time: number): string {
   if (!c.sex) return '雌雄なし（瓶底の段階）';
+  return `${sexText(c, time)}　大きさ ${bodySize(c).toFixed(2)}（育ちきって ${c.fullSize.toFixed(2)}${c.stage === 'adult' ? `・育ち ${Math.round(c.adultGrowth * 100)}%` : ''}）`;
+}
+
+function sexText(c: Creature, time: number): string {
   const name = c.sex === 'female' ? 'メス' : 'オス';
   if (c.stage !== 'adult') return `${name}（エフィラ。札と一覧には出さない）`;
   const parts = [name];
@@ -219,6 +226,10 @@ export class DebugPanel {
           <button type="button" data-sex="immature">成熟前</button>
           <button type="button" data-sex="mature">成熟まで飛ばす</button>
           <button type="button" data-sex="brood">プラヌラを抱えさせる</button>
+        </div>
+        <div class="row buttons">
+          <button type="button" data-grow="day">成長を1日進める</button>
+          <button type="button" data-grow="full">育ちきらせる</button>
         </div>
         <div class="row buttons">
           <button type="button" data-fill="4">成体4</button>
@@ -426,6 +437,11 @@ export class DebugPanel {
     for (const b of root.querySelectorAll<HTMLButtonElement>('[data-sex]')) {
       b.addEventListener('click', () => {
         if (this.selected !== null) this.opts.onSex(this.selected, b.dataset.sex as SexEdit | 'mature' | 'brood');
+      });
+    }
+    for (const b of root.querySelectorAll<HTMLButtonElement>('[data-grow]')) {
+      b.addEventListener('click', () => {
+        if (this.selected !== null) this.opts.onGrow(this.selected, b.dataset.grow as 'day' | 'full');
       });
     }
     const real = root.querySelector<HTMLInputElement>('.real')!;

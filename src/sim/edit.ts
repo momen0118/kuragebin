@@ -1,6 +1,6 @@
 // 確認用の書き換え（デバッグパネルから）。状態をその場で書き換える。
 // 上限は見ない（見た目の確認のために、何匹でも出せる）。
-import { LIFE, SEX, type LifeRules } from '../config';
+import { ADULT_GROWTH, LIFE, SEX, type LifeRules } from '../config';
 import { addFind, findSpots } from './finds';
 import { createCreature, enterStage, pickSpot, updateResting } from './lifecycle';
 import { BASE_GENES, inheritGenes, sanitizeGenes, type Genes } from './genes';
@@ -35,6 +35,7 @@ export function spawnCreature(state: GameState, jarIndex: number, stage: Stage, 
   return withRng(state, (rng) => {
     const jar = state.jars[jarIndex]!;
     const c = createCreature(state, stage, rng, rules, { age: GROWN_AGE, stageAge: GROWN_AGE });
+    if (stage === 'adult') c.adultGrowth = 1;
     if (!isSwimmer(stage)) c.spot = pickSpot(spots(state, jarIndex), rng, rules);
     if (stage === 'strobila') c.discs = rules.ephyraCount[1];
     jar.creatures.push(c);
@@ -107,7 +108,7 @@ export function fillAdults(state: GameState, jarIndex: number, n: number, rules:
   const adults = jar.creatures.filter((c) => c.stage === 'adult').slice(0, n);
   const bottom = jar.creatures.filter((c) => !isSwimmer(c.stage));
   withRng(state, (rng) => {
-    while (adults.length < n) adults.push(createCreature(state, 'adult', rng, rules));
+    while (adults.length < n) adults.push(createCreature(state, 'adult', rng, rules, { adultGrowth: 1 }));
   });
   jar.creatures = [...bottom, ...adults];
   updateResting(state, jar, jarIndex, rules, null);
@@ -174,4 +175,16 @@ export function broodNow(state: GameState, id: number): void {
   if (!c || c.stage !== 'adult' || c.sex !== 'female') return;
   c.adultAge = Math.max(c.adultAge, SEX.matureAfter);
   withRng(state, (rng) => startBrood(c, state.time + state.pending, rng));
+}
+
+/** 確認用：成体の成長を seconds（ゲーム内の秒）ぶん進める */
+export function growAdult(state: GameState, id: number, seconds: number): void {
+  const c = findCreature(state, id)?.creature;
+  if (c?.stage === 'adult') c.adultGrowth = Math.min(1, c.adultGrowth + seconds / ADULT_GROWTH.seconds);
+}
+
+/** 確認用：成体を育ちきった大きさにする */
+export function growFull(state: GameState, id: number): void {
+  const c = findCreature(state, id)?.creature;
+  if (c?.stage === 'adult') c.adultGrowth = 1;
 }

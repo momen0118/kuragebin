@@ -6,7 +6,7 @@ import { BASE_GENES, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export type Species = 'aurelia';
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
@@ -70,6 +70,10 @@ export interface Creature {
   adultAge: number;
   /** プラヌラを抱えている間（成熟したメスだけ。なければ null） */
   brood: Brood | null;
+  /** 成体になってからの育ち（0〜1。成体でなければ 0）。1 で育ちきった大きさ */
+  adultGrowth: number;
+  /** 育ちきった大きさ（傘の半径の倍率。ADULT_GROWTH.fullSize の範囲。生まれたときに決まる） */
+  fullSize: number;
 }
 
 export interface Meal {
@@ -175,7 +179,7 @@ export interface Letter {
   id: number;
   /** 最初の手紙か、送った子への返事か */
   kind: 'first' | 'reply';
-  /** 返事で触れる特徴と、その中の何番目の文面か（最初の手紙は文面の版。FIRST_LETTER_BROOD） */
+  /** 返事で触れる特徴と、その中の何番目の文面か */
   topic: LetterTopic | null;
   pick: number;
   /** 返事で触れる送った子（SentRecord の番号） */
@@ -185,7 +189,7 @@ export interface Letter {
   wallTime: number;
   /** 封筒のまま、机の上の瓶の横に置いてある（まだ読んでいない）。読んだら日誌のその日のページに留まる */
   sealed: boolean;
-  /** 封筒を置いた瓶の横 */
+  /** 届いたときに見ていた瓶（封筒は部屋に一つで天板に置くので、置く場所には使っていない） */
   jar: number;
   /** 手紙に添えられた個体（新しい種を足すときに、手紙と一緒に一匹届く。今は使わない） */
   gift: Creature | null;
@@ -342,6 +346,9 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     sex: 'female',
     adultAge: SEX.matureAfter + SEX.colorRamp,
     brood: { from: 0, until },
+    // 育ちきった、今までの成体の大きさ
+    adultGrowth: 1,
+    fullSize: 1,
   };
   const jars: JarState[] = Array.from({ length: SIM.jarCount }, (_, i) => ({
     creatures: i === 0 ? [first] : [],
@@ -367,7 +374,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     journalSeen: 0,
     specimens: [],
     // 最初の成体1匹と一緒に、瓶の横に封筒が置いてある
-    letters: [firstLetter(1, 0, nowMs, 0, FIRST_LETTER_BROOD)],
+    letters: [firstLetter(1, 0, nowMs, 0)],
     sent: [],
     uncle: { nextLetterId: 2, reply: null, lastReplyAt: null },
     book: createBook(nowMs),
@@ -375,13 +382,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
   };
 }
 
-/**
- * 最初の手紙の文面の版（Letter.pick）。0 は版9までの文面、1 は最初の一匹がプラヌラを抱えている人への文面
- * （「抱えているので、そのうち底に何か付きます。」の一行がある）
- */
-export const FIRST_LETTER_BROOD = 1;
-
-/** 最初の手紙（封筒のまま、瓶 jar の横に置いてある）。pick は文面の版 */
-export function firstLetter(id: number, time: number, wallMs: number, jar: number, pick = 0): Letter {
-  return { id, kind: 'first', topic: null, pick, about: null, arrivedAt: time, wallTime: wallMs, sealed: true, jar, gift: null };
+/** 最初の手紙（封筒のまま、天板に置いてある） */
+export function firstLetter(id: number, time: number, wallMs: number, jar: number): Letter {
+  return { id, kind: 'first', topic: null, pick: 0, about: null, arrivedAt: time, wallTime: wallMs, sealed: true, jar, gift: null };
 }

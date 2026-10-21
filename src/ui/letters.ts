@@ -5,23 +5,13 @@ import { UNCLE } from '../config';
 import type { Letter, LetterTopic } from '../sim/state';
 import { keepToSelf } from './jarActions';
 
-/** 最初の手紙（仮の文面）。文面の版（Letter.pick）ごと：0 は版9までの文面、1 は最初の一匹がプラヌラを抱えている人への文面 */
-const FIRST: ReadonlyArray<readonly string[]> = [
-  [
-    '研究室で殖えすぎたので、一匹送ります。',
-    'ミズクラゲです。',
-    '蓋はいりません。餌はやりすぎないこと。',
-    '増えても海には放さないでください。こちらで引き取ります。',
-    'いろいろな顔のを見てみたいので、気が向いたら送ってください。',
-  ],
-  [
-    '研究室で殖えすぎたので、一匹送ります。',
-    'ミズクラゲです。',
-    '蓋はいりません。餌はやりすぎないこと。',
-    '抱えているので、そのうち底に何か付きます。',
-    '増えても海には放さないでください。こちらで引き取ります。',
-    'いろいろな顔のを見てみたいので、気が向いたら送ってください。',
-  ],
+/** 最初の手紙 */
+const FIRST: readonly string[] = [
+  '研究室で殖えすぎたので、一匹送ります。ミズクラゲです。',
+  '蓋はいりません。餌はたまにで足ります。やりすぎないこと。',
+  'しばらく放っておいても、勝手にやっています。',
+  '増えても海には放さないでください。こちらで引き取ります。',
+  'いろいろな顔のを見てみたいので、気が向いたら送ってください。',
 ];
 
 /** 返事の文面（送った子の特徴ごと） */
@@ -37,7 +27,7 @@ const REPLIES: Record<LetterTopic, ReadonlyArray<readonly string[]>> = {
 
 /** 手紙の本文（署名は別） */
 export function letterLines(l: Pick<Letter, 'kind' | 'topic' | 'pick'>): readonly string[] {
-  if (l.kind === 'first') return FIRST[l.pick] ?? FIRST[0]!;
+  if (l.kind === 'first') return FIRST;
   const list = REPLIES[l.topic ?? 'plain'] ?? REPLIES.plain;
   return list[l.pick % list.length]!;
 }

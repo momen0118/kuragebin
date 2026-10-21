@@ -5,6 +5,7 @@ import { Group, Vector3, type Camera, type Object3D, type PerspectiveCamera } fr
 import { EPHYRA, SWIM } from '../config';
 import { genesKey } from '../sim/genes';
 import { broodAmount, sexColorAmount } from '../sim/sex';
+import { bodySize } from '../sim/size';
 import { createRng } from '../sim/rng';
 import { isSwimmer, type Creature, type JarState } from '../sim/state';
 import type { Eater } from './food';
@@ -154,7 +155,7 @@ export class Creatures {
 
   private apply(v: View, c: Creature, jar: JarState, time: number): void {
     if (v.kind === 'swimmer') {
-      v.jelly.setGrowth(this.growthOf(c), this.startRadius());
+      v.jelly.setGrowth(this.growthOf(c), this.startRadius(), bodySize(c));
       v.neighbor.radius = v.jelly.radius;
       v.jelly.stomach.sync(c.meal, time);
       v.jelly.setSex(c.sex, sexColorAmount(c), broodAmount(c, time));

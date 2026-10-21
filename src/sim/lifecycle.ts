@@ -2,7 +2,7 @@
 // エフィラは育って成体になる。泳ぐ個体が上限に達した瓶では、ポリプは休んで進まない。
 // 出来事は日誌に書く。ただし見ている瓶（ctx.watching）の出来事は書かない（見ていたので）。
 // advance.ts の1刻みごとに呼ぶ（状態をその場で書き換える）。
-import { LIFE, SEX, type LifeRules } from '../config';
+import { ADULT_GROWTH, LIFE, SEX, type LifeRules } from '../config';
 import { stepCare } from './care';
 import { findSpots } from './finds';
 import { BASE_GENES, inheritGenes } from './genes';
@@ -60,6 +60,7 @@ export function enterStage(c: Creature, stage: Stage, rng: Rng, rules: LifeRules
   if (isSwimmer(stage)) c.spot = null;
   if (stage !== 'adult') {
     c.adultAge = 0;
+    c.adultGrowth = 0;
     c.brood = null;
   }
   if (!isSwimmer(stage)) c.sex = null;
@@ -73,8 +74,9 @@ export function enterStage(c: Creature, stage: Stage, rng: Rng, rules: LifeRules
 export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: LifeRules = LIFE, extra: Partial<Creature> = {}): Creature {
   const seed = Math.floor(rng.next() * 2 ** 32) >>> 0;
   const stageLength = pickStageLength(stage, rng, rules);
-  // 成体・エフィラは生まれたときに雌雄が決まる
+  // 成体・エフィラは生まれたときに雌雄が決まる。育ちきった大きさも生まれたときに決まる
   const sex = isSwimmer(stage) ? pickSex(rng) : null;
+  const fullSize = rng.range(ADULT_GROWTH.fullSize[0], ADULT_GROWTH.fullSize[1]);
   return {
     id: state.nextId++,
     species: 'aurelia',
@@ -95,6 +97,8 @@ export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: 
     sex,
     adultAge: 0,
     brood: null,
+    adultGrowth: 0,
+    fullSize,
     ...extra,
   };
 }
@@ -160,6 +164,8 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
     switch (c.stage) {
       case 'adult': {
         c.adultAge += dt;
+        // 成体になってからも、数日かけて育ちきった大きさへ
+        c.adultGrowth = Math.min(1, c.adultGrowth + dt / ADULT_GROWTH.seconds);
         // 抱えていたプラヌラの粒がなくなった：しばらくして、今いる瓶の瓶底に付く
         if (c.brood && state.time >= c.brood.until) {
           jar.planulae.push({ at: state.time + rng.range(SEX.settle[0], SEX.settle[1]), parent: c.id, genes: inheritGenes(c.genes, rng, false) });
