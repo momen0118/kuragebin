@@ -6,7 +6,8 @@ import sharp from 'sharp';
 import { copyFile, mkdir, access } from 'node:fs/promises';
 
 const MAX_LONG_SIDE = 2048;
-const BACKGROUNDS = ['day', 'dusk', 'night', 'sakura'];
+// 家（day・dusk・night・sakura）と研究室（lab-*）
+const BACKGROUNDS = ['day', 'dusk', 'night', 'sakura', 'lab-day', 'lab-dusk', 'lab-night'];
 
 const exists = (p) => access(p).then(() => true, () => false);
 

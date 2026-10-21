@@ -1,6 +1,6 @@
 // ゲームの状態。瓶・個体・日誌・標本・設定を1つの状態として持ち、そのまま保存する。
 // 描画・DOM・three.js には依存しない。
-import { CARE, LIFE, SEX, SIM } from '../config';
+import { CARE, LIFE, SEX, SIM, type RoomName } from '../config';
 import { createBook, type BookState } from './book';
 import { BASE_GENES, type Genes } from './genes';
 import { createRng } from './rng';
@@ -254,6 +254,13 @@ export interface Settings {
   quality: 'high' | 'medium' | 'low';
   /** 開いたときに出す瓶（前回見ていた瓶、0 から） */
   jar: number;
+  /** 部屋（背景の写真の組）：家か研究室 */
+  room: RoomName;
+  /**
+   * 部屋を選べない（研究室の入り口 ?room=lab から始めた端末。お母さん用）。設定に部屋の欄を出さない。
+   * 外すのはデバッグパネルからだけ
+   */
+  roomLocked: boolean;
 }
 
 export interface GameState {
@@ -288,6 +295,8 @@ export const DEFAULT_SETTINGS: Settings = {
   motion: true,
   quality: 'high',
   jar: 0,
+  room: 'home',
+  roomLocked: false,
 };
 
 /** 段階ごとの長さの範囲（秒） */

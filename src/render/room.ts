@@ -1,5 +1,5 @@
 // 部屋（背景写真）。時刻に合わせて隣り合う2枚を重ね、上ほど強くぼかす。
-// 写真ごとのずれは PHOTO_ALIGN で昼の写真に合わせる。
+// 部屋（家・研究室）ごとに写真の組がある（ROOMS）。写真ごとのずれは PHOTO_ALIGN で家の昼の写真に合わせる。
 // 写真より横長の画面では写真を高さいっぱいに置き、左右の端を暗くぼかして黒に溶かす。
 // 写真の下端（天板の手前の縁と、その下の暗い帯）は見せず、天板が手前へ続いてぼけながら闇に溶けるようにする。
 // ぼかした版は読み込み時に一度だけ作る。合成結果は光が変わったときだけ作り直す。
@@ -15,7 +15,7 @@ import {
   type WebGLRenderer,
   type WebGLRenderTarget,
 } from 'three';
-import { LAMP, PHOTO, PHOTO_ALIGN, ROOM, type PhotoName } from '../config';
+import { LAMP, PHOTO, PHOTO_ALIGN, ROOM, ROOMS, type PhotoName, type RoomName } from '../config';
 import { FullscreenPass } from './fullscreen';
 import type { LightState } from './lighting';
 import { coverTransform, type PhotoCamera } from './camera';
@@ -82,6 +82,8 @@ uniform float uTableBackZ, uTableLeftX;
  * 見ている側が机に沿って横へずれたように、手前ほど大きく、奥の壁はほんの少し
  */
 uniform vec2 uShift;
+// 夜の光だまりの強さの倍率（部屋ごと。天板の明るさで割り戻す）
+uniform float uTableLight;
 /** 天板に立っている瓶の横の位置（ワールド x）と数。デスクライトの光だまりは瓶ごとに落ちる */
 uniform float uJarX[2];
 uniform int uJarCount;
@@ -148,7 +150,7 @@ vec3 roomAt(vec2 uv, vec2 geo, float b) {
         vec3 q = tp.xyz - vec3(uJarX[i], 0.0, 0.0);
         lit += lampSpot(q) * saturate(lampDir(q).y);
       }
-      c += photo(0, uv, b) * uLampColor * min(lit, 1.5) * tp.w * ${LAMP.poolGain.toFixed(3)};
+      c += photo(0, uv, b) * uLampColor * min(lit, 1.5) * tp.w * ${LAMP.poolGain.toFixed(3)} * uTableLight;
     }
   }
   // 確認用：別の写真を半透明で重ねる
@@ -229,8 +231,8 @@ function loadTexture(url: string): Promise<Texture> {
   });
 }
 
-function alignUniform(name: PhotoName): Vector4 {
-  const a = PHOTO_ALIGN[name];
+function alignUniform(room: RoomName, name: PhotoName): Vector4 {
+  const a = PHOTO_ALIGN[room][name];
   // 写真px → UV（v は上向き）
   return new Vector4(a.offset[0] / PHOTO.width, -a.offset[1] / PHOTO.height, a.scale[0], a.scale[1]);
 }
@@ -252,7 +254,10 @@ export class Room {
   debugOverlay: PhotoName | null = null;
   /** 確認用：写真の代わりに縦縞を出す */
   debugPattern = false;
-  private photos = new Map<PhotoName, PhotoSet>();
+  /** 読み込んだ写真（ファイル名ごと）。今の部屋の写真だけを持つ */
+  private photos = new Map<string, PhotoSet>();
+  /** 今の部屋 */
+  room: RoomName = 'home';
   private blurPass = new FullscreenPass(BLUR_FRAG, {
     tSrc: { value: null as Texture | null },
     uStep: { value: new Vector2() },
@@ -270,7 +275,7 @@ export class Room {
       tFull: { value: [] as Texture[] },
       tMid: { value: [] as Texture[] },
       tStrong: { value: [] as Texture[] },
-      uAlign: { value: PHOTO_NAMES.map(alignUniform) },
+      uAlign: { value: PHOTO_NAMES.map((n) => alignUniform('home', n)) },
       uWeights: { value: new Vector4(1, 0, 0, 0) },
       uDawn: { value: 0 },
       uDawnTint: { value: new Vector3(...ROOM.dawnTint) },
@@ -288,23 +293,37 @@ export class Room {
       uOverlay: { value: -1 },
       uPattern: { value: 0 },
       uShift: { value: new Vector2(0, 0) },
+      uTableLight: { value: 1 },
       uJarX: { value: [0, 0] },
       uJarCount: { value: 1 },
     });
   }
 
-  async load(renderer: WebGLRenderer, baseUrl: string): Promise<void> {
-    const textures = await Promise.all(PHOTO_NAMES.map((n) => loadTexture(`${baseUrl}bg/bg-${n}.webp`)));
-    PHOTO_NAMES.forEach((name, i) => {
+  /** 部屋 room の写真を読み込んで使う（前の部屋の写真は捨てる） */
+  async load(renderer: WebGLRenderer, baseUrl: string, room: RoomName = this.room): Promise<void> {
+    const files = PHOTO_NAMES.map((n) => ROOMS[room].photos[n]);
+    const missing = [...new Set(files)].filter((f) => !this.photos.has(f));
+    const textures = await Promise.all(missing.map((f) => loadTexture(`${baseUrl}bg/${f}.webp`)));
+    missing.forEach((f, i) => {
       const full = textures[i]!;
       const mid = this.blurred(renderer, full, 2, ROOM.blurSigmaMid / 2);
       const strong = this.blurred(renderer, full, 4, ROOM.blurSigmaStrong / 4);
-      this.photos.set(name, { full, mid, strong });
+      this.photos.set(f, { full, mid, strong });
     });
+    for (const [f, set] of this.photos) {
+      if (files.includes(f)) continue;
+      set.full.dispose();
+      set.mid.dispose();
+      set.strong.dispose();
+      this.photos.delete(f);
+    }
+    this.room = room;
     const u = this.composite.uniforms;
-    u.tFull.value = PHOTO_NAMES.map((n) => this.photos.get(n)!.full);
-    u.tMid.value = PHOTO_NAMES.map((n) => this.photos.get(n)!.mid.texture);
-    u.tStrong.value = PHOTO_NAMES.map((n) => this.photos.get(n)!.strong.texture);
+    u.tFull.value = files.map((f) => this.photos.get(f)!.full);
+    u.tMid.value = files.map((f) => this.photos.get(f)!.mid.texture);
+    u.tStrong.value = files.map((f) => this.photos.get(f)!.strong.texture);
+    u.uAlign.value = PHOTO_NAMES.map((n) => alignUniform(room, n));
+    u.uTableLight.value = ROOMS[room].tableLight;
   }
 
   /** 縮小してから縦横にガウスぼかしをかけた版を作る。sigma は縮小後の画素単位 */

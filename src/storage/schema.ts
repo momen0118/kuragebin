@@ -1,6 +1,6 @@
 // 保存データの版とマイグレーション。古い版のデータは1版ずつ順に今の形へ直す。
 // 形が合わないデータは読み込まない（呼び出し側で新しい状態から始める）。
-import { ADULT_GROWTH, CARE, FIND_VARIANTS, LIFE } from '../config';
+import { ADULT_GROWTH, CARE, FIND_VARIANTS, LIFE, ROOM_NAMES } from '../config';
 import { createBook, FACT_KEYS } from '../sim/book';
 import { BASE_GENES, sanitizeGenes } from '../sim/genes';
 import { createRng } from '../sim/rng';
@@ -330,6 +330,8 @@ function validate(d: Raw): GameState {
   const settings = isObject(d.settings) ? d.settings : {};
   const merged = { ...DEFAULT_SETTINGS, ...settings };
   if (!isNumber(merged.jar) || merged.jar < 0 || merged.jar >= d.jars.length) merged.jar = 0;
+  if (!(ROOM_NAMES as readonly unknown[]).includes(merged.room)) merged.room = DEFAULT_SETTINGS.room;
+  if (typeof merged.roomLocked !== 'boolean') merged.roomLocked = false;
   d.settings = merged;
   return d as unknown as GameState;
 }

@@ -27,6 +27,8 @@ export interface DebugPanelOptions {
   onClockReset(): void;
   /** 状態を最初からにする */
   onReset(): void;
+  /** 部屋の固定（研究室の入り口から始めた端末）を外す。設定で部屋を選べるようになる */
+  onRoomUnlock(): void;
   /** 書き出す JSON */
   onExport(): string;
   /** JSON を読み込む。読めなければ投げる */
@@ -157,6 +159,7 @@ export class DebugPanel {
   private readonly progressEl: HTMLInputElement;
   private readonly capSel: HTMLSelectElement;
   private readonly feedEl: HTMLDivElement;
+  private readonly roomEl: HTMLSpanElement;
   private readonly genesEl: HTMLDivElement;
   private readonly sexEl: HTMLDivElement;
   private readonly motionEl: HTMLDivElement;
@@ -324,6 +327,7 @@ export class DebugPanel {
       <details>
         <summary>状態</summary>
         <div class="state sub"></div>
+        <div class="row buttons"><span class="room-info sub"></span><button type="button" class="room-unlock">部屋の固定を外す</button></div>
         <div class="row buttons">
           <button type="button" class="export">書き出し</button>
           <button type="button" class="import">読み込み</button>
@@ -354,6 +358,7 @@ export class DebugPanel {
     this.progressEl = root.querySelector('.progress')!;
     this.capSel = root.querySelector('.cap')!;
     this.feedEl = root.querySelector('.feed')!;
+    this.roomEl = root.querySelector('.room-info')!;
     root.querySelector('.feed-now')!.addEventListener('click', () => this.opts.onFeed());
     root.querySelector('.feed-clear')!.addEventListener('click', () => this.opts.onFeedClear());
     root.querySelector('.meals-clear')!.addEventListener('click', () => this.opts.onMealsClear());
@@ -486,6 +491,10 @@ export class DebugPanel {
         this.note(`読み込めません：${e instanceof Error ? e.message : String(e)}`);
       }
     });
+    root.querySelector('.room-unlock')!.addEventListener('click', () => {
+      this.opts.onRoomUnlock();
+      this.note('部屋の固定を外しました（研究室の入り口から開くと、また固定される）');
+    });
     root.querySelector('.reset')!.addEventListener('click', () => {
       if (!confirm('状態を最初からにしますか？（保存も消えます）')) return;
       this.opts.onReset();
@@ -518,6 +527,11 @@ export class DebugPanel {
     if (info.rewound) lines.push('時計の巻き戻し：経過0で続けた');
     else if (info.lastCatchUp > 0) lines.push(`まとめて進めた分 ${span(info.lastCatchUp)}`);
     this.stateEl.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
+  }
+
+  /** 部屋（家・研究室）と、固定しているか */
+  showRoom(text: string): void {
+    if (this.roomEl.textContent !== text) this.roomEl.textContent = text;
   }
 
   /** 表示中の瓶の個体の一覧と、選んでいる個体の段階・進み。cap は泳ぐ個体の上限 */

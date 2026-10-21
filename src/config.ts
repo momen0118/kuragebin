@@ -22,15 +22,46 @@ export const PHOTO = {
 
 export type PhotoName = 'day' | 'dusk' | 'night' | 'sakura';
 
+/** 部屋（背景の写真の組）。家（ユーザー）と研究室（お母さん。おじさんの研究室の机） */
+export type RoomName = 'home' | 'lab';
+
+export const ROOM_NAMES: readonly RoomName[] = ['home', 'lab'];
+
+interface PhotoAlign {
+  offset: readonly [number, number];
+  scale: readonly [number, number];
+}
+
 /**
- * 写真ごとの位置合わせ（昼の写真が基準）。天板の奥の縁が全部の写真で揃うようにする。
- * offset は写真px（右・下が正）、scale は写真の中心まわりの倍率 [横, 縦]
+ * 部屋ごとの写真（public/bg/ のファイル名、拡張子なし）と、その部屋だけの決まり。
+ * 写真はどの部屋も同じ構図・同じ大きさ（PHOTO）で、カメラも共通。ずれは PHOTO_ALIGN で家の昼の写真に合わせる。
+ * sakura はその部屋に桜の季節があるか（家だけ。研究室の sakura の欄は使わないので昼の写真を入れておく）。
+ * tableLight は天板の光の弧と夜の光だまりの強さの倍率（どちらも昼の写真の天板を明るくして作るので、天板の明るさで割り戻す。
+ * 研究室の金属の天板は家の木目のおよそ2倍明るい）
  */
-export const PHOTO_ALIGN: Record<PhotoName, { offset: readonly [number, number]; scale: readonly [number, number] }> = {
-  day: { offset: [0, 0], scale: [1, 1] },
-  dusk: { offset: [0, 1], scale: [1, 1] },
-  night: { offset: [0, 20.6], scale: [1, 1.0432] },
-  sakura: { offset: [0, 7.9], scale: [1, 1.009] },
+export const ROOMS: Readonly<Record<RoomName, { photos: Readonly<Record<PhotoName, string>>; sakura: boolean; tableLight: number }>> = {
+  home: { photos: { day: 'bg-day', dusk: 'bg-dusk', night: 'bg-night', sakura: 'bg-sakura' }, sakura: true, tableLight: 1 },
+  lab: { photos: { day: 'bg-lab-day', dusk: 'bg-lab-dusk', night: 'bg-lab-night', sakura: 'bg-lab-day' }, sakura: false, tableLight: 0.3 },
+};
+
+/**
+ * 写真ごとの位置合わせ（家の昼の写真が基準）。天板の奥の縁が全部の写真で揃うようにする。
+ * offset は写真px（右・下が正）、scale は写真の中心まわりの倍率 [横, 縦]。
+ * 研究室の写真は天板の奥の縁が家より約31px上にあるので、縦に伸ばして下げる（上端が写真の外に出ない分だけ伸ばす）
+ */
+export const PHOTO_ALIGN: Readonly<Record<RoomName, Readonly<Record<PhotoName, PhotoAlign>>>> = {
+  home: {
+    day: { offset: [0, 0], scale: [1, 1] },
+    dusk: { offset: [0, 1], scale: [1, 1] },
+    night: { offset: [0, 20.6], scale: [1, 1.0432] },
+    sakura: { offset: [0, 7.9], scale: [1, 1.009] },
+  },
+  lab: {
+    day: { offset: [0, 23.7], scale: [1, 1.0338] },
+    dusk: { offset: [0, 23.7], scale: [1, 1.0338] },
+    night: { offset: [0, 23.7], scale: [1, 1.0338] },
+    sakura: { offset: [0, 23.7], scale: [1, 1.0338] },
+  },
 };
 
 /** 部屋（背景写真）の見せ方 */

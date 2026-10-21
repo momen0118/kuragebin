@@ -40,6 +40,10 @@ describe('保存データの版', () => {
     expect(m.settings.lamp).toBe(false);
     expect(m.settings.sound).toBe(false);
     expect(m.settings.quality).toBe('high');
+    // 部屋は家、固定なし。読めない値も家に
+    expect(m.settings).toMatchObject({ room: 'home', roomLocked: false });
+    expect(migrate({ ...s, settings: { room: 'kitchen', roomLocked: 'yes' } }).settings).toMatchObject({ room: 'home', roomLocked: false });
+    expect(migrate({ ...s, settings: { room: 'lab', roomLocked: true } }).settings).toMatchObject({ room: 'lab', roomLocked: true });
   });
 
   test('形の違うデータや新しい版のデータは読まない', () => {

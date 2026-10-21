@@ -1,13 +1,13 @@
 // 観察日誌のメモ帳。上にリングが付いた小さなもので、画面の下寄りに置く（上には瓶が薄く見えたまま）。
 // 1ページに1日、新しい日が上。下から上へめくると前の日、下へ引くと1日新しい日へ戻り、いちばん新しい日で下へ引くと閉じる。
 // 紙の外をタップしても閉じる。後ろのほうのページに個体一覧（瓶ごと。ここでも名前を付けられる）、
-// いちばん最後に設定（音、揺れ、画質、データの書き出し・読み込み）。めくる・開く・閉じるときに小さな紙の音（音がオンのとき）。紙の端から少し出た付箋2枚でそこへ飛べ、
+// いちばん最後に設定（音、揺れ、画質、部屋、データの書き出し・読み込み）。めくる・開く・閉じるときに小さな紙の音（音がオンのとき）。紙の端から少し出た付箋2枚でそこへ飛べ、
 // 一覧と設定のページには「日誌へ」。紙は少しくすんだ色で、夜は部屋の明るさに合わせて暗くする。
 // 一覧の次に種のページ（見たことのある種だけ。写真と豆知識。豆知識が増えたら付箋「種」に小さな点）。写真をタップすると大きく見られ、そこから「はがす」。
 // 写真が6枚のときに撮ったら、どの写真と入れ替えるかを選ぶ（やめてもよい）。
 // その次に標本（拾いもの。写真と名前と拾った日）。写真をタップするとその一枚が少し持ち上がり、下に「瓶に沈める」
 // （沈めてある物は「引き上げる」）。沈めるとメモ帳は下がり、瓶の前で沈んでいくところを見せる。
-import { NOTEBOOK } from '../../config';
+import { NOTEBOOK, type RoomName } from '../../config';
 import { NAME_MAX } from '../../sim/actions';
 import { feedDay } from '../../sim/feed';
 import type { GameState, Settings } from '../../sim/state';
@@ -35,6 +35,9 @@ export interface NotebookOptions {
   /** 画質（高・中・低）と、それを変える */
   quality(): Settings['quality'];
   setQuality(q: Settings['quality']): void;
+  /** 部屋（家・研究室）と、それを変える。部屋を選べない端末（研究室の入り口から始めた）では null で、欄を出さない */
+  room(): RoomName | null;
+  setRoom(r: RoomName): void;
   /** 日誌のページに留めた手紙をタップした（手紙を読む紙を開く） */
   readLetter(id: number): void;
   /** 種のページ：まだ読んでいない豆知識があるか（付箋の点）。ページを見た（豆知識を読んだことにする）。写真の画像。写真をはがす */
@@ -72,6 +75,12 @@ type Drag = {
 };
 
 const RINGS = 11;
+
+/** 部屋の選び方 */
+const ROOM_CHOICES: ReadonlyArray<[RoomName, string]> = [
+  ['home', '家'],
+  ['lab', '研究室'],
+];
 
 /** 画質の選び方（高・中・低） */
 const QUALITY_CHOICES: ReadonlyArray<[Settings['quality'], string]> = [
@@ -233,7 +242,7 @@ export class Notebook {
 
   /** 書いた中身の目印（ページの中身と、設定のページに出す値） */
   private signature(): string {
-    return JSON.stringify([this.leaves, this.opts.motion(), this.opts.sound(), this.opts.quality()]);
+    return JSON.stringify([this.leaves, this.opts.motion(), this.opts.sound(), this.opts.quality(), this.opts.room()]);
   }
 
   /** 部屋の明るさに合わせた紙の明るさ（1 で昼） */
@@ -361,6 +370,14 @@ export class Notebook {
     const on = this.opts.motion();
     const sound = this.opts.sound();
     const quality = this.opts.quality();
+    const room = this.opts.room();
+    const roomRow =
+      room === null
+        ? ''
+        : `<div class="room">
+        <p class="label">部屋</p>
+        <div class="data-buttons choice">${ROOM_CHOICES.map(([r, label]) => `<button type="button" data-room="${r}" aria-pressed="${r === room}">${label}</button>`).join('')}</div>
+      </div>`;
     return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">設定</h2><button type="button" class="to-journal">日誌へ</button></div>
       <div class="settings">
       <div class="sound">
@@ -377,6 +394,7 @@ export class Notebook {
         <p class="hint">低いほど、電池と熱にやさしい</p>
         <div class="data-buttons choice">${QUALITY_CHOICES.map(([q, label]) => `<button type="button" data-quality="${q}" aria-pressed="${q === quality}">${label}</button>`).join('')}</div>
       </div>
+      ${roomRow}
       <div class="data">
         <p class="label">データ</p>
         <p class="hint">機種を変えるときに</p>
@@ -587,6 +605,7 @@ export class Notebook {
     else if (t.classList.contains('sound-on')) this.opts.setSound(true);
     else if (t.classList.contains('sound-off')) this.opts.setSound(false);
     else if (t.dataset.quality) this.opts.setQuality(t.dataset.quality as Settings['quality']);
+    else if (t.dataset.room) this.opts.setRoom(t.dataset.room as RoomName);
   }
 
   /**

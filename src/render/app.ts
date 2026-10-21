@@ -25,7 +25,7 @@ import {
   type Object3D,
   type Texture,
 } from 'three';
-import { BELL, BOOK, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, QUALITY, RENDER, RIM_WARM, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName } from '../config';
+import { BELL, BOOK, BOX, CUP, FIND_LOOK, FIND_PHOTO, FOOD, JAR, LAMP, LOUPE, PHOTO, QUALITY, RENDER, RIM_WARM, ROOMS, SIM, SLOSH, STIRRED_SEDIMENT, SWIPE, WATER, type PhotoName, type RoomName } from '../config';
 import type { FeedingPlan } from '../sim/feed';
 import { createRng } from '../sim/rng';
 import type { JarState, Specimen } from '../sim/state';
@@ -87,6 +87,10 @@ export class App {
   readonly camera: PerspectiveCamera;
   readonly shared: SharedUniforms = createSharedUniforms();
   private readonly photoCam: PhotoCamera = solvePhotoCamera();
+  /** 写真を読み込む所（部屋を変えるとき） */
+  private baseUrl = './';
+  /** 天板の光の弧の強さの倍率（部屋ごと） */
+  private tableLight: { value: number } = { value: 1 };
   private readonly bgScene = new Scene();
   private readonly contentScene = new Scene();
   private readonly glassScene = new Scene();
@@ -308,6 +312,7 @@ export class App {
 
     const table = createTable(this.shared, pc);
     this.tableJars = table.jars;
+    this.tableLight = table.light;
     this.snow = createSnow(this.shared, rng);
     this.bgScene.add(table.mesh);
     this.contentScene.add(
@@ -345,8 +350,23 @@ export class App {
     this.composite = createComposite(pc.tableBackZ, pc.tableLeftX);
   }
 
-  async load(baseUrl: string): Promise<void> {
-    await this.room.load(this.renderer, baseUrl);
+  async load(baseUrl: string, room: RoomName = 'home'): Promise<void> {
+    this.baseUrl = baseUrl;
+    await this.room.load(this.renderer, baseUrl, room);
+    this.tableLight.value = ROOMS[room].tableLight;
+  }
+
+  /** 今の部屋（背景の写真の組） */
+  get roomName(): RoomName {
+    return this.room.room;
+  }
+
+  /** 部屋を変える（写真を読み込んでから切り替える。カメラと天板はどの部屋も同じ） */
+  async setRoom(room: RoomName): Promise<void> {
+    if (room === this.room.room) return;
+    await this.room.load(this.renderer, this.baseUrl, room);
+    this.tableLight.value = ROOMS[room].tableLight;
+    this.roomDirty = this.wideDirty = true;
   }
 
   /** CSS の大きさとデバイスピクセル比から描画サイズを決める */
