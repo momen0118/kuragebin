@@ -19,6 +19,8 @@ export interface DebugPanelOptions {
   onHour(hour: number | null): void;
   /** 写真を1枚に固定する／別の写真を半透明で重ねる（null なら使わない） */
   onPhoto(only: PhotoName | null, overlay: PhotoName | null): void;
+  /** 桜の季節の上書き（null なら日付どおり） */
+  onSakura(on: boolean | null): void;
   /** 早送りの倍率（1 で実時間） */
   onSpeed(rate: number): void;
   /** ms ミリ秒先へ一気に進める */
@@ -184,6 +186,7 @@ export class DebugPanel {
         <summary>写真</summary>
         <label class="row">写真 <select class="only">${options('時刻どおり')}</select></label>
         <label class="row">重ねる <select class="overlay">${options('なし')}</select></label>
+        <label class="row">桜の季節 <select class="sakura"><option value="">日付どおり</option><option value="1">季節にする</option><option value="0">季節にしない</option></select></label>
       </details>
       <details open>
         <summary>時間</summary>
@@ -458,6 +461,8 @@ export class DebugPanel {
       this.opts.onPhoto((this.only.value || null) as PhotoName | null, (this.overlay.value || null) as PhotoName | null);
     };
     this.only.addEventListener('change', photo);
+    const sakura = root.querySelector<HTMLSelectElement>('.sakura')!;
+    sakura.addEventListener('change', () => this.opts.onSakura(sakura.value === '' ? null : sakura.value === '1'));
     this.overlay.addEventListener('change', photo);
 
     for (const b of this.speedBtns) b.addEventListener('click', () => this.opts.onSpeed(Number(b.dataset.speed)));
