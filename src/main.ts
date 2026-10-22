@@ -938,7 +938,7 @@ async function main(): Promise<void> {
   });
   window.addEventListener('pagehide', () => void game.save());
   start();
-  registerServiceWorker(import.meta.env.BASE_URL);
+  registerServiceWorker(import.meta.env.BASE_URL, () => game.save());
 }
 
 void main();
