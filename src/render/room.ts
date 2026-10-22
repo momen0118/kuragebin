@@ -15,7 +15,7 @@ import {
   type WebGLRenderer,
   type WebGLRenderTarget,
 } from 'three';
-import { LAMP, PHOTO, PHOTO_ALIGN, ROOM, ROOMS, type PhotoName, type RoomName } from '../config';
+import { LAMP, PHOTO, PHOTO_ALIGN, ROOM, ROOMS, SAKURA, type PhotoName, type RoomName } from '../config';
 import { FullscreenPass } from './fullscreen';
 import type { LightState } from './lighting';
 import { coverTransform, type PhotoCamera } from './camera';
@@ -131,6 +131,15 @@ vec3 photo(int i, vec2 uvRef, float b) {
   return b < 0.5 ? mix(a, m, b * 2.0) : mix(m, s, b * 2.0 - 1.0);
 }
 
+// 桜の季節の写真：壁の明るい所（窓の光）だけを少し桃色に。部屋全体や天板にはかけない
+vec3 sakuraLight(vec3 c, vec2 uv) {
+  float py = (1.0 - uv.y) * ${PHOTO.height.toFixed(1)};
+  float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float m = smoothstep(${SAKURA.maskFrom.toFixed(3)}, ${SAKURA.maskTo.toFixed(3)}, lum)
+    * (1.0 - smoothstep(${SAKURA.wallUntilY.toFixed(1)}, ${(SAKURA.wallUntilY + SAKURA.wallFadeY).toFixed(1)}, py));
+  return c * mix(vec3(1.0), vec3(${SAKURA.tint.map((v) => v.toFixed(3)).join(', ')}), m);
+}
+
 // 写真の uv の点の部屋の色：時刻の写真の重ね合わせ、明け方の青み、夜のデスクライトの光だまり。
 // uv は写真を読む所（視差でずらしたあと）、geo はその画素が見ている天板の上の点を求める所（ずらす前）
 vec3 roomAt(vec2 uv, vec2 geo, float b) {
@@ -138,7 +147,7 @@ vec3 roomAt(vec2 uv, vec2 geo, float b) {
   if (uWeights.x > 0.0005) c += uWeights.x * photo(0, uv, b);
   if (uWeights.y > 0.0005) c += uWeights.y * photo(1, uv, b);
   if (uWeights.z > 0.0005) c += uWeights.z * photo(2, uv, b);
-  if (uWeights.w > 0.0005) c += uWeights.w * photo(3, uv, b);
+  if (uWeights.w > 0.0005) c += uWeights.w * sakuraLight(photo(3, uv, b), uv);
   c *= mix(vec3(1.0), uDawnTint, uDawn);
   // 夜のデスクライト：天板に楕円の光だまり。昼の写真の天板（木目）を、ライトの色で照らす
   if (uLampLevel > 0.001) {
@@ -263,6 +272,8 @@ export class Room {
   private photos = new Map<string, PhotoSet>();
   /** 今の部屋 */
   room: RoomName = 'home';
+  /** 桜の季節か（桜の季節のない部屋では使わない） */
+  sakura = false;
   private blurPass = new FullscreenPass(BLUR_FRAG, {
     tSrc: { value: null as Texture | null },
     uStep: { value: new Vector2() },
@@ -379,7 +390,9 @@ export class Room {
       u.uWeights.value.set(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0, i === 3 ? 1 : 0);
       u.uDawn.value = 0;
     } else {
-      u.uWeights.value.set(light.day, light.dusk, light.night, 0);
+      // 桜の季節は、昼の写真の代わりに桜の写真
+      const sakura = this.sakura && ROOMS[this.room].sakura;
+      u.uWeights.value.set(sakura ? 0 : light.day, light.dusk, light.night, sakura ? light.day : 0);
       u.uDawn.value = light.dawnTint;
     }
     u.uOverlay.value = this.debugOverlay ? PHOTO_NAMES.indexOf(this.debugOverlay) : -1;

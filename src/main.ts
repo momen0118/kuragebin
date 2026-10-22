@@ -1,6 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { BOOK, FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, QUALITY, SIM, SLOSH, UNCLE, type RoomName } from './config';
+import { BOOK, FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, QUALITY, ROOMS, SAKURA, SIM, SLOSH, UNCLE, type RoomName } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -9,6 +9,7 @@ import { Clock } from './sim/clock';
 import { closeAllFacts, openAllFacts } from './sim/book';
 import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, editSex, growAdult, growFull, skipMaturity, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit, type SexEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
+import { inSakuraSeason, petalOf, type Petal } from './sim/season';
 import { broodAmount } from './sim/sex';
 import { DEFAULT_SETTINGS, gameNow, type GameState, type Letter, type Settings, type Stage } from './sim/state';
 import { deliverReplyNow, resetFirstLetter } from './sim/uncle';
@@ -24,6 +25,7 @@ import { LampToggle } from './ui/lampToggle';
 import { flyLight } from './ui/finds';
 import { shouldDraw } from './ui/frameCap';
 import { Envelope, LetterReader } from './ui/letters';
+import { PetalView } from './ui/petal';
 import { Loupe } from './ui/loupe';
 import { DebugMotion, DeviceMotionSource } from './ui/motion';
 import { ShakeDetector } from './ui/motionFilter';
@@ -308,6 +310,29 @@ async function main(): Promise<void> {
     const show = l !== null && !app.handsBusy && !reader.isOpen;
     envelope.place(show ? app.roomPoint(UNCLE.envelope[0], UNCLE.envelope[1], canvas.clientWidth, canvas.clientHeight) : null);
   };
+  // 桜の季節（家の部屋だけ）：天板に花びらが一枚落ちている日がある。封筒と同じく部屋の側で、カップやスポイトを使っている間は出さない
+  const petalView = new PetalView();
+  /** 今日の花びら（光を合わせるときに日付から決め直す）と、確認用の季節の上書き（null なら日付どおり） */
+  let petal: Petal | null = null;
+  let sakuraOverride: boolean | null = null;
+  const placePetal = (): void => {
+    const show = petal !== null && ROOMS[app.roomName].sakura && !app.handsBusy;
+    petalView.place(show ? app.roomPoint(petal!.x, petal!.z, canvas.clientWidth, canvas.clientHeight) : null, petal?.angle);
+  };
+  /** 日付から桜の季節と花びらを決める。確認用に季節にしたときは、花びらが見えるよう季節の中で花びらのある最初の日のものを置く */
+  const applySeason = (): void => {
+    const now = clock.now();
+    const season = sakuraOverride ?? inSakuraSeason(now);
+    app.setSakura(season);
+    if (!season) petal = null;
+    else if (sakuraOverride === null) petal = petalOf(now);
+    else {
+      const year = new Date(now).getFullYear();
+      petal = null;
+      for (let d = SAKURA.start[1]; !petal && d <= SAKURA.end[1]; d++) petal = petalOf(new Date(year, SAKURA.start[0] - 1, d, 12).getTime());
+    }
+  };
+
   /** おじさんへ送るかを確かめる札と、運んでいる間の「おじさんに送る」 */
   const sendConfirm = new SendConfirm();
   const sendHint = new SendHint();
@@ -378,6 +403,8 @@ async function main(): Promise<void> {
     reader.setLum(lum);
     loupe.setLum(lum);
     envelope.setLum(lum);
+    petalView.setLum(lum);
+    applySeason();
     sendConfirm.setLum(lum);
     panel?.showHour(h, sun.sunrise, sun.sunset);
   };
@@ -435,6 +462,10 @@ async function main(): Promise<void> {
             applyLight();
           },
           onPhoto: (only, overlay) => app.setPhotoDebug(only, overlay),
+          onSakura: (on) => {
+            sakuraOverride = on;
+            applySeason();
+          },
           onSpeed: (rate) => clock.setSpeed(rate),
           onJump: (ms) => {
             clock.jump(ms);
@@ -731,6 +762,7 @@ async function main(): Promise<void> {
     dots.set(slider.position);
     tag.update(dt);
     placeEnvelope();
+    placePetal();
     sendHint.set(app.scoopCarrying && !carry.atBox);
     feedButton.setBusy(app.feedingBusy);
     feedButton.setReady(game.canFeed(slider.index) === 'fed');
@@ -806,6 +838,12 @@ async function main(): Promise<void> {
         hourOverride = h;
         applyLight();
       },
+      // 桜の季節の上書き（null なら日付どおり）と、今の花びら
+      sakura: (on: boolean | null) => {
+        sakuraOverride = on;
+        applySeason();
+      },
+      petal: () => petal,
       setPhoto: (only: Parameters<App['setPhotoDebug']>[0], overlay: Parameters<App['setPhotoDebug']>[1]) =>
         app.setPhotoDebug(only, overlay),
       setLamp: (on: boolean) => app.setLampOn(on),

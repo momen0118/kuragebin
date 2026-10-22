@@ -551,6 +551,13 @@ export class App {
   }
 
   /** 確認用：写真を1枚に固定する／別の写真を半透明で重ねる（null で時刻どおり） */
+  /** 桜の季節か（日付から。桜の季節のない部屋では何も変わらない） */
+  setSakura(on: boolean): void {
+    if (on === this.room.sakura) return;
+    this.room.sakura = on;
+    this.roomDirty = this.wideDirty = true;
+  }
+
   setPhotoDebug(only: PhotoName | null, overlay: PhotoName | null): void {
     this.room.debugOnly = only;
     this.room.debugOverlay = overlay;
