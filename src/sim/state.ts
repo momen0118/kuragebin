@@ -308,6 +308,11 @@ export function stageRange(stage: Stage, rules = LIFE): readonly [number, number
   }
 }
 
+/** 今のゲーム内の時刻（秒）。固定刻みに満たない端数も入れる（利用者の操作や画面の出来事の時刻に使う） */
+export function gameNow(state: Pick<GameState, 'time' | 'pending'>): number {
+  return state.time + state.pending;
+}
+
 /** ゲーム内の時刻 t に当たる端末の時刻（ミリ秒）。進めている途中でないとき（lastTick が time + pending に当たるとき）に使う */
 export function wallAt(state: GameState, t: number): number {
   return state.lastTick - (state.time + state.pending - t) * 1000;

@@ -10,7 +10,7 @@ import { closeAllFacts, openAllFacts } from './sim/book';
 import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, editSex, growAdult, growFull, skipMaturity, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit, type SexEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
 import { broodAmount } from './sim/sex';
-import { DEFAULT_SETTINGS, type GameState, type Letter, type Settings, type Stage } from './sim/state';
+import { DEFAULT_SETTINGS, gameNow, type GameState, type Letter, type Settings, type Stage } from './sim/state';
 import { deliverReplyNow, resetFirstLetter } from './sim/uncle';
 import { Carry } from './ui/carry';
 import { JarDots } from './ui/dots';
@@ -210,7 +210,7 @@ async function main(): Promise<void> {
 
   // 瓶ごとの個体を描く（描いて動かすのは見えている瓶だけ）
   const showJars = (s: GameState): void => {
-    app.setJars(s.jars, s.time + s.pending, s.specimens);
+    app.setJars(s.jars, gameNow(s), s.specimens);
     tag.refresh();
   };
   showJars(game.state);
@@ -382,6 +382,51 @@ async function main(): Promise<void> {
     panel?.showHour(h, sun.sunrise, sun.sunset);
   };
 
+  /** 確認用の書き換え。デバッグパネルと撮影用の窓口（?debug&capture）で同じものを使う */
+  const debugEdits = {
+    /** 瓶 jar に個体を出す（育ちきった姿で。progress は段階の進み、spot は瓶底の場所）。番号を返す */
+    spawn: (jar: number, stage: Stage, progress = 0, spot?: [number, number]): number => {
+      let id = 0;
+      game.edit((s, rules) => {
+        const c = spawnCreature(s, jar, stage, rules);
+        if (spot && c.spot) c.spot = spot;
+        id = c.id;
+        setProgress(s, id, progress);
+      });
+      return id;
+    },
+    setStage: (id: number, stage: Stage) => game.edit((s, rules) => setStage(s, id, stage, rules)),
+    setProgress: (id: number, p: number) => game.edit((s) => setProgress(s, id, p)),
+    setDiscs: (id: number, n: number) => game.edit((s, rules) => setDiscs(s, id, n, rules)),
+    remove: (id: number) => game.edit((s, rules) => removeCreature(s, id, rules)),
+    /** 瓶 jar の泳ぐ個体を成体 n 匹に */
+    fill: (jar: number, n: number) => game.edit((s, rules) => fillAdults(s, jar, n, rules)),
+    genes: (id: number, e: GeneEdit) => game.edit((s) => editGenes(s, id, e)),
+    /** 雌雄：オス・メス・成熟前に切り替える、'mature'（成熟まで飛ばす）、'brood'（メスにプラヌラを抱えさせる） */
+    sex: (id: number, e: SexEdit | 'mature' | 'brood') =>
+      game.edit((s) => {
+        if (e === 'mature') skipMaturity(s, id);
+        else if (e === 'brood') broodNow(s, id);
+        else editSex(s, id, e);
+      }),
+    /** 成体になってからの成長：'day'（1日ぶん進める）、'full'（育ちきらせる） */
+    grow: (id: number, e: 'day' | 'full') => game.edit((s) => (e === 'day' ? growAdult(s, id, 86400) : growFull(s, id))),
+    feedClear: () => game.edit((s) => clearFed(s, null)),
+    sediment: (jar: number, value: number) => game.edit((s) => setSediment(s, jar, value)),
+    replyNow: () => game.edit((s) => deliverReplyNow(s)),
+    firstLetter: (jar: number) => game.edit((s) => resetFirstLetter(s, jar)),
+    /** 瓶 jar の瓶底に拾いものを出す（variant を決めなければ重みで選ぶ）。番号を返す */
+    spawnFind: (jar: number, variant?: string): number => {
+      let id = 0;
+      game.edit((s) => (id = spawnFind(s, jar, variant)));
+      return id;
+    },
+    /** 瓶 jar（null ならすべての瓶）の瓶底の物を消す */
+    clearFinds: (jar: number | null) => game.edit((s) => clearFinds(s, jar)),
+    clearSpecimens: () => game.edit((s) => clearSpecimens(s)),
+    factsAll: (open: boolean) => game.edit((s) => (open ? openAllFacts(s, clock.now()) : closeAllFacts(s))),
+  };
+
   const panel =
     debug && !capture
       ? new DebugPanel({
@@ -415,35 +460,30 @@ async function main(): Promise<void> {
             game.importJson(text);
             afterImport();
           },
-          onSpawn: (stage) => game.edit((s, rules) => void spawnCreature(s, slider.index, stage, rules)),
-          onStage: (id, stage) => game.edit((s, rules) => setStage(s, id, stage, rules)),
-          onProgress: (id, p) => game.edit((s) => setProgress(s, id, p)),
-          onDiscs: (id, n) => game.edit((s, rules) => setDiscs(s, id, n, rules)),
-          onRemove: (id) => game.edit((s, rules) => removeCreature(s, id, rules)),
-          onFill: (n) => game.edit((s, rules) => fillAdults(s, slider.index, n, rules)),
-          onGenes: (id, e) => game.edit((s) => editGenes(s, id, e)),
-          onSex: (id, e) =>
-            game.edit((s) => {
-              if (e === 'mature') skipMaturity(s, id);
-              else if (e === 'brood') broodNow(s, id);
-              else editSex(s, id, e);
-            }),
-          onGrow: (id, e) => game.edit((s) => (e === 'day' ? growAdult(s, id, 86400) : growFull(s, id))),
+          onSpawn: (stage) => void debugEdits.spawn(slider.index, stage),
+          onStage: debugEdits.setStage,
+          onProgress: debugEdits.setProgress,
+          onDiscs: debugEdits.setDiscs,
+          onRemove: debugEdits.remove,
+          onFill: (n) => debugEdits.fill(slider.index, n),
+          onGenes: debugEdits.genes,
+          onSex: debugEdits.sex,
+          onGrow: debugEdits.grow,
           onCap: (n) => game.setRules({ maxSwimmers: n }),
           onRealSize: (on) => setRealSize(on),
           onFeed: () => void feedNow(true),
-          onFeedClear: () => game.edit((s) => clearFed(s, null)),
+          onFeedClear: debugEdits.feedClear,
           onMealsClear: () => game.edit((s) => clearMeals(s)),
-          onSediment: (v) => game.edit((s) => setSediment(s, slider.index, v)),
+          onSediment: (v) => debugEdits.sediment(slider.index, v),
           onUnread: () => game.edit((s) => (s.journalSeen = 0)),
           onShake: (kind) => debugMotion.start(kind),
           onFlip: () => app.flipForDebug(),
-          onFirstLetter: () => game.edit((s) => resetFirstLetter(s, slider.index)),
-          onReplyNow: () => game.edit((s) => deliverReplyNow(s)),
-          onFindSpawn: (variant) => game.edit((s) => void spawnFind(s, slider.index, variant ?? undefined)),
-          onFindsClear: () => game.edit((s) => clearFinds(s, slider.index)),
-          onSpecimensClear: () => game.edit((s) => clearSpecimens(s)),
-          onFactsAll: (open) => game.edit((s) => (open ? openAllFacts(s, clock.now()) : closeAllFacts(s))),
+          onFirstLetter: () => debugEdits.firstLetter(slider.index),
+          onReplyNow: debugEdits.replyNow,
+          onFindSpawn: (variant) => void debugEdits.spawnFind(slider.index, variant ?? undefined),
+          onFindsClear: () => debugEdits.clearFinds(slider.index),
+          onSpecimensClear: debugEdits.clearSpecimens,
+          onFactsAll: debugEdits.factsAll,
           onDummyPhoto: () => addDummyPhoto(),
           onSound: (name, opts) => sound.preview(name, opts),
           onAirBoost: (boost) => sound.previewAir(boost),
@@ -481,7 +521,7 @@ async function main(): Promise<void> {
           : 'センサーなし';
     const s = game.state;
     const until = s.jars[slider.index]!.stirredUntil;
-    const left = until !== null ? until - (s.time + s.pending) : 0;
+    const left = until !== null ? until - gameNow(s) : 0;
     const sim = left > 0 ? `水が動いている 残り${Math.ceil(left / 60)}分` : '水は静か';
     // 今の値（少し前までのいちばん大きかった値）と閾値。閾値を越えたときだけ、振った一回になる
     const k = shakes.last;
@@ -493,7 +533,7 @@ async function main(): Promise<void> {
   if (panel) {
     refreshPanel = (): void => {
       panel.showState(game.state, game.info, clock.speed, clock.drift);
-      panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers, game.state.time + game.state.pending);
+      panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers, gameNow(game.state));
       panel.showFeed(feedText());
       panel.showUncle(game.state);
       panel.showFinds(game.state);
@@ -660,7 +700,7 @@ async function main(): Promise<void> {
     factTimer = 0.5;
     // 見ている瓶に、プラヌラを抱えている個体がいる（粒が見えている）
     if (app.atRest) {
-      const t = game.state.time + game.state.pending;
+      const t = gameNow(game.state);
       if (game.state.jars[slider.index]?.creatures.some((c) => broodAmount(c, t) >= BOOK.planulaSeen)) game.noteFact('planula');
     }
     const lens = loupe.lens;
@@ -714,25 +754,9 @@ async function main(): Promise<void> {
       },
       jelly: () => app.jellyScreenPosition(canvas.clientWidth, canvas.clientHeight),
       // 個体を出す・変える（見た目の確認用）。spawn は番号を返す
-      spawn: (stage: Stage, progress = 0, spot?: [number, number]) => {
-        let id = 0;
-        edit((s, rules) => {
-          const c = spawnCreature(s, slider.index, stage, rules);
-          if (spot && c.spot) c.spot = spot;
-          id = c.id;
-          setProgress(s, id, progress);
-        });
-        return id;
-      },
-      spawnIn: (jar: number, stage: Stage, progress = 0) => {
-        let id = 0;
-        edit((s, rules) => {
-          id = spawnCreature(s, jar, stage, rules).id;
-          setProgress(s, id, progress);
-        });
-        return id;
-      },
-      fillIn: (jar: number, n: number) => edit((s, rules) => fillAdults(s, jar, n, rules)),
+      spawn: (stage: Stage, progress = 0, spot?: [number, number]) => debugEdits.spawn(slider.index, stage, progress, spot),
+      spawnIn: (jar: number, stage: Stage, progress = 0) => debugEdits.spawn(jar, stage, progress),
+      fillIn: debugEdits.fill,
       // 瓶の並びの上の位置（0 が1番の瓶。スワイプの途中は小数）で止める。settle() で近いほうの瓶へ落ち着く
       view: (v: number) => {
         slider.pin(v);
@@ -740,22 +764,17 @@ async function main(): Promise<void> {
       },
       settle: () => slider.release(0),
       jarIndex: () => slider.index,
-      setStage: (id: number, stage: Stage) => edit((s, rules) => setStage(s, id, stage, rules)),
+      setStage: debugEdits.setStage,
       // 遺伝子：'base'（基準）・'generations'（6世代ばらす）・{ set: { hue: 1, leaves: 5, ... } }
-      genes: (id: number, e: GeneEdit) => edit((s) => editGenes(s, id, e)),
-      /** 雌雄：'male' | 'female' | 'immature'（デバッグパネルと同じ）、'mature'（成熟まで飛ばす）、'brood'（メスにプラヌラを抱えさせる） */
-      sex: (id: number, e: SexEdit | 'mature' | 'brood') =>
-        edit((s) => {
-          if (e === 'mature') skipMaturity(s, id);
-          else if (e === 'brood') broodNow(s, id);
-          else editSex(s, id, e);
-        }),
-      /** 成体になってからの成長：'day'（1日ぶん進める）、'full'（育ちきらせる） */
-      grow: (id: number, e: 'day' | 'full') => edit((s) => (e === 'day' ? growAdult(s, id, 86400) : growFull(s, id))),
-      setProgress: (id: number, p: number) => edit((s) => setProgress(s, id, p)),
-      setDiscs: (id: number, n: number) => edit((s, rules) => setDiscs(s, id, n, rules)),
-      remove: (id: number) => edit((s, rules) => removeCreature(s, id, rules)),
-      fill: (n: number) => edit((s, rules) => fillAdults(s, slider.index, n, rules)),
+      genes: debugEdits.genes,
+      // 雌雄：'male' | 'female' | 'immature'（デバッグパネルと同じ）、'mature'（成熟まで飛ばす）、'brood'（メスにプラヌラを抱えさせる）
+      sex: debugEdits.sex,
+      // 成体になってからの成長：'day'（1日ぶん進める）、'full'（育ちきらせる）
+      grow: debugEdits.grow,
+      setProgress: debugEdits.setProgress,
+      setDiscs: debugEdits.setDiscs,
+      remove: debugEdits.remove,
+      fill: (n: number) => debugEdits.fill(slider.index, n),
       clear: () => edit((s) => (s.jars[slider.index]!.creatures = [])),
       edit: (fn: (s: GameState) => void) => edit(fn),
       state: () => game.state,
@@ -779,9 +798,9 @@ async function main(): Promise<void> {
       // 餌：アイコンを押したのと同じ（force は1日1回を無視）。feeding() は流れの段階と粒の数
       feed: (force = false) => feedNow(force),
       feeding: () => app.feedingState,
-      feedClear: () => edit((s) => clearFed(s, null)),
+      feedClear: debugEdits.feedClear,
       // 瓶底の堆積（瓶 jar を value に）と、日誌を開く・閉じる
-      sediment: (jar: number, value: number) => edit((s) => setSediment(s, jar, value)),
+      sediment: debugEdits.sediment,
       journal: (open: boolean) => (open ? notebook.open() : notebook.close()),
       setHour: (h: number) => {
         hourOverride = h;
@@ -797,24 +816,20 @@ async function main(): Promise<void> {
       motionText: () => motionText(),
       // おじさん：状態だけで送る（カップの流れなし）、返事を今すぐ届ける、最初の手紙を出し直す
       send: (id: number) => game.send(id),
-      replyNow: () => edit((s) => deliverReplyNow(s)),
-      firstLetter: () => edit((s) => resetFirstLetter(s, slider.index)),
+      replyNow: debugEdits.replyNow,
+      firstLetter: () => debugEdits.firstLetter(slider.index),
       // 拾いもの：表示中の瓶に出す（variant を決めなければ重みで選ぶ。番号を返す）、瓶底の物の画面上の位置、拾う（タップと同じ）、
       // 標本から見ている瓶に沈める（メモ帳を下げてから。沈められたら true）、瓶底の物を消す、標本を空に
-      spawnFind: (variant?: string) => {
-        let id = 0;
-        edit((s) => (id = spawnFind(s, slider.index, variant)));
-        return id;
-      },
+      spawnFind: (variant?: string) => debugEdits.spawnFind(slider.index, variant),
       findWhere: (id: number) => app.findScreen(id, canvas.clientWidth, canvas.clientHeight),
       pickFind: (id: number) => pickUpFind(id),
       sinkFind: (id: number) => sinkSpecimen(id),
-      clearFinds: () => edit((s) => clearFinds(s, null)),
-      clearSpecimens: () => edit((s) => clearSpecimens(s)),
+      clearFinds: () => debugEdits.clearFinds(null),
+      clearSpecimens: debugEdits.clearSpecimens,
       // 種のページ：札の「撮る」と同じ、ダミーの写真、豆知識をすべて開く・閉じる、豆知識のきっかけ（画面の出来事）
       shoot: (id: number) => shoot(id),
       dummyPhoto: () => addDummyPhoto(),
-      factsAll: (open: boolean) => edit((s) => (open ? openAllFacts(s, clock.now()) : closeAllFacts(s))),
+      factsAll: debugEdits.factsAll,
       noteFact: (key: Parameters<typeof game.noteFact>[0]) => game.noteFact(key),
       // 音：設定によらず鳴らす（確認用）、オン・オフ、空気の音を大きくして聞く
       sound: (name: SoundName, opts?: SoundOptions) => sound.preview(name, opts),

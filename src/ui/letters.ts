@@ -3,6 +3,7 @@
 // 文面は種類（送った子の特徴）ごとに数パターンあり、届いたときに決めた番号で選ぶ。
 import { UNCLE } from '../config';
 import type { Letter, LetterTopic } from '../sim/state';
+import { esc } from './html';
 import { keepToSelf } from './jarActions';
 
 /** 最初の手紙 */
@@ -30,10 +31,6 @@ export function letterLines(l: Pick<Letter, 'kind' | 'topic' | 'pick'>): readonl
   if (l.kind === 'first') return FIRST;
   const list = REPLIES[l.topic ?? 'plain'] ?? REPLIES.plain;
   return list[l.pick % list.length]!;
-}
-
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
 /**

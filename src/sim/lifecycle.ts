@@ -4,7 +4,7 @@
 // advance.ts の1刻みごとに呼ぶ（状態をその場で書き換える）。
 import { ADULT_GROWTH, LIFE, SEX, type LifeRules } from '../config';
 import { stepCare } from './care';
-import { findSpots } from './finds';
+import { takenSpots } from './finds';
 import { BASE_GENES, inheritGenes } from './genes';
 import { growthRate } from './growth';
 import { record } from './journal';
@@ -125,10 +125,9 @@ export function pickSpot(taken: ReadonlyArray<readonly [number, number]>, rng: R
   return best;
 }
 
-/** 瓶底のポリプ（ストロビラ）と拾いものの場所（新しいポリプはここを避ける）。extra はこの刻みに付いたポリプ */
-function spotsIn(state: GameState, index: number, jar: JarState, extra: readonly Creature[] = []): Array<[number, number]> {
-  const out: Array<[number, number]> = findSpots(state, index);
-  for (const c of jar.creatures) if (c.spot) out.push(c.spot);
+/** 瓶底でふさがっている場所（新しいポリプはここを避ける）。extra はこの刻みに付いて、まだ瓶に入れていないポリプ */
+function spotsIn(state: GameState, index: number, extra: readonly Creature[] = []): Array<[number, number]> {
+  const out = takenSpots(state, index);
   for (const c of extra) if (c.spot) out.push(c.spot);
   return out;
 }
@@ -187,7 +186,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
         const polyp = createCreature(state, 'polyp', rng, rules, {
           parent: c.id,
           genes: inheritGenes(c.genes, rng, false),
-          spot: pickSpot(spotsIn(state, index, jar, born), rng, rules),
+          spot: pickSpot(spotsIn(state, index, born), rng, rules),
           arrivedWallTime: wall,
         });
         born.push(polyp);
@@ -260,7 +259,7 @@ function settlePlanulae(state: GameState, jar: JarState, index: number, rules: L
     const polyp = createCreature(state, 'polyp', ctx.rng, rules, {
       parent: p.parent,
       genes: p.genes,
-      spot: pickSpot(spotsIn(state, index, jar), ctx.rng, rules),
+      spot: pickSpot(takenSpots(state, index), ctx.rng, rules),
       arrivedWallTime: ctx.wall,
     });
     jar.creatures.push(polyp);

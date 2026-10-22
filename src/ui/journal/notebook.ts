@@ -12,6 +12,7 @@ import { NAME_MAX } from '../../sim/actions';
 import { feedDay } from '../../sim/feed';
 import type { GameState, Settings } from '../../sim/state';
 import { downloadText, exportFilename } from '../download';
+import { esc } from '../html';
 import { keepToSelf } from '../jarActions';
 import { UNNAMED } from '../labels';
 import { dayTitle, journalPages, rosterPages, specimenItems, speciesPages, type DayPage, type RosterPage, type SpeciesPage, type SpecimenItem } from './pages';
@@ -88,10 +89,6 @@ const QUALITY_CHOICES: ReadonlyArray<[Settings['quality'], string]> = [
   ['medium', '中'],
   ['low', '低'],
 ];
-
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-}
 
 const ease = (t: number): number => {
   const x = Math.min(Math.max(t, 0), 1);

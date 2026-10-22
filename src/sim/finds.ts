@@ -7,7 +7,7 @@
 // 状態をその場で書き換える。
 import { FIND_VARIANTS, FINDS, SIM } from '../config';
 import { createRng, type Rng } from './rng';
-import type { FindKind, GameState, Specimen } from './state';
+import { gameNow, type FindKind, type GameState, type Specimen } from './state';
 
 /** 2つの整数から [0, 1) の値（同じ数からはいつも同じ） */
 function hash01(a: number, b: number): number {
@@ -20,11 +20,6 @@ function hash01(a: number, b: number): number {
 /** 瓶 jar の瓶底にある物（現れたまま・自分で置いた物） */
 export function findsIn(state: GameState, jar: number): Specimen[] {
   return state.specimens.filter((s) => s.at?.jar === jar);
-}
-
-/** 瓶 jar の瓶底にある物の場所（ポリプが付く場所を選ぶときに避ける） */
-export function findSpots(state: GameState, jar: number): Array<[number, number]> {
-  return findsIn(state, jar).map((s) => s.at!.spot);
 }
 
 /** 標本に載っている物（拾ったことのある物。標本にある物と、瓶に沈めてある物）。拾った順 */
@@ -81,8 +76,11 @@ function nextId(state: GameState): number {
   return state.specimens.reduce((m, s) => Math.max(m, s.id), 0) + 1;
 }
 
-/** 瓶 jar の、ポリプ（ストロビラ）とほかの物の場所 */
-function takenIn(state: GameState, jar: number, except: number | null = null): Array<[number, number]> {
+/**
+ * 瓶 jar の瓶底でふさがっている場所：ポリプ（ストロビラ）と拾いもの（except の物は除く）。
+ * 新しいポリプも拾いものも、ここを避けて置く
+ */
+export function takenSpots(state: GameState, jar: number, except: number | null = null): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (const c of state.jars[jar]?.creatures ?? []) if (c.spot) out.push(c.spot);
   for (const s of findsIn(state, jar)) if (s.id !== except) out.push(s.at!.spot);
@@ -97,7 +95,7 @@ export function addFind(state: GameState, jar: number, rng: Rng, wall: number, v
     kind: picked.kind,
     variant: picked.variant,
     seed: Math.floor(rng.next() * 2 ** 32) >>> 0,
-    at: { jar, spot: pickFindSpot(takenIn(state, jar), rng), yaw: rng.range(0, Math.PI * 2), placed: false },
+    at: { jar, spot: pickFindSpot(takenSpots(state, jar), rng), yaw: rng.range(0, Math.PI * 2), placed: false },
     appearedAt: state.time,
     appearedWallTime: wall,
     foundAt: null,
@@ -145,7 +143,7 @@ export function pickFind(state: GameState, id: number, wall: number): boolean {
   if (!s?.at) return false;
   s.at = null;
   if (s.foundAt === null) {
-    s.foundAt = state.time + state.pending;
+    s.foundAt = gameNow(state);
     s.foundWallTime = wall;
   }
   return true;
@@ -182,7 +180,7 @@ export function placeFind(state: GameState, id: number, jar: number): PlaceResul
     placed[0]!.at = null;
     placed = placed.slice(1);
   }
-  const rng = createRng((s.seed ^ Math.floor((state.time + state.pending) * 1000)) >>> 0);
-  s.at = { jar, spot: pickFindSpot(takenIn(state, jar), rng), yaw: rng.range(0, Math.PI * 2), placed: true };
+  const rng = createRng((s.seed ^ Math.floor(gameNow(state) * 1000)) >>> 0);
+  s.at = { jar, spot: pickFindSpot(takenSpots(state, jar), rng), yaw: rng.range(0, Math.PI * 2), placed: true };
   return 'placed';
 }
