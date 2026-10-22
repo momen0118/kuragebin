@@ -7,9 +7,9 @@ import { findCreature } from './edit';
 import type { Genes } from './genes';
 import { record } from './journal';
 import { updateResting } from './lifecycle';
-import { createRng, type Rng } from './rng';
+import { withStateRng, type Rng } from './rng';
 import { shownSex } from './sex';
-import { isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Stage } from './state';
+import { gameNow, isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Stage } from './state';
 
 export type SendResult = 'sent' | 'fixed' | 'missing';
 
@@ -44,12 +44,6 @@ export function topicOf(sent: Pick<SentRecord, 'genes' | 'stage'>): LetterTopic 
   return 'plain';
 }
 
-function withRng<T>(state: GameState, fn: (rng: Rng) => T): T {
-  const rng = createRng(state.rng);
-  const out = fn(rng);
-  state.rng = rng.state();
-  return out;
-}
 
 /**
  * 個体 id をおじさんのところへ送る。瓶からいなくなり、「送った子」として残る。日誌に一行（名前があれば名前で）。
@@ -61,14 +55,14 @@ export function sendCreature(state: GameState, id: number, rules: LifeRules = LI
   const { jar, creature: c } = findCreature(state, id)!;
   const j = state.jars[jar]!;
   j.creatures = j.creatures.filter((x) => x.id !== id);
-  const now = state.time + state.pending;
+  const now = gameNow(state);
   const wall = wallAt(state, now);
   // 雌雄は成体なら残す（エフィラは出さないので null）
   state.sent.push({ id: c.id, name: c.name, species: c.species, stage: c.stage, genes: { ...c.genes }, sex: shownSex(c), jar, sentAt: now, sentWallTime: wall });
   record(state, 'sent', jar, 1, [c.id], wall, c.name);
   updateResting(state, j, jar, rules, null);
   const rare = rarity(c.genes, c.stage);
-  withRng(state, (rng) => {
+  withStateRng(state, (rng) => {
     const u = state.uncle;
     if (u.reply) {
       // もう届くことになっている：より珍しい子のほうに触れる（届く日はそのまま）
@@ -147,7 +141,7 @@ export function openLetter(state: GameState, id: number): boolean {
 /** 確認用：最初の手紙を、封筒のまま瓶 jar の横に置き直す（前の最初の手紙は消す） */
 export function resetFirstLetter(state: GameState, jar: number): void {
   state.letters = state.letters.filter((l) => l.kind !== 'first');
-  const now = state.time + state.pending;
+  const now = gameNow(state);
   addLetter(state, { kind: 'first', topic: null, pick: 0, about: null, arrivedAt: now, wallTime: wallAt(state, now), sealed: true, jar, gift: null });
 }
 
@@ -155,10 +149,10 @@ export function resetFirstLetter(state: GameState, jar: number): void {
  * 確認用：返事を今すぐ届ける。届くことになっている返事がなければ、いちばん最後に送った子（いなければ誰にも触れない）への返事にする
  */
 export function deliverReplyNow(state: GameState): void {
-  const now = state.time + state.pending;
+  const now = gameNow(state);
   if (!state.uncle.reply) {
     const last = state.sent[state.sent.length - 1];
     state.uncle.reply = { dueAt: now, about: last?.id ?? -1, rarity: 0 };
   }
-  withRng(state, (rng) => deliverReply(state, wallAt(state, now), rng));
+  withStateRng(state, (rng) => deliverReply(state, wallAt(state, now), rng));
 }

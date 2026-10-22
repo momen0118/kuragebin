@@ -27,3 +27,14 @@ export function createRng(seed: number): Rng {
     state: () => s,
   };
 }
+
+/**
+ * 状態に持っている乱数（`rng` の内部状態）から乱数を出して fn に渡し、使ったぶんを状態に戻す。
+ * 時間を進める刻みの外で乱数を使うとき（利用者の操作、デバッグの書き換え）に。同じ状態からは同じ結果になる
+ */
+export function withStateRng<T>(holder: { rng: number }, fn: (rng: Rng) => T): T {
+  const rng = createRng(holder.rng);
+  const out = fn(rng);
+  holder.rng = rng.state();
+  return out;
+}

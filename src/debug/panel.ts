@@ -10,7 +10,7 @@ import { bodySize } from '../sim/size';
 import type { GameInfo } from '../game';
 import type { GeneEdit, SexEdit } from '../sim/edit';
 import type { SoundName, SoundOptions } from '../sound/sound';
-import { STAGES, type Creature, type GameState, type JarState, type Stage } from '../sim/state';
+import { gameNow, STAGES, type Creature, type GameState, type JarState, type Stage } from '../sim/state';
 import { downloadText, exportFilename } from '../ui/download';
 import { FIND_NAMES, STAGE_LABELS } from '../ui/labels';
 
@@ -574,7 +574,7 @@ export class DebugPanel {
   /** おじさん：送った数、届くことになっている返事、届いた手紙 */
   showUncle(state: GameState): void {
     const u = state.uncle;
-    const now = state.time + state.pending;
+    const now = gameNow(state);
     const reply = u.reply ? `返事 あと${span(u.reply.dueAt - now)}（#${u.reply.about}・珍しさ ${u.reply.rarity.toFixed(2)}）` : '返事 なし';
     const sealed = state.letters.filter((l) => l.sealed).length;
     const text = `送った ${state.sent.length}匹　${reply}　手紙 ${state.letters.length}通${sealed ? `（封筒 ${sealed}）` : ''}`;

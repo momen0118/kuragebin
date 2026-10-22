@@ -5,8 +5,8 @@
 // 状態をその場で書き換える。
 import { CARE, FEED, FOOD } from '../config';
 import { dateKey } from './care';
-import { createRng } from './rng';
-import type { Creature, GameState, JarState } from './state';
+import { withStateRng } from './rng';
+import { gameNow, type Creature, type GameState, type JarState } from './state';
 
 export type FeedResult = 'fed' | 'already' | 'empty' | 'missing';
 
@@ -46,12 +46,12 @@ export function feedJar(state: GameState, jar: number, wallMs: number): FeedResu
   if (result !== 'fed') return result;
   const j = state.jars[jar]!;
   j.fedWallTime = wallMs;
-  const rng = createRng(state.rng);
   // 刻みに満たない端数も入れて、やった時刻そのものにする
-  const at = state.time + state.pending;
+  const at = gameNow(state);
   const [lo, hi] = FEED.amount;
-  for (const c of j.creatures) if (eats(c)) c.meal = { at, amount: rng.range(lo, hi) };
-  state.rng = rng.state();
+  withStateRng(state, (rng) => {
+    for (const c of j.creatures) if (eats(c)) c.meal = { at, amount: rng.range(lo, hi) };
+  });
   const plan = feedingPlan(j, at);
   const amount = (plan.grains - plan.total) * CARE.perGrain + (j.leftover?.amount ?? 0);
   j.leftover = { amount, goneAt: at + CARE.leftoverSeconds };

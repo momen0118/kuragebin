@@ -3,7 +3,7 @@
 // 瓶を揺らしたことは状態に「水が動いている間」（stirredUntil）として持つ。何度揺らしても量は増えず、時間が延びるだけ。
 // 状態をその場で書き換える。
 import { FEED, GROWTH, STIR } from '../config';
-import type { Creature, GameState } from './state';
+import { gameNow, type Creature, type GameState } from './state';
 
 /**
  * 段階の進みの速さの倍率。time はゲーム内の今（刻みの終わり）、stirredUntil はその瓶の水が動いている間の終わり（なければ null）
@@ -22,6 +22,6 @@ export function growthRate(c: Creature, time: number, stirredUntil: number | nul
 export function stirJar(state: GameState, jar: number): boolean {
   const j = state.jars[jar];
   if (!j) return false;
-  j.stirredUntil = state.time + state.pending + STIR.seconds;
+  j.stirredUntil = gameNow(state) + STIR.seconds;
   return true;
 }

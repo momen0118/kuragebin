@@ -80,7 +80,7 @@
 - `src/ui/`：画面の操作と小さな UI
   - `gestures.ts`（タップ・横のスワイプ・長押し）、`jarSlider.ts`（瓶の並びの位置）、`carry.ts`（長押しでカップを運ぶ）、`tag.ts`（札と名付け）、`dots.ts`（下の点3つ）
   - `lampToggle.ts`・`feedButton.ts`・`jarActions.ts`（右下のアイコン）、`loupe.ts`（虫眼鏡の枠と柄、置き方）、`letters.ts`（手紙の文面・読む紙・封筒）、`sendConfirm.ts`（送るかの札）
-  - `motionFilter.ts`（センサーの値 → 振った一回）、`motion.ts`（DeviceMotion と iOS の許可）、`finds.ts`（拾った物の光が日誌へ飛ぶ）、`frameCap.ts`（1秒に描く回数）、`labels.ts`（画面の言葉）、`download.ts`
+  - `motionFilter.ts`（センサーの値 → 振った一回）、`motion.ts`（DeviceMotion と iOS の許可）、`finds.ts`（拾った物の光が日誌へ飛ぶ）、`frameCap.ts`（1秒に描く回数）、`labels.ts`（画面の言葉）、`html.ts`（HTML に差し込む文字のエスケープ）、`download.ts`
   - `journal/`：`pages.ts`（日誌の文・個体一覧・標本・種のページを作る。DOM に依存しない）、`notebook.ts`（メモ帳）、`facts.ts`（豆知識の文面）、`button.ts`（左下のアイコン）
 - `src/storage/`：`db.ts`（IndexedDB。状態と写真 `PhotoStore`）、`schema.ts`（版とマイグレーション、読み込んだデータの確かめ）、`io.ts`（書き出し・読み込み）
 - `src/game.ts`：状態を持ち、進めて保存する（操作の窓口）。`src/main.ts`：全体の配線、デバッグパネルと撮影用の窓口
