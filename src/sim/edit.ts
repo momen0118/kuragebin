@@ -2,11 +2,11 @@
 // 上限は見ない（見た目の確認のために、何匹でも出せる）。
 import { ADULT_GROWTH, LIFE, SEX, type LifeRules } from '../config';
 import { addFind, takenSpots } from './finds';
-import { createCreature, enterStage, pickSpot, updateResting } from './lifecycle';
-import { BASE_GENES, inheritGenes, sanitizeGenes, type Genes } from './genes';
+import { createBolinopsis, createCreature, enterStage, pickSpot, updateResting } from './lifecycle';
+import { BASE_BOLINOPSIS_GENES, BASE_GENES, inheritBolinopsisGenes, inheritGenes, sanitizeGenes, type Genes } from './genes';
 import { withStateRng } from './rng';
 import { startBrood } from './sex';
-import { gameNow, isSwimmer, wallAt, type Creature, type GameState, type Stage } from './state';
+import { gameNow, isSwimmer, wallAt, type Creature, type GameState, type Species, type Stage } from './state';
 
 
 
@@ -21,14 +21,15 @@ export function findCreature(state: GameState, id: number): { jar: number; creat
 /** 確認用に出す個体の年齢（育ちきった姿で出す） */
 const GROWN_AGE = 86400;
 
-/** 瓶に、段階を選んで個体を1つ出す（育ちきった姿で） */
-export function spawnCreature(state: GameState, jarIndex: number, stage: Stage, rules: LifeRules = LIFE): Creature {
+/** 瓶に、段階を選んで個体を1つ出す（育ちきった姿で）。カブトクラゲはまだ成体だけ */
+export function spawnCreature(state: GameState, jarIndex: number, stage: Stage, rules: LifeRules = LIFE, species: Species = 'aurelia'): Creature {
   return withStateRng(state, (rng) => {
     const jar = state.jars[jarIndex]!;
-    const c = createCreature(state, stage, rng, rules, { age: GROWN_AGE, stageAge: GROWN_AGE });
-    if (stage === 'adult') c.adultGrowth = 1;
-    if (!isSwimmer(stage)) c.spot = pickSpot(takenSpots(state, jarIndex), rng, rules);
-    if (stage === 'strobila') c.discs = rules.ephyraCount[1];
+    const grown = { age: GROWN_AGE, stageAge: GROWN_AGE };
+    const c = species === 'bolinopsis' ? createBolinopsis(state, 'adult', rng, rules, grown) : createCreature(state, stage, rng, rules, grown);
+    if (c.stage === 'adult') c.adultGrowth = 1;
+    if (!isSwimmer(c.stage)) c.spot = pickSpot(takenSpots(state, jarIndex), rng, rules);
+    if (c.stage === 'strobila') c.discs = rules.ephyraCount[1];
     jar.creatures.push(c);
     updateResting(state, jar, jarIndex, rules, null);
     return c;
@@ -111,6 +112,18 @@ export type GeneEdit = 'base' | 'generations' | { set: Partial<Genes> };
 export function editGenes(state: GameState, id: number, edit: GeneEdit): void {
   const c = findCreature(state, id)?.creature;
   if (!c) return;
+  // カブトクラゲ：基準に戻すか、何世代か受け継いだようにばらすだけ（値を決めて置くのは見た目を作る段階で）
+  if (c.species === 'bolinopsis') {
+    if (edit === 'base') c.genes = { ...BASE_BOLINOPSIS_GENES };
+    else if (edit === 'generations') {
+      withStateRng(state, (rng) => {
+        let g = c.genes;
+        for (let i = 0; i < 6; i++) g = inheritBolinopsisGenes(g, rng);
+        c.genes = g;
+      });
+    }
+    return;
+  }
   if (edit === 'base') c.genes = { ...BASE_GENES };
   else if (edit === 'generations') {
     withStateRng(state, (rng) => {

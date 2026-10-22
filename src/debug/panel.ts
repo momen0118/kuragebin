@@ -10,7 +10,7 @@ import { bodySize } from '../sim/size';
 import type { GameInfo } from '../game';
 import type { GeneEdit, SexEdit } from '../sim/edit';
 import type { SoundName, SoundOptions } from '../sound/sound';
-import { gameNow, STAGES, type Creature, type GameState, type JarState, type Stage } from '../sim/state';
+import { gameNow, STAGES, type Creature, type GameState, type JarState, type Species, type Stage } from '../sim/state';
 import { downloadText, exportFilename } from '../ui/download';
 import { FIND_NAMES, STAGE_LABELS } from '../ui/labels';
 
@@ -34,7 +34,8 @@ export interface DebugPanelOptions {
   /** JSON を読み込む。読めなければ投げる */
   onImport(text: string): void;
   /** 個体：表示中の瓶に出す、段階・進み・皿の数を変える、消す */
-  onSpawn(stage: Stage): void;
+  /** 個体を出す。カブトクラゲはまだ成体だけ */
+  onSpawn(stage: Stage, species?: Species): void;
   onStage(id: number, stage: Stage): void;
   onProgress(id: number, progress: number): void;
   onDiscs(id: number, discs: number): void;
@@ -67,6 +68,8 @@ export interface DebugPanelOptions {
   /** おじさん：最初の手紙を封筒のまま表示中の瓶の横に出し直す、返事を今すぐ届ける */
   onFirstLetter(): void;
   onReplyNow(): void;
+  /** 新しい種（カブトクラゲ）を今すぐ届ける（入る瓶がなければ空きを訊く手紙） */
+  onGiftNow(): void;
   /** 拾いもの：表示中の瓶の瓶底に出す（null なら重みで選ぶ。上限は見ない）、表示中の瓶の瓶底の物を消す、標本を空にする */
   onFindSpawn(variant: string | null): void;
   onFindsClear(): void;
@@ -118,6 +121,7 @@ function span(seconds: number): string {
 
 /** 選んでいる個体の雌雄：雌雄、成熟まで（または色の出かた）、プラヌラを抱えている残り。泳ぐ個体は大きさも */
 function sexInfo(c: Creature, time: number): string {
+  if (c.species === 'bolinopsis') return `雌雄同体（カブトクラゲ）　大きさ ${bodySize(c).toFixed(2)}`;
   if (!c.sex) return '雌雄なし（瓶底の段階）';
   return `${sexText(c, time)}　大きさ ${bodySize(c).toFixed(2)}（育ちきって ${c.fullSize.toFixed(2)}${c.stage === 'adult' ? `・育ち ${Math.round(c.adultGrowth * 100)}%` : ''}）`;
 }
@@ -201,7 +205,7 @@ export class DebugPanel {
       </details>
       <details open>
         <summary>個体（表示中の瓶）</summary>
-        <div class="row buttons spawn">${STAGES.map((st) => `<button type="button" data-spawn="${st}">${STAGE_NAMES[st]}</button>`).join('')}</div>
+        <div class="row buttons spawn">${STAGES.map((st) => `<button type="button" data-spawn="${st}">${STAGE_NAMES[st]}</button>`).join('')}<button type="button" data-spawn="adult" data-species="bolinopsis">カブトクラゲ</button></div>
         <div class="creature-list sub"></div>
         <div class="row selected">
           <select class="stage" aria-label="段階">${STAGES.map((st) => `<option value="${st}">${STAGE_NAMES[st]}</option>`).join('')}</select>
@@ -272,6 +276,7 @@ export class DebugPanel {
         <div class="row buttons">
           <button type="button" class="first-letter">最初の手紙を出し直す</button>
           <button type="button" class="reply-now">返事を今すぐ届ける</button>
+          <button type="button" class="gift-now">カブトクラゲを今すぐ届ける</button>
         </div>
       </details>
       <details>
@@ -372,6 +377,7 @@ export class DebugPanel {
     this.uncleEl = root.querySelector('.uncle')!;
     root.querySelector('.first-letter')!.addEventListener('click', () => this.opts.onFirstLetter());
     root.querySelector('.reply-now')!.addEventListener('click', () => this.opts.onReplyNow());
+    root.querySelector('.gift-now')!.addEventListener('click', () => this.opts.onGiftNow());
     this.findsEl = root.querySelector('.finds')!;
     const variant = root.querySelector<HTMLSelectElement>('.find-variant')!;
     root.querySelector('.find-spawn')!.addEventListener('click', () => this.opts.onFindSpawn(variant.value || null));
@@ -400,7 +406,7 @@ export class DebugPanel {
         // 出した個体を選ぶ（一覧のいちばん下）
         this.selected = null;
         this.pickNewest = true;
-        this.opts.onSpawn(b.dataset.spawn as Stage);
+        this.opts.onSpawn(b.dataset.spawn as Stage, (b.dataset.species as Species | undefined) ?? 'aurelia');
       });
     }
     this.listEl.addEventListener('click', (e) => {
@@ -542,7 +548,8 @@ export class DebugPanel {
             const sel = c.id === this.selected ? ' class="picked"' : '';
             const discs = c.stage === 'strobila' ? ` 皿${c.discs}` : '';
             const sex = c.sex === 'female' ? ' メス' : c.sex === 'male' ? ' オス' : '';
-            return `<div data-id="${c.id}"${sel}>#${c.id} ${STAGE_NAMES[c.stage]}${discs}${sex} <span class="pct"></span></div>`;
+            const species = c.species === 'aurelia' ? '' : ' カブトクラゲ';
+            return `<div data-id="${c.id}"${sel}>#${c.id}${species} ${STAGE_NAMES[c.stage]}${discs}${sex} ${c.generation}代 <span class="pct"></span></div>`;
           })
           .join('') + (jar.resting ? '<div>（いっぱいでポリプが休んでいる）</div>' : '');
     }
@@ -554,9 +561,16 @@ export class DebugPanel {
     const c = jar.creatures.find((x) => x.id === this.selected);
     if (c) {
       const sexText = sexInfo(c, time);
-      const g = c.genes;
       const f = (v: number): string => (v >= 0 ? '+' : '') + v.toFixed(2);
-      const genes = `色 ${f(g.hue)}（−青 +桃）・透け ${f(g.clarity)}・触手 ${f(g.tentacle)}・拍動 ${f(g.tempo)}　崩し いびつ ${g.warp.toFixed(2)}・欠け ${g.ragged.toFixed(2)}・葉 ${g.leafJitter.toFixed(2)}　${g.leaves}つ葉`;
+      let genes: string;
+      if (c.species === 'aurelia') {
+        const g = c.genes;
+        genes = `色 ${f(g.hue)}（−青 +桃）・透け ${f(g.clarity)}・触手 ${f(g.tentacle)}・拍動 ${f(g.tempo)}　崩し いびつ ${g.warp.toFixed(2)}・欠け ${g.ragged.toFixed(2)}・葉 ${g.leafJitter.toFixed(2)}　${g.leaves}つ葉`;
+      } else {
+        const g = c.genes;
+        genes = `透け ${f(g.clarity)}・櫛板 ${f(g.tempo)}・口葉 ${f(g.lobe)}・体つき ${f(g.build)}（−ずんぐり +すらり）　崩し いびつ ${g.warp.toFixed(2)}・口葉の左右 ${g.lobeSkew.toFixed(2)}・列のむら ${g.rowJitter.toFixed(2)}`;
+      }
+      genes += `　${c.generation}代目`;
       if (this.genesEl.textContent !== genes) this.genesEl.textContent = genes;
       if (this.sexEl.textContent !== sexText) this.sexEl.textContent = sexText;
       this.stageSel.value = c.stage;

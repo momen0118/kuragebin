@@ -3,7 +3,7 @@
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
 import { Group, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
 import { EPHYRA, SWIM } from '../config';
-import { genesKey } from '../sim/genes';
+import { BASE_GENES, genesKey, type Genes } from '../sim/genes';
 import { broodAmount, sexColorAmount } from '../sim/sex';
 import { bodySize } from '../sim/size';
 import { createRng } from '../sim/rng';
@@ -35,6 +35,15 @@ interface PolypView {
 }
 
 type View = SwimmerView | PolypView;
+
+/**
+ * 描くときの遺伝子。カブトクラゲは体をまだ作っていないので、仮にミズクラゲの体を借りる（青みを強く、触手を短くして見分ける）。
+ * 透け具合・速さ・いびつさだけ、カブトクラゲの値を使う
+ */
+function viewGenes(c: Creature): Genes {
+  if (c.species === 'aurelia') return c.genes;
+  return { ...BASE_GENES, hue: -1, tentacle: -1, clarity: c.genes.clarity, tempo: c.genes.tempo, warp: c.genes.warp };
+}
 
 /** 放されたエフィラが泳ぎ出すときの、上への勢い（瓶の高さ/秒） */
 const LAUNCH_SPEED = 0.02;
@@ -84,7 +93,7 @@ export class Creatures {
       if (this.carried.has(c.id)) continue;
       let v = this.views.get(c.id);
       const kind = isSwimmer(c.stage) ? 'swimmer' : 'polyp';
-      if (v && (v.kind !== kind || v.genes !== genesKey(c.genes))) {
+      if (v && (v.kind !== kind || v.genes !== genesKey(viewGenes(c)))) {
         this.remove(c.id);
         v = undefined;
       }
@@ -98,9 +107,10 @@ export class Creatures {
     const rng = createRng(c.seed);
     let v: View;
     if (isSwimmer(c.stage)) {
-      const jelly = new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius(), c.genes, c.seed);
+      const genes = viewGenes(c);
+      const jelly = new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius(), genes, c.seed);
       jelly.group.traverse((o) => o.layers.enable(this.glowLayer));
-      const view: SwimmerView = { kind: 'swimmer', genes: genesKey(c.genes), jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, righting: false };
+      const view: SwimmerView = { kind: 'swimmer', genes: genesKey(genes), jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, righting: false };
       // 皿を放しているストロビラの子なら、その皿が離れるまで待ってから泳ぎ出す
       const parent = c.parent !== null ? this.views.get(c.parent) : undefined;
       if (c.stage === 'ephyra' && parent?.kind === 'polyp' && parent.polyp.isReleasing) {
@@ -118,8 +128,9 @@ export class Creatures {
       v = view;
       this.group.add(jelly.group);
     } else {
-      const polyp = new Polyp(this.shared, rng, c.spot ?? [0, 0], c.genes.hue);
-      v = { kind: 'polyp', genes: genesKey(c.genes), polyp };
+      const genes = viewGenes(c);
+      const polyp = new Polyp(this.shared, rng, c.spot ?? [0, 0], genes.hue);
+      v = { kind: 'polyp', genes: genesKey(genes), polyp };
       this.group.add(polyp.group);
     }
     this.views.set(c.id, v);

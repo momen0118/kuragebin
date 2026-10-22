@@ -13,7 +13,7 @@ function step(state: GameState, dt: number, rng: Rng, rules: LifeRules, wallBase
   const wall = wallBase + state.time * 1000;
   stepLife(state, dt, { rng, rules, wall, watching });
   // おじさんからの返事（届く時刻になったら）
-  stepUncle(state, { rng, wall });
+  stepUncle(state, { rng, wall, rules, watching });
   // 拾いもの（見ていない瓶に、まれに現れる）
   stepFinds(state, dt, { wall, watching });
 }

@@ -1,5 +1,11 @@
 // 画面に出す言葉（段階の名前など）。
-import type { Stage } from '../sim/state';
+import type { Species, Stage } from '../sim/state';
+
+/** 種の名前 */
+export const SPECIES_LABELS: Record<Species, string> = {
+  aurelia: 'ミズクラゲ',
+  bolinopsis: 'カブトクラゲ',
+};
 
 export const STAGE_LABELS: Record<Stage, string> = {
   polyp: 'ポリプ',

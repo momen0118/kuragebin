@@ -2,10 +2,10 @@
 // 形が合わないデータは読み込まない（呼び出し側で新しい状態から始める）。
 import { ADULT_GROWTH, CARE, FIND_VARIANTS, LIFE, ROOM_NAMES } from '../config';
 import { createBook, FACT_KEYS } from '../sim/book';
-import { BASE_GENES, sanitizeGenes } from '../sim/genes';
+import { BASE_GENES, sanitizeBolinopsisGenes, sanitizeGenes } from '../sim/genes';
 import { createRng } from '../sim/rng';
 import { sexFromSeed } from '../sim/sex';
-import { DEFAULT_SETTINGS, firstLetter, SCHEMA_VERSION, STAGES, stageRange, type GameState, type Sex, type Stage } from '../sim/state';
+import { DEFAULT_SETTINGS, firstLetter, LETTER_KINDS, SCHEMA_VERSION, SPECIES, STAGES, stageRange, type GameState, type Sex, type Species, type Stage } from '../sim/state';
 
 type Raw = Record<string, unknown>;
 
@@ -159,6 +159,48 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
       }),
     };
   },
+  // 12：何代目か（個体・付くのを待つプラヌラ・送った子）と、新しい種の届き方（空きを訊いた種・届けた種）。
+  // 前からいる個体は、状態の中で親をたどれる所までたどって数える（たどれなくなった所を1代目にする）。
+  // 親が泳ぐ個体（成体）なら代を一つ足し、親が瓶底の個体（ポリプ・ストロビラ）ならエフィラはその分身なので同じ代。送った子は1代目
+  11: (d) => {
+    const jars = Array.isArray(d.jars) ? d.jars : [];
+    const byId = new Map<number, Raw>();
+    for (const jar of jars) {
+      if (!isObject(jar) || !Array.isArray(jar.creatures)) continue;
+      for (const c of jar.creatures) if (isObject(c) && isNumber(c.id)) byId.set(c.id, c);
+    }
+    const swims = (c: Raw): boolean => c.stage === 'adult' || c.stage === 'ephyra';
+    const memo = new Map<number, number>();
+    const generationOf = (c: Raw, depth = 0): number => {
+      const id = isNumber(c.id) ? c.id : -1;
+      const known = memo.get(id);
+      if (known !== undefined) return known;
+      const parent = isNumber(c.parent) ? byId.get(c.parent) : undefined;
+      // 親の親…と、念のため輪になっていても止まるように
+      const g = !parent || depth > byId.size ? 1 : generationOf(parent, depth + 1) + (swims(parent) ? 1 : 0);
+      memo.set(id, g);
+      return g;
+    };
+    return {
+      ...d,
+      jars: jars.map((jar: unknown) => {
+        if (!isObject(jar) || !Array.isArray(jar.creatures)) return jar;
+        return {
+          ...jar,
+          creatures: jar.creatures.map((c: unknown) => (isObject(c) ? { ...c, generation: generationOf(c) } : c)),
+          planulae: Array.isArray(jar.planulae)
+            ? jar.planulae.map((p: unknown) => {
+                if (!isObject(p)) return p;
+                const mother = isNumber(p.parent) ? byId.get(p.parent) : undefined;
+                return { ...p, generation: mother ? generationOf(mother) + 1 : 1 };
+              })
+            : jar.planulae,
+        };
+      }),
+      sent: Array.isArray(d.sent) ? d.sent.map((r: unknown) => (isObject(r) ? { ...r, generation: 1 } : r)) : d.sent,
+      uncle: isObject(d.uncle) ? { ...d.uncle, asked: [], given: [] } : d.uncle,
+    };
+  },
 };
 
 /** 個体の種から育ちきった大きさを決める（版10までのエフィラなど。乱数の並びを変えないため） */
@@ -201,6 +243,20 @@ function isSex(v: unknown): v is Sex {
   return v === 'male' || v === 'female';
 }
 
+function isSpecies(v: unknown): v is Species {
+  return (SPECIES as readonly unknown[]).includes(v);
+}
+
+/** 種の並び（読めないもの・重なりは除く） */
+function speciesList(v: unknown): Species[] {
+  return Array.isArray(v) ? [...new Set(v.filter(isSpecies))] : [];
+}
+
+/** 何代目か（1 以上の整数。読めなければ1代目） */
+function generationOr1(v: unknown): number {
+  return isNumber(v) && v >= 1 ? Math.floor(v) : 1;
+}
+
 function isLeftover(v: unknown): boolean {
   return v === null || (isObject(v) && isNumber(v.amount) && isNumber(v.goneAt));
 }
@@ -225,7 +281,7 @@ function validate(d: Raw): GameState {
     // 瓶底に付くのを待っているプラヌラ：読めないものだけ除く
     jar.planulae = (Array.isArray(jar.planulae) ? jar.planulae : [])
       .filter((p: unknown) => isObject(p) && isNumber(p.at))
-      .map((p: Raw) => ({ at: p.at, parent: isNumber(p.parent) ? p.parent : null, genes: sanitizeGenes(p.genes) }));
+      .map((p: Raw) => ({ at: p.at, parent: isNumber(p.parent) ? p.parent : null, genes: sanitizeGenes(p.genes), generation: generationOr1(p.generation) }));
     for (const c of jar.creatures) {
       if (
         !isObject(c) ||
@@ -245,13 +301,16 @@ function validate(d: Raw): GameState {
       }
       // 餌は読めなければ食べていないことにする（胃の色と成長の早まりだけなので）
       if (!isMeal(c.meal)) c.meal = null;
-      // 遺伝子は読めない値だけ基準にする
-      c.genes = sanitizeGenes(c.genes);
+      // 種（読めなければミズクラゲ）と、その種の遺伝子（読めない値だけ基準にする）。代は読めなければ1代目
+      if (!isSpecies(c.species)) c.species = 'aurelia';
+      c.genes = c.species === 'bolinopsis' ? sanitizeBolinopsisGenes(c.genes) : sanitizeGenes(c.genes);
+      c.generation = generationOr1(c.generation);
       // 来た日が読めなければ、始めた日にする
       if (!isNumber(c.arrivedWallTime)) c.arrivedWallTime = d.createdAt;
       // 雌雄：泳ぐ個体だけ（読めなければ個体の種から）。成体になってからの時間と、抱えているプラヌラは成体だけ
+      // カブトクラゲは雌雄同体なので持たない
       const swimmer = c.stage === 'adult' || c.stage === 'ephyra';
-      if (!swimmer) c.sex = null;
+      if (!swimmer || c.species !== 'aurelia') c.sex = null;
       else if (!isSex(c.sex)) c.sex = sexFromSeed(c.seed as number);
       if (c.stage !== 'adult' || !isNumber(c.adultAge) || c.adultAge < 0) c.adultAge = 0;
       // 成体になってからの育ちと、育ちきった大きさ。読めなければ育ちきった今までの大きさ
@@ -271,13 +330,14 @@ function validate(d: Raw): GameState {
   const journal = d.journal as Raw[];
   for (const e of journal) {
     if (!(e.name === null || typeof e.name === 'string')) e.name = null;
+    if (e.species !== undefined && !isSpecies(e.species)) delete e.species;
     if (!isNumber(e.count)) e.count = 1;
     if (!Array.isArray(e.ids)) e.ids = [];
   }
   if ((d.journalSeen as number) > journal.length) d.journalSeen = journal.length;
   // おじさん：読めない手紙と送った子だけを除く
   d.letters = (Array.isArray(d.letters) ? d.letters : []).filter(
-    (l: unknown) => isObject(l) && isNumber(l.id) && (l.kind === 'first' || l.kind === 'reply') && isNumber(l.wallTime) && isNumber(l.arrivedAt),
+    (l: unknown) => isObject(l) && isNumber(l.id) && (LETTER_KINDS as readonly unknown[]).includes(l.kind) && isNumber(l.wallTime) && isNumber(l.arrivedAt),
   );
   for (const l of d.letters as Raw[]) {
     if (typeof l.sealed !== 'boolean') l.sealed = false;
@@ -285,13 +345,15 @@ function validate(d: Raw): GameState {
     if (!isNumber(l.pick)) l.pick = 0;
     if (!(l.about === null || isNumber(l.about))) l.about = null;
     if (typeof l.topic !== 'string') l.topic = l.kind === 'reply' ? 'plain' : null;
-    if (!isObject(l.gift)) l.gift = null;
+    // 添えた個体は記録（種だけ使う）。種が読めなければ持たない
+    if (!isObject(l.gift) || !isSpecies(l.gift.species)) l.gift = null;
   }
   d.sent = (Array.isArray(d.sent) ? d.sent : []).filter((r: unknown) => isObject(r) && isNumber(r.id) && isNumber(r.sentWallTime) && isStage(r.stage));
   for (const r of d.sent as Raw[]) {
-    r.genes = sanitizeGenes(r.genes);
+    if (!isSpecies(r.species)) r.species = 'aurelia';
+    r.genes = r.species === 'bolinopsis' ? sanitizeBolinopsisGenes(r.genes) : sanitizeGenes(r.genes);
+    r.generation = generationOr1(r.generation);
     if (!(r.name === null || typeof r.name === 'string')) r.name = null;
-    if (typeof r.species !== 'string') r.species = 'aurelia';
     if (!isNumber(r.jar)) r.jar = 0;
     if (!isNumber(r.sentAt)) r.sentAt = 0;
     if (!isSex(r.sex)) r.sex = null;
@@ -303,6 +365,8 @@ function validate(d: Raw): GameState {
     nextLetterId: isNumber(u.nextLetterId) && u.nextLetterId > maxLetter ? u.nextLetterId : maxLetter + 1,
     reply,
     lastReplyAt: isNumber(u.lastReplyAt) ? u.lastReplyAt : null,
+    asked: speciesList(u.asked),
+    given: speciesList(u.given),
   };
   // 拾いもの：読めない物だけを除く。瓶底の場所が読めなければ標本にあることにする（まだ拾っていなければ除く）
   d.specimens = (d.specimens as unknown[]).filter(
@@ -343,7 +407,7 @@ const FACT_SET: ReadonlySet<string> = new Set(FACT_KEYS);
 
 function validateBook(v: unknown, createdAt: number): Raw {
   const b = isObject(v) ? v : (createBook(createdAt) as unknown as Raw);
-  const species = (Array.isArray(b.species) ? b.species : []).filter((r: unknown) => isObject(r) && typeof r.species === 'string') as Raw[];
+  const species = (Array.isArray(b.species) ? b.species : []).filter((r: unknown) => isObject(r) && isSpecies(r.species)) as Raw[];
   let maxPhoto = 0;
   for (const r of species) {
     if (!isNumber(r.since)) r.since = createdAt;

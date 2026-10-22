@@ -137,7 +137,7 @@ export function checkFacts(state: GameState, wall: number): boolean {
   // 成体のうち親のいる子は、エフィラから育った子
   need('grown', () => creatures.some((x) => x.stage === 'adult' && x.parent !== null) || journal('adult'));
   need('righted5', () => c.righted >= BOOK.rightedFor);
-  need('leaves', () => creatures.some((x) => x.genes.leaves !== 4) || state.sent.some((x) => x.genes.leaves !== 4));
+  need('leaves', () => creatures.some((x) => x.species === 'aurelia' && x.genes.leaves !== 4) || state.sent.some((x) => x.species === 'aurelia' && x.genes.leaves !== 4));
   need('water', () => journal('water'));
   need('reply', () => state.letters.some((l) => l.kind === 'reply'));
   for (const k of want) noteFact(state, k, wall);

@@ -104,9 +104,10 @@ describe('おじさん：送る', () => {
     expect(plain).toBeGreaterThan(UNCLE.replyBase - 0.08);
     expect(plain).toBeLessThan(UNCLE.replyBase + 0.08);
     expect(five).toBeGreaterThan(plain + 0.4);
-    expect(rarity({ ...BASE_GENES, hue: 0.9 })).toBeGreaterThan(rarity({ ...BASE_GENES, hue: 0.2 }));
-    expect(topicOf({ genes: { ...BASE_GENES, leaves: 5 }, stage: 'adult' })).toBe('five');
-    expect(topicOf({ genes: { ...BASE_GENES, hue: 0.8 }, stage: 'adult' })).toBe('pink');
+    const aurelia = (g: Partial<typeof BASE_GENES>) => ({ species: 'aurelia' as const, genes: { ...BASE_GENES, ...g }, stage: 'adult' as const, generation: 1 });
+    expect(rarity(aurelia({ hue: 0.9 }))).toBeGreaterThan(rarity(aurelia({ hue: 0.2 })));
+    expect(topicOf(aurelia({ leaves: 5 }))).toBe('five');
+    expect(topicOf(aurelia({ hue: 0.8 }))).toBe('pink');
   });
 
   test('返事は数日後に届き、日誌に一行。手紙は届いた日のページに留まる。返事どうしは数日あける', () => {
