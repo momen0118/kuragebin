@@ -152,6 +152,8 @@ describe('瓶底の堆積と水換え', () => {
 
   test('何もいない瓶は堆積が積もらず、水も替えない。ポリプだけの瓶は今までどおり', () => {
     const s = createInitialState(local(1, 12));
+    // 新しい種が空いた瓶に届かないように（届いたことにしておく）
+    s.uncle.given.push('bolinopsis');
     setSediment(s, 1, CARE.threshold);
     setSediment(s, 2, CARE.threshold);
     // 2番の瓶にはポリプだけ
@@ -160,8 +162,10 @@ describe('瓶底の堆積と水換え', () => {
     expect(waters(n, 1)).toHaveLength(0);
     expect(n.jars[1]!.sediment).toBe(CARE.threshold);
     expect(waters(n, 2).length).toBeGreaterThan(0);
-    // 最初から空の瓶は、何日経っても水を替えたことがない
-    const e = run(createInitialState(local(1, 12)), local(1, 12), local(30, 12));
+    // 最初から空の瓶は、何日経っても水を替えたことがない（新しい種は届いたことにしておく）
+    const empty = createInitialState(local(1, 12));
+    empty.uncle.given.push('bolinopsis');
+    const e = run(empty, local(1, 12), local(30, 12));
     expect(waters(e, 1)).toHaveLength(0);
     expect(e.jars[1]!.sediment).toBe(CARE.after);
   });

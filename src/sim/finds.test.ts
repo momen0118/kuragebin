@@ -51,6 +51,8 @@ describe('拾いものが現れる', () => {
 
   test('何もいない瓶には現れない（水を替えないので）', () => {
     const s = createInitialState(T0);
+    // 新しい種が空いた瓶に届かないように（届いたことにしておく）
+    s.uncle.given.push('bolinopsis');
     const n = run(s, 120);
     expect(findsIn(n, 1)).toHaveLength(0);
     expect(findsIn(n, 2)).toHaveLength(0);

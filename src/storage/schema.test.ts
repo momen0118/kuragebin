@@ -206,8 +206,8 @@ describe('版9からのマイグレーション', () => {
       jar.creatures.push({ ...structuredClone(jar.creatures[0]!), id: 100 + i, seed: 1000 + i * 7919, parent: 1, age: (i % 2 ? 20 : 7) * 86400 });
     }
     jar.creatures.push({ ...structuredClone(jar.creatures[0]!), id: 200, stage: 'ephyra', parent: 5 });
-    s.sent.push({ id: 300, name: null, species: 'aurelia', stage: 'adult', genes: { ...BASE_GENES }, sex: null, jar: 0, sentAt: 0, sentWallTime: T0 });
-    s.sent.push({ id: 301, name: null, species: 'aurelia', stage: 'ephyra', genes: { ...BASE_GENES }, sex: null, jar: 0, sentAt: 0, sentWallTime: T0 });
+    s.sent.push({ id: 300, name: null, species: 'aurelia', stage: 'adult', genes: { ...BASE_GENES }, generation: 1, sex: null, jar: 0, sentAt: 0, sentWallTime: T0 });
+    s.sent.push({ id: 301, name: null, species: 'aurelia', stage: 'ephyra', genes: { ...BASE_GENES }, generation: 1, sex: null, jar: 0, sentAt: 0, sentWallTime: T0 });
     const v9 = JSON.parse(JSON.stringify(s)) as Record<string, unknown> & {
       jars: Array<Record<string, unknown> & { creatures: Array<Record<string, unknown>> }>;
       sent: Array<Record<string, unknown>>;
@@ -255,7 +255,7 @@ describe('版9からのマイグレーション', () => {
     expect(['male', 'female']).toContain(m.jars[0]!.creatures[0]!.sex);
     expect(m.jars[0]!.creatures[0]!.brood).toBeNull();
     expect(m.jars[0]!.creatures[0]!.adultAge).toBe(0);
-    expect(m.jars[1]!.planulae).toEqual([{ at: 5, parent: 1, genes: { ...BASE_GENES, hue: 1 } }]);
+    expect(m.jars[1]!.planulae).toEqual([{ at: 5, parent: 1, genes: { ...BASE_GENES, hue: 1 }, generation: 1 }]);
   });
 });
 
@@ -289,5 +289,55 @@ describe('版1からのマイグレーション', () => {
     expect(c.sex).toBe('female');
     const n = advance(s, 3 * 86400);
     expect(n.jars[0]!.creatures.some((x) => x.stage === 'polyp')).toBe(true);
+  });
+});
+
+describe('版11からのマイグレーション', () => {
+  test('何代目か：親をたどれる所までたどって数える（成体から付いたポリプは＋1、ポリプから出たエフィラは同じ）。たどれなければ1代目', () => {
+    const s = createInitialState(T0);
+    const jar = s.jars[0]!;
+    const first = jar.creatures[0]!;
+    const make = (id: number, stage: 'polyp' | 'ephyra' | 'adult', parent: number | null) => ({ ...structuredClone(first), id, stage, parent, sex: null, brood: null });
+    // 最初の成体 → ポリプ 10 → エフィラ 11（成体に育った）→ ポリプ 12 → エフィラ 13。親を送ってしまったポリプ 20 とそのエフィラ 21
+    jar.creatures.push(make(10, 'polyp', 1), make(11, 'adult', 10), make(12, 'polyp', 11), make(13, 'ephyra', 12), make(20, 'polyp', 99), make(21, 'ephyra', 20));
+    jar.planulae.push({ at: 10, parent: 11, genes: { ...BASE_GENES }, generation: 1 });
+    s.sent.push({ id: 99, name: null, species: 'aurelia', stage: 'adult', genes: { ...BASE_GENES }, generation: 1, sex: null, jar: 0, sentAt: 0, sentWallTime: T0 });
+    const v11 = JSON.parse(JSON.stringify(s)) as Record<string, unknown> & {
+      jars: Array<Record<string, unknown> & { creatures: Array<Record<string, unknown>>; planulae: Array<Record<string, unknown>> }>;
+      sent: Array<Record<string, unknown>>;
+      uncle: Record<string, unknown>;
+    };
+    v11.schema = 11;
+    for (const j of v11.jars) {
+      for (const c of j.creatures) delete c.generation;
+      for (const p of j.planulae) delete p.generation;
+    }
+    for (const r of v11.sent) delete r.generation;
+    delete v11.uncle.asked;
+    delete v11.uncle.given;
+    const m = migrate(v11);
+    const gen = (id: number) => m.jars[0]!.creatures.find((c) => c.id === id)!.generation;
+    expect([1, 10, 11, 12, 13, 20, 21].map(gen)).toEqual([1, 2, 2, 3, 3, 1, 1]);
+    expect(m.jars[0]!.planulae[0]!.generation).toBe(3);
+    expect(m.sent[0]!.generation).toBe(1);
+    expect(m.uncle.asked).toEqual([]);
+    expect(m.uncle.given).toEqual([]);
+    expect(m.schema).toBe(SCHEMA_VERSION);
+  });
+
+  test('カブトクラゲ：遺伝子は種の形で読み、雌雄は持たない。読めない種はミズクラゲ', () => {
+    const s = createInitialState(T0);
+    const k = spawnCreature(s, 1, 'adult', undefined, 'bolinopsis');
+    const raw = JSON.parse(JSON.stringify(s));
+    const rk = raw.jars[1].creatures.find((c: { id: number }) => c.id === k.id);
+    rk.sex = 'female';
+    rk.genes = { lobe: 5, hue: 1 };
+    raw.jars[0].creatures[0].species = 'nope';
+    const m = migrate(raw);
+    const mk = m.jars[1]!.creatures.find((c) => c.id === k.id)!;
+    expect(mk.species).toBe('bolinopsis');
+    expect(mk.sex).toBeNull();
+    expect(mk.genes).toEqual({ clarity: 0, tempo: 0, lobe: 1, build: 0, warp: 0, lobeSkew: 0, rowJitter: 0 });
+    expect(m.jars[0]!.creatures[0]!.species).toBe('aurelia');
   });
 });

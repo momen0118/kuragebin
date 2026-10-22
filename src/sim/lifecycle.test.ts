@@ -115,7 +115,9 @@ describe('生活環', () => {
     const states = run(createInitialState(T0), 20);
     const all = states.flatMap((st) => st.jars.flatMap((j) => j.creatures));
     for (const c of all) {
-      if (isSwimmer(c.stage)) expect(['male', 'female']).toContain(c.sex);
+      // 7日目に届くカブトクラゲは雌雄同体なので持たない
+      if (c.species !== 'aurelia') expect(c.sex).toBeNull();
+      else if (isSwimmer(c.stage)) expect(['male', 'female']).toContain(c.sex);
       else expect(c.sex).toBeNull();
       if (c.stage !== 'adult') expect(c.adultAge).toBe(0);
     }

@@ -2,7 +2,7 @@
 // 研究者らしく素っ気ない文体。感嘆符・顔文字は使わない。返事は一、二行で、送った子に触れる程度。
 // 文面は種類（送った子の特徴）ごとに数パターンあり、届いたときに決めた番号で選ぶ。
 import { UNCLE } from '../config';
-import type { Letter, LetterTopic } from '../sim/state';
+import type { Letter, LetterTopic, Species } from '../sim/state';
 import { esc } from './html';
 import { keepToSelf } from './jarActions';
 
@@ -14,6 +14,21 @@ const FIRST: readonly string[] = [
   '増えても海には放さないでください。こちらで引き取ります。',
   'いろいろな顔のを見てみたいので、気が向いたら送ってください。',
 ];
+
+/**
+ * 新しい種に添えた手紙（封筒のまま天板に置く）。pick 1 は、空きを訊いてから届いたとき（書き出しだけ変わる）。
+ * 仮の文面（ユーザーに見てもらって決める）
+ */
+const GIFT: Record<Exclude<Species, 'aurelia'>, readonly [string, string, readonly string[]]> = {
+  bolinopsis: [
+    '研究室で殖えたので、カブトクラゲを一匹送ります。',
+    'そろそろ空いた頃かと思うので、約束の一匹を送ります。カブトクラゲです。',
+    ['傘も拍動もありません。体の脇の列を波打たせて、ゆっくり進みます。', '光の当たり方によっては、色が流れて見えます。', 'ミズクラゲと同じ瓶で構いません。一匹でも殖えます。'],
+  ],
+};
+
+/** 新しい種を送る前に、瓶の空きを訊く手紙（日誌のページに留まる）。仮の文面 */
+const ASK: readonly string[] = ['こちらでまた別のが殖えています。', '瓶に空きができたら、一匹送ります。'];
 
 /** 返事の文面（送った子の特徴ごと） */
 const REPLIES: Record<LetterTopic, ReadonlyArray<readonly string[]>> = {
@@ -27,8 +42,13 @@ const REPLIES: Record<LetterTopic, ReadonlyArray<readonly string[]>> = {
 };
 
 /** 手紙の本文（署名は別） */
-export function letterLines(l: Pick<Letter, 'kind' | 'topic' | 'pick'>): readonly string[] {
+export function letterLines(l: Pick<Letter, 'kind' | 'topic' | 'pick' | 'gift'>): readonly string[] {
   if (l.kind === 'first') return FIRST;
+  if (l.kind === 'ask') return ASK;
+  if (l.kind === 'gift') {
+    const [opening, afterAsk, rest] = l.gift && l.gift.species !== 'aurelia' ? GIFT[l.gift.species] : GIFT.bolinopsis;
+    return [l.pick === 1 ? afterAsk : opening, ...rest];
+  }
   const list = REPLIES[l.topic ?? 'plain'] ?? REPLIES.plain;
   return list[l.pick % list.length]!;
 }
@@ -61,7 +81,7 @@ export class LetterReader {
   }
 
   /** 手紙を開く。onClose は閉じたとき */
-  open(letter: Pick<Letter, 'kind' | 'topic' | 'pick'>, onClose?: () => void): void {
+  open(letter: Pick<Letter, 'kind' | 'topic' | 'pick' | 'gift'>, onClose?: () => void): void {
     const lines = letterLines(letter)
       .map((l) => `<p>${esc(l)}</p>`)
       .join('');

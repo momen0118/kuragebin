@@ -11,8 +11,8 @@ import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, 
 import { feedingPlan, lastMealAt } from './sim/feed';
 import { inSakuraSeason, petalOf, type Petal } from './sim/season';
 import { broodAmount } from './sim/sex';
-import { DEFAULT_SETTINGS, gameNow, type GameState, type Letter, type Settings, type Stage } from './sim/state';
-import { deliverReplyNow, resetFirstLetter } from './sim/uncle';
+import { DEFAULT_SETTINGS, gameNow, type GameState, type Letter, type Settings, type Species, type Stage } from './sim/state';
+import { deliverGiftNow, deliverReplyNow, resetFirstLetter } from './sim/uncle';
 import { Carry } from './ui/carry';
 import { JarDots } from './ui/dots';
 import { FeedButton } from './ui/feedButton';
@@ -412,10 +412,10 @@ async function main(): Promise<void> {
   /** 確認用の書き換え。デバッグパネルと撮影用の窓口（?debug&capture）で同じものを使う */
   const debugEdits = {
     /** 瓶 jar に個体を出す（育ちきった姿で。progress は段階の進み、spot は瓶底の場所）。番号を返す */
-    spawn: (jar: number, stage: Stage, progress = 0, spot?: [number, number]): number => {
+    spawn: (jar: number, stage: Stage, progress = 0, spot?: [number, number], species: Species = 'aurelia'): number => {
       let id = 0;
       game.edit((s, rules) => {
-        const c = spawnCreature(s, jar, stage, rules);
+        const c = spawnCreature(s, jar, stage, rules, species);
         if (spot && c.spot) c.spot = spot;
         id = c.id;
         setProgress(s, id, progress);
@@ -441,6 +441,12 @@ async function main(): Promise<void> {
     feedClear: () => game.edit((s) => clearFed(s, null)),
     sediment: (jar: number, value: number) => game.edit((s) => setSediment(s, jar, value)),
     replyNow: () => game.edit((s) => deliverReplyNow(s)),
+    /** 新しい種（カブトクラゲ）を今すぐ届ける。届いた個体の番号（入る瓶がなく、空きを訊く手紙になったら null） */
+    giftNow: (): number | null => {
+      let id: number | null = null;
+      game.edit((s, rules) => (id = deliverGiftNow(s, 'bolinopsis', rules)));
+      return id;
+    },
     firstLetter: (jar: number) => game.edit((s) => resetFirstLetter(s, jar)),
     /** 瓶 jar の瓶底に拾いものを出す（variant を決めなければ重みで選ぶ）。番号を返す */
     spawnFind: (jar: number, variant?: string): number => {
@@ -491,7 +497,7 @@ async function main(): Promise<void> {
             game.importJson(text);
             afterImport();
           },
-          onSpawn: (stage) => void debugEdits.spawn(slider.index, stage),
+          onSpawn: (stage, species) => void debugEdits.spawn(slider.index, stage, 0, undefined, species),
           onStage: debugEdits.setStage,
           onProgress: debugEdits.setProgress,
           onDiscs: debugEdits.setDiscs,
@@ -511,6 +517,7 @@ async function main(): Promise<void> {
           onFlip: () => app.flipForDebug(),
           onFirstLetter: () => debugEdits.firstLetter(slider.index),
           onReplyNow: debugEdits.replyNow,
+          onGiftNow: () => void debugEdits.giftNow(),
           onFindSpawn: (variant) => void debugEdits.spawnFind(slider.index, variant ?? undefined),
           onFindsClear: () => debugEdits.clearFinds(slider.index),
           onSpecimensClear: debugEdits.clearSpecimens,
@@ -786,7 +793,7 @@ async function main(): Promise<void> {
       },
       jelly: () => app.jellyScreenPosition(canvas.clientWidth, canvas.clientHeight),
       // 個体を出す・変える（見た目の確認用）。spawn は番号を返す
-      spawn: (stage: Stage, progress = 0, spot?: [number, number]) => debugEdits.spawn(slider.index, stage, progress, spot),
+      spawn: (stage: Stage, progress = 0, spot?: [number, number], species: Species = 'aurelia') => debugEdits.spawn(slider.index, stage, progress, spot, species),
       spawnIn: (jar: number, stage: Stage, progress = 0) => debugEdits.spawn(jar, stage, progress),
       fillIn: debugEdits.fill,
       // 瓶の並びの上の位置（0 が1番の瓶。スワイプの途中は小数）で止める。settle() で近いほうの瓶へ落ち着く
@@ -855,6 +862,7 @@ async function main(): Promise<void> {
       // おじさん：状態だけで送る（カップの流れなし）、返事を今すぐ届ける、最初の手紙を出し直す
       send: (id: number) => game.send(id),
       replyNow: debugEdits.replyNow,
+      giftNow: debugEdits.giftNow,
       firstLetter: () => debugEdits.firstLetter(slider.index),
       // 拾いもの：表示中の瓶に出す（variant を決めなければ重みで選ぶ。番号を返す）、瓶底の物の画面上の位置、拾う（タップと同じ）、
       // 標本から見ている瓶に沈める（メモ帳を下げてから。沈められたら true）、瓶底の物を消す、標本を空に

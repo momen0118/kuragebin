@@ -2,13 +2,16 @@
 // 描画・DOM・three.js には依存しない。
 import { CARE, LIFE, SEX, SIM, type RoomName } from '../config';
 import { createBook, type BookState } from './book';
-import { BASE_GENES, type Genes } from './genes';
+import { BASE_GENES, type BolinopsisGenes, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
-export type Species = 'aurelia';
+/** 種：ミズクラゲ、カブトクラゲ（おじさんから届く） */
+export type Species = 'aurelia' | 'bolinopsis';
+
+export const SPECIES: readonly Species[] = ['aurelia', 'bolinopsis'];
 export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
 
 export const STAGES: readonly Stage[] = ['polyp', 'strobila', 'ephyra', 'adult'];
@@ -30,12 +33,14 @@ export interface Planula {
   parent: number | null;
   /** 付いたポリプが受け継ぐ遺伝子（離れたときに決める） */
   genes: Genes;
+  /** 付いたポリプの代（抱えていたメスの代＋1） */
+  generation: number;
 }
 
-export interface Creature {
+/** 個体のうち、種によらないところ（種と遺伝子は Creature） */
+export interface CreatureBase {
   /** 保存データの中で一意な番号 */
   id: number;
-  species: Species;
   stage: Stage;
   /** 見た目と動きの種（揺れ方や形の細かいところ。受け継ぐ個体差は genes） */
   seed: number;
@@ -62,9 +67,12 @@ export interface Creature {
   discs: number;
   /** 最後に食べた餌（まだなら null）。胃の橙色と、成長の早まりに使う */
   meal: Meal | null;
-  /** 遺伝子（見た目と動きの個体差）。最初の1匹と、版5までにいた個体は基準のまま */
-  genes: Genes;
-  /** 雌雄（成体・エフィラ。ポリプとストロビラは null）。成熟するまでは見た目にも札にも出ない */
+  /**
+   * 何代目か（1 から。生まれたときに決まり、あとから変わらない）。最初の1匹とおじさんから届いた個体は1代目。
+   * ミズクラゲはプラヌラが付いてポリプになるときに親の代＋1、ポリプから出たエフィラはそのポリプと同じ代。カブトクラゲは卵から孵ったときに親の代＋1
+   */
+  generation: number;
+  /** 雌雄（ミズクラゲの成体・エフィラ。ポリプとストロビラ、雌雄同体のカブトクラゲは null）。成熟するまでは見た目にも札にも出ない */
   sex: Sex | null;
   /** 成体になってからの時間（秒、ゲーム内。成体でなければ 0）。SEX.matureAfter で成熟する */
   adultAge: number;
@@ -75,6 +83,20 @@ export interface Creature {
   /** 育ちきった大きさ（傘の半径の倍率。ADULT_GROWTH.fullSize の範囲。生まれたときに決まる） */
   fullSize: number;
 }
+
+/** ミズクラゲ。遺伝子（見た目と動きの個体差）は、最初の1匹と版5までにいた個体は基準のまま */
+export interface AureliaCreature extends CreatureBase {
+  species: 'aurelia';
+  genes: Genes;
+}
+
+/** カブトクラゲ */
+export interface BolinopsisCreature extends CreatureBase {
+  species: 'bolinopsis';
+  genes: BolinopsisGenes;
+}
+
+export type Creature = AureliaCreature | BolinopsisCreature;
 
 export interface Meal {
   /** 食べた時刻（ゲーム内の経過秒） */
@@ -135,7 +157,9 @@ export type JournalKind =
   /** おじさんから手紙が届いた（瓶によらない行。jar は -1） */
   | 'letter'
   /** 手紙が届いていた（版6までに始めていた人の、最初の手紙。jar は -1） */
-  | 'firstLetter';
+  | 'firstLetter'
+  /** おじさんの手紙に添えて、新しい種が届いた（瓶の行。species がその種） */
+  | 'gift';
 
 /** 観察日誌の出来事。文にするのは日誌を開いたとき（ui） */
 export interface JournalEntry {
@@ -154,15 +178,22 @@ export interface JournalEntry {
    * くびれ始めた・成体になったは本人、離れたは放したストロビラ、休み・再開はポリプが1つのときだけ
    */
   name: string | null;
+  /** 届いた種（gift の行だけ） */
+  species?: Species;
 }
 
 /** おじさんへ送った子（個体一覧に「送った子」として残る） */
-export interface SentRecord {
+/** 種と、その種の遺伝子の組（種で遺伝子の形が決まる） */
+export type SpeciesGenes = { species: 'aurelia'; genes: Genes } | { species: 'bolinopsis'; genes: BolinopsisGenes };
+
+export type SentRecord = SentRecordBase & SpeciesGenes;
+
+export interface SentRecordBase {
   id: number;
   name: string | null;
-  species: Species;
   stage: Stage;
-  genes: Genes;
+  /** 何代目か（版12より前に送った子は 1） */
+  generation: number;
   /** 雌雄（成体のとき。エフィラは null で出さない） */
   sex: Sex | null;
   /** 送った瓶と、送った時刻（ゲーム内の秒と端末のミリ秒） */
@@ -174,11 +205,15 @@ export interface SentRecord {
 /** 返事で触れる送った子の特徴（文面を選ぶ） */
 export type LetterTopic = 'five' | 'three' | 'pink' | 'blue' | 'flawed' | 'ephyra' | 'plain';
 
+export type LetterKind = 'first' | 'reply' | 'gift' | 'ask';
+
+export const LETTER_KINDS: readonly LetterKind[] = ['first', 'reply', 'gift', 'ask'];
+
 /** おじさんからの手紙。文面は届いたときに決めた種類と番号から、日誌を開いたときに作る（ui/letters.ts） */
 export interface Letter {
   id: number;
-  /** 最初の手紙か、送った子への返事か */
-  kind: 'first' | 'reply';
+  /** 最初の手紙、送った子への返事、新しい種を添えた手紙、新しい種を送る前に瓶の空きを訊く手紙 */
+  kind: LetterKind;
   /** 返事で触れる特徴と、その中の何番目の文面か */
   topic: LetterTopic | null;
   pick: number;
@@ -191,7 +226,7 @@ export interface Letter {
   sealed: boolean;
   /** 届いたときに見ていた瓶（封筒は部屋に一つで天板に置くので、置く場所には使っていない） */
   jar: number;
-  /** 手紙に添えられた個体（新しい種を足すときに、手紙と一緒に一匹届く。今は使わない） */
+  /** 手紙に添えられた個体（新しい種の手紙と一緒に一匹届く。瓶に入れたあとも記録として残す） */
   gift: Creature | null;
 }
 
@@ -203,6 +238,9 @@ export interface UncleState {
   reply: { dueAt: number; about: number; rarity: number } | null;
   /** 最後に返事が届いた時刻（ゲーム内の秒、まだなら null） */
   lastReplyAt: number | null;
+  /** 新しい種：空きを訊く手紙を出した種と、届けた種（どちらも一度だけ） */
+  asked: Species[];
+  given: Species[];
 }
 
 /** 拾いものの種類 */
@@ -352,6 +390,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     discs: 0,
     meal: null,
     genes: { ...BASE_GENES },
+    generation: 1,
     sex: 'female',
     adultAge: SEX.matureAfter + SEX.colorRamp,
     brood: { from: 0, until },
@@ -385,7 +424,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     // 最初の成体1匹と一緒に、瓶の横に封筒が置いてある
     letters: [firstLetter(1, 0, nowMs, 0)],
     sent: [],
-    uncle: { nextLetterId: 2, reply: null, lastReplyAt: null },
+    uncle: { nextLetterId: 2, reply: null, lastReplyAt: null, asked: [], given: [] },
     book: createBook(nowMs),
     settings: { ...DEFAULT_SETTINGS },
   };

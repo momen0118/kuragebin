@@ -60,6 +60,6 @@ describe('個体差と変異', () => {
     const n = advance(s, 6 * 86400);
     const born = n.jars[0]!.creatures.filter((c) => c.id !== 1);
     expect(born.length).toBeGreaterThan(0);
-    for (const c of born) expect(c.genes.hue).toBeGreaterThan(0.3);
+    for (const c of born) expect(c.species === 'aurelia' && c.genes.hue).toBeGreaterThan(0.3);
   });
 });

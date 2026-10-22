@@ -7,8 +7,8 @@ import { feedDay } from '../../sim/feed';
 import { sunTimes, type SunTimes } from '../../sim/sun';
 import { bookSpecimens } from '../../sim/finds';
 import { FACT_TEXT } from './facts';
-import type { Creature, GameState, JournalEntry, JournalKind, Letter, Stage } from '../../sim/state';
-import { FIND_NAMES, SEX_LABELS, STAGE_LABELS } from '../labels';
+import type { Creature, GameState, JournalEntry, JournalKind, Letter, Species, Stage } from '../../sim/state';
+import { FIND_NAMES, SEX_LABELS, SPECIES_LABELS, STAGE_LABELS } from '../labels';
 import { shownSex } from '../../sim/sex';
 
 export type Daypart = 'dawn' | 'day' | 'dusk' | 'night';
@@ -103,8 +103,8 @@ function lead(part: Daypart, named: boolean): string {
   }
 }
 
-/** 出来事の本文（時間帯を除く） */
-function body(kind: JournalKind, count: number, name: string | null): string {
+/** 出来事の本文（時間帯を除く）。species は届いた種（gift の行だけ） */
+function body(kind: JournalKind, count: number, name: string | null, species?: Species): string {
   const n = kanji(count);
   switch (kind) {
     case 'polyp':
@@ -131,6 +131,8 @@ function body(kind: JournalKind, count: number, name: string | null): string {
       return count > 1 ? `おじさんから手紙が${n}通届いた` : 'おじさんから手紙が届いた';
     case 'firstLetter':
       return '手紙が届いていた';
+    case 'gift':
+      return `おじさんの手紙に添えて、${SPECIES[species ?? 'aurelia']}が一匹届いた`;
   }
 }
 
@@ -138,22 +140,24 @@ function body(kind: JournalKind, count: number, name: string | null): string {
 const NO_LEAD: ReadonlySet<JournalKind> = new Set(['sent', 'letter', 'firstLetter']);
 
 /** 1行の文（時間帯・出来事・数・名前から） */
-export function lineText(part: Daypart, kind: JournalKind, count: number, name: string | null): string {
-  if (NO_LEAD.has(kind)) return body(kind, count, name);
+export function lineText(part: Daypart, kind: JournalKind, count: number, name: string | null, species?: Species): string {
+  if (NO_LEAD.has(kind)) return body(kind, count, name, species);
   // 休み・再開の行は「瓶がいっぱいで」から始まるので、名前が前に来ない
-  const named = name !== null && kind !== 'rest';
-  return lead(part, named) + body(kind, count, name);
+  // 届いた行は「昼のうちに、おじさんの手紙に添えて…」と読点で区切る
+  const named = (name !== null && kind !== 'rest') || kind === 'gift';
+  return lead(part, named) + body(kind, count, name, species);
 }
 
 /** 数を足してまとめる出来事（休み・再開・水換えは、まとめても一行のまま数えない） */
 const COUNTED: ReadonlySet<JournalKind> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'sent', 'letter']);
-const KINDS: ReadonlySet<string> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'rest', 'wake', 'water', 'sent', 'letter', 'firstLetter']);
+const KINDS: ReadonlySet<string> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'rest', 'wake', 'water', 'sent', 'letter', 'firstLetter', 'gift']);
 
 interface Group {
   part: Daypart;
   kind: JournalKind;
   name: string | null;
   count: number;
+  species?: Species;
 }
 
 /** 日誌の出来事からページを作る。新しい日が先 */
@@ -169,12 +173,12 @@ export function journalPages(entries: readonly JournalEntry[], opts: PageOptions
     let groups = jars.get(e.jar);
     if (!groups) jars.set(e.jar, (groups = new Map()));
     // 時間帯を書かない出来事は、時間帯によらずまとめる
-    const id = `${NO_LEAD.has(e.kind) ? '' : part}|${e.kind}|${e.name ?? ''}`;
+    const id = `${NO_LEAD.has(e.kind) ? '' : part}|${e.kind}|${e.name ?? ''}|${e.species ?? ''}`;
     const g = groups.get(id);
     if (g) {
       if (COUNTED.has(e.kind)) g.count += e.count;
     } else {
-      groups.set(id, { part, kind: e.kind, name: e.name, count: COUNTED.has(e.kind) ? e.count : 1 });
+      groups.set(id, { part, kind: e.kind, name: e.name, count: COUNTED.has(e.kind) ? e.count : 1, species: e.species });
     }
   }
   // 手紙は届いた日のページに留める（封を開いたものだけ）。出来事のない日でもページを作る
@@ -199,7 +203,7 @@ export function journalPages(entries: readonly JournalEntry[], opts: PageOptions
           jar,
           title: jar < 0 ? '' : jarTitle(jar),
           // まとめた行は、はじめに起きた順
-          lines: [...groups.values()].map((g) => lineText(g.part, g.kind, g.count, g.name)),
+          lines: [...groups.values()].map((g) => lineText(g.part, g.kind, g.count, g.name, g.species)),
         })),
       letters: letters.get(key) ?? [],
     }));
@@ -224,7 +228,7 @@ export interface RosterPage {
   rows: RosterRow[];
 }
 
-const SPECIES: Record<string, string> = { aurelia: 'ミズクラゲ' };
+const SPECIES: Record<Species, string> = SPECIES_LABELS;
 
 /** 個体一覧：瓶ごとに、来た順。おじさんへ送った子がいれば、最後に「送った子」（送った順、日は送った日） */
 export function rosterPages(state: GameState): RosterPage[] {

@@ -21,7 +21,8 @@ function richState() {
   broodNow(s, a.id);
   spawnCreature(s, 1, 'ephyra').progress = 0.6;
   spawnCreature(s, 2, 'strobila');
-  s.jars[2]!.planulae.push({ at: s.time + 7200, parent: a.id, genes: { ...a.genes, leaves: 4 } });
+  if (a.species !== 'aurelia') throw new Error('ミズクラゲのはず');
+  s.jars[2]!.planulae.push({ at: s.time + 7200, parent: a.id, genes: { ...a.genes, leaves: 4 }, generation: a.generation + 1 });
   feedJar(s, 0, wallAt(s, gameNow(s)));
   const swimmer = s.jars[1]!.creatures.find((c) => c.stage === 'ephyra')!;
   sendCreature(s, swimmer.id);
@@ -51,6 +52,9 @@ describe('書き出し・読み込み', () => {
     expect(s.jars.flatMap((j) => j.creatures).some((c) => c.brood)).toBe(true);
     expect(s.jars[2]!.planulae).toHaveLength(1);
     expect(s.journal.length).toBeGreaterThan(0);
+    // 7日目に届いたカブトクラゲと、添えた手紙
+    expect(s.jars.flatMap((j) => j.creatures).some((c) => c.species === 'bolinopsis')).toBe(true);
+    expect(s.letters.some((l) => l.kind === 'gift' && l.gift)).toBe(true);
     const photos = new Map([[s.book.species[0]!.photos[0]!.id, PHOTO]]);
     const back = importAll(exportState(s, T0, photos));
     expect(back.state).toEqual(s);

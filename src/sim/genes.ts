@@ -1,6 +1,7 @@
 // 個体差と変異。各個体は小さな遺伝子を持ち、見た目と動きを決める。今までの見た目が「基準」（すべて 0、四つ葉）。
 // 新しく生まれる個体は、親の値を少しずらして受け継ぐ（ポリプは成体から、エフィラはストロビラから）。
 // 三つ葉・五つ葉はエフィラごとにまれに出る（受け継がない）。状態をその場で書き換えない純粋な関数だけ。
+// 遺伝子の形は種ごとに別（Genes はミズクラゲ、BolinopsisGenes はカブトクラゲ）。意味が同じもの（透け具合・速さ・輪郭のいびつさ）は名前を揃える。
 import { GENES } from '../config';
 import type { Rng } from './rng';
 
@@ -36,6 +37,34 @@ export const BASE_GENES: Readonly<Genes> = {
   ragged: 0,
   leafJitter: 0,
   leaves: 4,
+};
+
+/**
+ * カブトクラゲの遺伝子。色味や三つ葉・五つ葉に当たるものはない（体はほぼ透明で、虹の色は個体で変わらない）
+ */
+export interface BolinopsisGenes {
+  /** 透け具合：-1 で少し濃い、+1 でよく透ける */
+  clarity: number;
+  /** 櫛板を打つ速さ（泳ぐ速さと、虹の流れる速さ）：-1 でゆっくり、+1 で速い */
+  tempo: number;
+  /** 口葉の大きさ・長さ：-1 で小さい、+1 で大きい */
+  lobe: number;
+  /** 体つき：-1 でずんぐり、+1 ですらり */
+  build: number;
+  /** 崩し（0〜1）：輪郭のいびつさ（欠けて直ったあとのような左右差）、左右の口葉の大きさの違い、櫛板の列の長さのむら */
+  warp: number;
+  lobeSkew: number;
+  rowJitter: number;
+}
+
+export const BASE_BOLINOPSIS_GENES: Readonly<BolinopsisGenes> = {
+  clarity: 0,
+  tempo: 0,
+  lobe: 0,
+  build: 0,
+  warp: 0,
+  lobeSkew: 0,
+  rowJitter: 0,
 };
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
@@ -76,6 +105,39 @@ export function inheritGenes(parent: Readonly<Genes>, rng: Rng, withLeaves: bool
   };
 }
 
+/** カブトクラゲ：親の遺伝子を少しずらして受け継ぐ（考え方はミズクラゲと同じ） */
+export function inheritBolinopsisGenes(parent: Readonly<BolinopsisGenes>, rng: Rng): BolinopsisGenes {
+  const d = GENES.drift;
+  const k = GENES.bolinopsisDrift;
+  return {
+    clarity: shift(parent.clarity, d.clarity, rng),
+    tempo: shift(parent.tempo, d.tempo, rng),
+    lobe: shift(parent.lobe, k.lobe, rng),
+    build: shift(parent.build, k.build, rng),
+    warp: shiftFlaw(parent.warp, rng),
+    lobeSkew: shiftFlaw(parent.lobeSkew, rng),
+    rowJitter: shiftFlaw(parent.rowJitter, rng),
+  };
+}
+
+/** カブトクラゲ：読み込んだ値を遺伝子として使える形にする（足りない・読めない値は基準） */
+export function sanitizeBolinopsisGenes(raw: unknown): BolinopsisGenes {
+  const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const num = (k: keyof BolinopsisGenes, lo: number, hi: number): number => {
+    const v = o[k];
+    return typeof v === 'number' && Number.isFinite(v) ? clamp(v, lo, hi) : BASE_BOLINOPSIS_GENES[k];
+  };
+  return {
+    clarity: num('clarity', -1, 1),
+    tempo: num('tempo', -1, 1),
+    lobe: num('lobe', -1, 1),
+    build: num('build', -1, 1),
+    warp: num('warp', 0, 1),
+    lobeSkew: num('lobeSkew', 0, 1),
+    rowJitter: num('rowJitter', 0, 1),
+  };
+}
+
 /** 読み込んだ値を遺伝子として使える形にする（足りない・読めない値は基準） */
 export function sanitizeGenes(raw: unknown): Genes {
   const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
@@ -97,7 +159,11 @@ export function sanitizeGenes(raw: unknown): Genes {
   };
 }
 
-/** 遺伝子が同じか（描画側で、作り直すかを決めるのに使う） */
-export function genesKey(g: Readonly<Genes>): string {
-  return [g.hue, g.clarity, g.tentacle, g.tempo, g.glow, g.warp, g.ragged, g.leafJitter, g.leaves].map((v) => v.toFixed(4)).join(',');
+/** 遺伝子が同じか（描画側で、作り直すかを決めるのに使う）。値の並びは決めた順（持ち方の順によらない） */
+export function genesKey(g: Readonly<Genes> | Readonly<BolinopsisGenes>): string {
+  const values =
+    'hue' in g
+      ? [g.hue, g.clarity, g.tentacle, g.tempo, g.glow, g.warp, g.ragged, g.leafJitter, g.leaves]
+      : [g.clarity, g.tempo, g.lobe, g.build, g.warp, g.lobeSkew, g.rowJitter];
+  return values.map((v) => v.toFixed(4)).join(',');
 }

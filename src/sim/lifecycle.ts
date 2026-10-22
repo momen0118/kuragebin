@@ -5,12 +5,12 @@
 import { ADULT_GROWTH, LIFE, SEX, type LifeRules } from '../config';
 import { stepCare } from './care';
 import { takenSpots } from './finds';
-import { BASE_GENES, inheritGenes } from './genes';
+import { BASE_BOLINOPSIS_GENES, BASE_GENES, inheritGenes } from './genes';
 import { growthRate } from './growth';
 import { record } from './journal';
 import type { Rng } from './rng';
 import { broodMother, pickSex, reservedSpots, startBrood } from './sex';
-import { isSwimmer, stageRange, wallAt, type Creature, type GameState, type JarState, type Planula, type Stage } from './state';
+import { isSwimmer, stageRange, wallAt, type AureliaCreature, type BolinopsisCreature, type Creature, type CreatureBase, type GameState, type JarState, type Planula, type Stage } from './state';
 
 export interface JarCounts {
   /** 泳ぐ個体（成体＋エフィラ） */
@@ -63,23 +63,20 @@ export function enterStage(c: Creature, stage: Stage, rng: Rng, rules: LifeRules
     c.adultGrowth = 0;
     c.brood = null;
   }
-  if (!isSwimmer(stage)) c.sex = null;
+  // 雌雄があるのはミズクラゲだけ（カブトクラゲは雌雄同体）
+  if (!isSwimmer(stage) || c.species !== 'aurelia') c.sex = null;
   else if (c.sex === null) c.sex = pickSex(rng);
 }
 
-/**
- * 新しい個体を作る（瓶にはまだ入れない）。番号は状態から取る。
- * 来た時刻は今（進めている途中なら、extra に arrivedWallTime として刻みの端末の時刻を渡す）
- */
-export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: LifeRules = LIFE, extra: Partial<Creature> = {}): Creature {
+/** 種によらないところ。乱数は 種 → 段階の長さ → 雌雄（withSex のとき）→ 育ちきった大きさ の順に引く（並びを変えると結果が変わる） */
+function baseCreature(state: GameState, stage: Stage, rng: Rng, rules: LifeRules, withSex: boolean): CreatureBase {
   const seed = Math.floor(rng.next() * 2 ** 32) >>> 0;
   const stageLength = pickStageLength(stage, rng, rules);
   // 成体・エフィラは生まれたときに雌雄が決まる。育ちきった大きさも生まれたときに決まる
-  const sex = isSwimmer(stage) ? pickSex(rng) : null;
+  const sex = withSex && isSwimmer(stage) ? pickSex(rng) : null;
   const fullSize = rng.range(ADULT_GROWTH.fullSize[0], ADULT_GROWTH.fullSize[1]);
   return {
     id: state.nextId++,
-    species: 'aurelia',
     stage,
     seed,
     age: 0,
@@ -93,14 +90,26 @@ export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: 
     spot: null,
     discs: 0,
     meal: null,
-    genes: { ...BASE_GENES },
+    generation: 1,
     sex,
     adultAge: 0,
     brood: null,
     adultGrowth: 0,
     fullSize,
-    ...extra,
   };
+}
+
+/**
+ * 新しいミズクラゲを作る（瓶にはまだ入れない）。番号は状態から取る。
+ * 来た時刻は今（進めている途中なら、extra に arrivedWallTime として刻みの端末の時刻を渡す）。代は extra で渡さなければ1代目
+ */
+export function createCreature(state: GameState, stage: Stage, rng: Rng, rules: LifeRules = LIFE, extra: Partial<AureliaCreature> = {}): AureliaCreature {
+  return { ...baseCreature(state, stage, rng, rules, true), species: 'aurelia', genes: { ...BASE_GENES }, ...extra };
+}
+
+/** 新しいカブトクラゲを作る（瓶にはまだ入れない）。雌雄同体なので雌雄は持たない */
+export function createBolinopsis(state: GameState, stage: Stage, rng: Rng, rules: LifeRules = LIFE, extra: Partial<BolinopsisCreature> = {}): BolinopsisCreature {
+  return { ...baseCreature(state, stage, rng, rules, false), species: 'bolinopsis', genes: { ...BASE_BOLINOPSIS_GENES }, ...extra };
 }
 
 /**
@@ -165,9 +174,16 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
         c.adultAge += dt;
         // 成体になってからも、数日かけて育ちきった大きさへ
         c.adultGrowth = Math.min(1, c.adultGrowth + dt / ADULT_GROWTH.seconds);
+        // カブトクラゲはまだ増えない（増え方は後の段階で作る）
+        if (c.species !== 'aurelia') break;
         // 抱えていたプラヌラの粒がなくなった：しばらくして、今いる瓶の瓶底に付く
         if (c.brood && state.time >= c.brood.until) {
-          jar.planulae.push({ at: state.time + rng.range(SEX.settle[0], SEX.settle[1]), parent: c.id, genes: inheritGenes(c.genes, rng, false) });
+          jar.planulae.push({
+            at: state.time + rng.range(SEX.settle[0], SEX.settle[1]),
+            parent: c.id,
+            genes: inheritGenes(c.genes, rng, false),
+            generation: c.generation + 1,
+          });
           c.brood = null;
         }
         // 約1日ごとに瓶底へポリプを付ける。瓶底がいっぱいなら、空くまで待つ
@@ -188,6 +204,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
           genes: inheritGenes(c.genes, rng, false),
           spot: pickSpot(spotsIn(state, index, born), rng, rules),
           arrivedWallTime: wall,
+          generation: c.generation + 1,
         });
         born.push(polyp);
         counts.polyps++;
@@ -196,6 +213,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
         break;
       }
       case 'polyp': {
+        if (c.species !== 'aurelia') break;
         // 泳ぐ個体が上限なら休む（進まない）。餌を食べてから1日は少し速い
         const free = rules.maxSwimmers - counts.swimmers - counts.pending;
         if (free <= 0) break;
@@ -212,6 +230,7 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
         break;
       }
       case 'strobila': {
+        if (c.species !== 'aurelia') break;
         c.progress = Math.min(1, c.progress + dt / c.stageLength);
         if (c.progress >= 1) {
           // エフィラを放してポリプに戻る。念のため、上限を越える分は放さない
@@ -220,7 +239,13 @@ function stepJar(state: GameState, jar: JarState, index: number, dt: number, ctx
           counts.pending -= c.discs;
           const ids: number[] = [];
           for (let k = 0; k < n; k++) {
-            const e = createCreature(state, 'ephyra', rng, rules, { parent: c.id, arrivedWallTime: wall, genes: inheritGenes(c.genes, rng, true) });
+            // ポリプの分身なので、代はそのポリプと同じ
+            const e = createCreature(state, 'ephyra', rng, rules, {
+              parent: c.id,
+              arrivedWallTime: wall,
+              genes: inheritGenes(c.genes, rng, true),
+              generation: c.generation,
+            });
             born.push(e);
             ids.push(e.id);
           }
@@ -259,6 +284,7 @@ function settlePlanulae(state: GameState, jar: JarState, index: number, rules: L
     const polyp = createCreature(state, 'polyp', ctx.rng, rules, {
       parent: p.parent,
       genes: p.genes,
+      generation: p.generation,
       spot: pickSpot(takenSpots(state, index), ctx.rng, rules),
       arrivedWallTime: ctx.wall,
     });

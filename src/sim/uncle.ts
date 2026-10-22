@@ -1,15 +1,16 @@
 // おじさん（最初のミズクラゲをくれた研究者）とのやりとり。海月は逃がさない（海にも放さない）。育ったら、頼まれて送る。
 // 送ると、その子は瓶からいなくなり「送った子」として残る。返事は送るたびに必ずではなく、数日後にたまに届く。
 // 珍しい子を送ったときほど届きやすく、返事どうしは最短でも数日あける。届いたら日誌に一行、手紙はその日のページに留まる。
+// 新しい種（カブトクラゲ）は、始めてから決まった日数で、手紙に添えて一度だけ届く（送らない人にも届くように）。
 // 状態をその場で書き換える。
-import { LIFE, UNCLE, type LifeRules } from '../config';
+import { LIFE, SEX, UNCLE, type LifeRules } from '../config';
+import { speciesRecord } from './book';
 import { findCreature } from './edit';
-import type { Genes } from './genes';
 import { record } from './journal';
-import { updateResting } from './lifecycle';
+import { createBolinopsis, freeSwimmerSlots, updateResting } from './lifecycle';
 import { withStateRng, type Rng } from './rng';
 import { shownSex } from './sex';
-import { gameNow, isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Stage } from './state';
+import { gameNow, isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Species, type SpeciesGenes } from './state';
 
 export type SendResult = 'sent' | 'fixed' | 'missing';
 
@@ -20,8 +21,18 @@ export function canSend(state: GameState, id: number): SendResult {
   return isSwimmer(found.creature.stage) ? 'sent' : 'fixed';
 }
 
-/** 珍しさ（0〜1）：三つ葉・五つ葉、色味の偏った子、崩しの大きい子ほど */
-export function rarity(genes: Readonly<Genes>, stage: Stage = 'adult'): number {
+/**
+ * 珍しさ（0〜1）。ミズクラゲ：三つ葉・五つ葉、色味の偏った子、崩しの大きい子ほど。
+ * カブトクラゲ：瓶の中で代を重ねた子ほど（見た目より続いたことを珍しがる）。崩しの大きさも少し足す
+ */
+export function rarity(c: SpeciesGenes & Pick<Creature, 'stage' | 'generation'>): number {
+  if (c.species === 'bolinopsis') {
+    const g = c.genes;
+    const flaw = (g.warp + g.lobeSkew + g.rowJitter) / 3;
+    return Math.min(1, (c.generation - 1) * UNCLE.rareGeneration + flaw * UNCLE.rareFlawWeight);
+  }
+  const genes = c.genes;
+  const stage = c.stage;
   let r = 0;
   if (genes.leaves !== 4) r = 1;
   const hue = Math.abs(genes.hue);
@@ -32,8 +43,9 @@ export function rarity(genes: Readonly<Genes>, stage: Stage = 'adult'): number {
   return r;
 }
 
-/** 返事で触れる特徴：いちばん目立つもの */
-export function topicOf(sent: Pick<SentRecord, 'genes' | 'stage'>): LetterTopic {
+/** 返事で触れる特徴：いちばん目立つもの。カブトクラゲの返事はまだ作っていない（送る流れを作る段階で） */
+export function topicOf(sent: SpeciesGenes & Pick<SentRecord, 'stage'>): LetterTopic {
+  if (sent.species !== 'aurelia') return 'plain';
   const g = sent.genes;
   if (g.leaves === 5) return 'five';
   if (g.leaves === 3) return 'three';
@@ -58,10 +70,11 @@ export function sendCreature(state: GameState, id: number, rules: LifeRules = LI
   const now = gameNow(state);
   const wall = wallAt(state, now);
   // 雌雄は成体なら残す（エフィラは出さないので null）
-  state.sent.push({ id: c.id, name: c.name, species: c.species, stage: c.stage, genes: { ...c.genes }, sex: shownSex(c), jar, sentAt: now, sentWallTime: wall });
+  const base = { id: c.id, name: c.name, stage: c.stage, generation: c.generation, sex: shownSex(c), jar, sentAt: now, sentWallTime: wall };
+  state.sent.push(c.species === 'aurelia' ? { ...base, species: 'aurelia', genes: { ...c.genes } } : { ...base, species: 'bolinopsis', genes: { ...c.genes } });
   record(state, 'sent', jar, 1, [c.id], wall, c.name);
   updateResting(state, j, jar, rules, null);
-  const rare = rarity(c.genes, c.stage);
+  const rare = rarity(c);
   withStateRng(state, (rng) => {
     const u = state.uncle;
     if (u.reply) {
@@ -124,10 +137,85 @@ function deliverReply(state: GameState, wall: number, rng: Rng): void {
   u.reply = null;
 }
 
-/** 1刻み：届く時刻になった返事を届ける（advance の刻みごと） */
-export function stepUncle(state: GameState, ctx: { rng: Rng; wall: number }): void {
+/** 1刻み：届く時刻になった返事を届ける。新しい種の届く日が来ていれば届ける（advance の刻みごと） */
+export function stepUncle(state: GameState, ctx: { rng: Rng; wall: number; rules: LifeRules; watching: number | null }): void {
   const r = state.uncle.reply;
   if (r && state.time >= r.dueAt) deliverReply(state, ctx.wall, ctx.rng);
+  for (const species of GIFTS) {
+    if (state.uncle.given.includes(species) || state.time < UNCLE.giftAfter[species]) continue;
+    stepGift(state, species, ctx);
+  }
+}
+
+/** おじさんから届く種（届く順） */
+const GIFTS = ['bolinopsis'] as const satisfies readonly Species[];
+
+/**
+ * 新しい種の入る瓶：何もいない瓶（瓶底のプラヌラもない）が最優先で 1→2→3、なければ泳ぐ個体に空きのある瓶を 1→2→3。どこもなければ null
+ */
+export function giftJar(state: GameState, rules: LifeRules = LIFE): number | null {
+  const empty = state.jars.findIndex((j) => j.creatures.length === 0 && j.planulae.length === 0);
+  if (empty >= 0) return empty;
+  const free = state.jars.findIndex((j) => freeSwimmerSlots(j, rules) > 0);
+  return free >= 0 ? free : null;
+}
+
+/**
+ * 届く日が来た新しい種：入る瓶があれば、手紙に添えて届ける（その瓶を見ている間は待つ）。
+ * どの瓶もいっぱいなら、空きを訊く手紙を一度だけ出して、空くのを待つ
+ */
+function stepGift(state: GameState, species: (typeof GIFTS)[number], ctx: { rng: Rng; wall: number; rules: LifeRules; watching: number | null }): void {
+  const u = state.uncle;
+  const jar = giftJar(state, ctx.rules);
+  if (jar === null) {
+    if (u.asked.includes(species)) return;
+    u.asked.push(species);
+    addLetter(state, { kind: 'ask', topic: null, pick: 0, about: null, arrivedAt: state.time, wallTime: ctx.wall, sealed: false, jar: state.settings.jar, gift: null });
+    record(state, 'letter', -1, 1, [], ctx.wall);
+    return;
+  }
+  if (jar === ctx.watching) return;
+  deliverGift(state, species, jar, ctx.wall, ctx.rng, ctx.rules);
+}
+
+/** 新しい種を瓶 jar に、手紙（封筒のまま天板に置く）に添えて届ける。届いたのは成熟した成体で、1代目 */
+function deliverGift(state: GameState, species: (typeof GIFTS)[number], jar: number, wall: number, rng: Rng, rules: LifeRules): Creature {
+  const c = createBolinopsis(state, 'adult', rng, rules, { arrivedWallTime: wall, adultGrowth: 1, adultAge: SEX.matureAfter });
+  state.jars[jar]!.creatures.push(c);
+  const letter = addLetter(state, {
+    kind: 'gift',
+    topic: null,
+    // 空きを訊いてから届いたときは、書き出しが変わる
+    pick: state.uncle.asked.includes(species) ? 1 : 0,
+    about: null,
+    arrivedAt: state.time,
+    wallTime: wall,
+    sealed: true,
+    jar,
+    gift: null,
+  });
+  // 添えた個体は記録として手紙に残す（瓶に入れるのはここで済ませたので、addLetter には渡さない）
+  letter.gift = structuredClone(c);
+  if (!state.uncle.given.includes(species)) state.uncle.given.push(species);
+  // 種のページに、初めて瓶に来た日が付く
+  speciesRecord(state, species, wall);
+  record(state, 'gift', jar, 1, [c.id], wall, null, species);
+  updateResting(state, state.jars[jar]!, jar, rules, null);
+  return c;
+}
+
+/** 確認用：新しい種を今すぐ届ける（日数を待たない。入る瓶がなければ空きを訊く手紙。見ている瓶でも届ける）。届いた個体の番号か null */
+export function deliverGiftNow(state: GameState, species: (typeof GIFTS)[number] = 'bolinopsis', rules: LifeRules = LIFE): number | null {
+  const now = gameNow(state);
+  const wall = wallAt(state, now);
+  return withStateRng(state, (rng) => {
+    const jar = giftJar(state, rules);
+    if (jar === null) {
+      stepGift(state, species, { rng, wall, rules, watching: null });
+      return null;
+    }
+    return deliverGift(state, species, jar, wall, rng, rules).id;
+  });
 }
 
 /** 封筒を開いた（最初の手紙）。日誌のその日のページに留まる */
