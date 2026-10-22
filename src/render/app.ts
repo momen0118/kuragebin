@@ -753,7 +753,7 @@ export class App {
     if (!v) this.lensShot = null;
   }
 
-  /** レンズの中を1枚の画像に（一辺 px の正方形、レンズの外は透明）。使っていなければ null。今は使わない */
+  /** レンズの中を1枚の画像に（一辺 px の正方形、レンズの外は透明）。使っていなければ null。虫眼鏡で追っている間に撮る写真（`photoLens`）に使う */
   captureLens(px = 512): ImageData | null {
     const v = this.loupe;
     const shot = this.lensShot;
