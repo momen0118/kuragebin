@@ -28,6 +28,11 @@ function withoutSex(state: GameState): GameState {
 }
 
 describe('保存データの版', () => {
+  test('新しく始めたデータは研究室から', () => {
+    expect(createInitialState(T0).settings.room).toBe('lab');
+    expect(migrate(JSON.parse(JSON.stringify(createInitialState(T0)))).settings.room).toBe('lab');
+  });
+
   test('今の版のデータはそのまま読める', () => {
     const s = advance(createInitialState(T0), 12345);
     expect(migrate(JSON.parse(JSON.stringify(s)))).toEqual(s);
@@ -40,10 +45,12 @@ describe('保存データの版', () => {
     expect(m.settings.lamp).toBe(false);
     expect(m.settings.sound).toBe(false);
     expect(m.settings.quality).toBe('high');
-    // 部屋は家、固定なし。読めない値も家に
-    expect(m.settings).toMatchObject({ room: 'home', roomLocked: false });
-    expect(migrate({ ...s, settings: { room: 'kitchen', roomLocked: 'yes' } }).settings).toMatchObject({ room: 'home', roomLocked: false });
-    expect(migrate({ ...s, settings: { room: 'lab', roomLocked: true } }).settings).toMatchObject({ room: 'lab', roomLocked: true });
+    // 部屋を持っていないデータ（部屋を選べるようになる前から遊んでいた）は家のまま。読めない値も家に。固定の印は捨てる
+    expect(m.settings.room).toBe('home');
+    expect(migrate({ ...s, settings: { room: 'kitchen' } }).settings.room).toBe('home');
+    const locked = migrate({ ...s, settings: { room: 'lab', roomLocked: true } }).settings;
+    expect(locked.room).toBe('lab');
+    expect('roomLocked' in locked).toBe(false);
   });
 
   test('形の違うデータや新しい版のデータは読まない', () => {
