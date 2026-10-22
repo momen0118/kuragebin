@@ -1,6 +1,7 @@
 // Service Worker 本体。ビルド時に scripts/pwa-plugin.mjs が __VERSION__ と __FILES__ を差し込んで dist/sw.js にする。
 // 全アセットを事前にキャッシュし、キャッシュから返す（オフラインで完全に動く）。
-// 新しい版は裏で取り込み、開いている画面がすべて閉じた次の起動から使われる（skipWaiting しない）。
+// 新しい版は裏で取り込んで待つ。画面の側（src/pwa/register.ts）が保存を済ませてから知らせてきたときだけ使われはじめる
+// （知らせがなければ、開いている画面がすべて閉じた次の起動から）。
 
 const VERSION = __VERSION__;
 const FILES = __FILES__;
@@ -15,6 +16,10 @@ self.addEventListener('install', (event) => {
       // HTTP のキャッシュに古いものが残っていても使わない
       .then((cache) => cache.addAll(FILES.map((f) => new Request(new URL(f, self.location.href), { cache: 'reload' })))),
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data === 'skip-waiting') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
