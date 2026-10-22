@@ -44,6 +44,8 @@ uniform sampler2D tRoom;
 uniform vec2 uResolution;
 uniform vec3 uKey, uGlowPos, uGlowColor, uLightDir;
 uniform float uShadow, uLensLight, uTime;
+// 光の弧の強さの倍率（部屋ごと。天板の明るさで割り戻す）
+uniform float uTableLight;
 uniform float uTableBackZ, uTableLeftX;
 /** 天板に立っている瓶の横の位置（ワールド x）、数、瓶ごとの水面の揺れ（すれ違う間は2つ） */
 uniform float uJarX[2];
@@ -110,14 +112,14 @@ void main() {
     mul *= ao * (1.0 - sh.x * uShadow);
 
     // 瓶が集めた光で、写真の天板の木目がそのまま明るくなる（窓の光の色を帯びる）
-    add += photo * tint * sh.y * uLensLight * ARC_GAIN;
+    add += photo * tint * sh.y * uLensLight * ARC_GAIN * uTableLight;
 
     // 夜のデスクライト：光だまりの中に瓶の影が右へ落ち、瓶が集めた光の弧が出る
     if (uLampLevel > 0.001) {
       float spot = saturate(lampSpot(P));
       vec2 shL = jarShade(P, lampDir(P), ag);
       mul *= 1.0 - shL.x * ${LAMP.shadow.toFixed(3)} * uLampLevel * spot;
-      add += photo * lampTint * shL.y * uLampLevel * spot * ${LAMP.lensLight.toFixed(3)} * ARC_GAIN;
+      add += photo * lampTint * shL.y * uLampLevel * spot * ${LAMP.lensLight.toFixed(3)} * ARC_GAIN * uTableLight;
     }
 
     // 海月の光の照り返し（光る種だけ）。瓶の底越しに、海月が近いときだけほのかに
@@ -138,7 +140,7 @@ export interface TableJars {
   uJarAgitation: { value: number[] };
 }
 
-export function createTable(shared: SharedUniforms, cam: PhotoCamera): { mesh: Mesh; jars: TableJars } {
+export function createTable(shared: SharedUniforms, cam: PhotoCamera): { mesh: Mesh; jars: TableJars; light: { value: number } } {
   const width = 4;
   const depth = 3;
   const geo = new PlaneGeometry(width, depth, 1, 1);
@@ -146,6 +148,7 @@ export function createTable(shared: SharedUniforms, cam: PhotoCamera): { mesh: M
   // 手前（+z）へ伸ばし、奥は天板の縁まで
   geo.translate(0.8, 0, cam.tableBackZ + depth / 2);
   const jars: TableJars = { uJarX: { value: [0, 0] }, uJarCount: { value: 1 }, uJarAgitation: { value: [0, 0] } };
+  const light = { value: 1 };
   const mat = new ShaderMaterial({
     glslVersion: GLSL3,
     vertexShader: VERT,
@@ -170,10 +173,11 @@ export function createTable(shared: SharedUniforms, cam: PhotoCamera): { mesh: M
       uLightDir: { value: new Vector3(...TABLE.lightDir).normalize() },
       uTableBackZ: { value: cam.tableBackZ },
       uTableLeftX: { value: cam.tableLeftX },
+      uTableLight: light,
     },
   });
   const mesh = new Mesh(geo, mat);
   mesh.renderOrder = 1;
   mesh.frustumCulled = false;
-  return { mesh, jars };
+  return { mesh, jars, light };
 }

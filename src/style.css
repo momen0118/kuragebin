@@ -905,7 +905,7 @@ body {
   color: var(--ink-soft);
 }
 
-/* 設定：揺れ、画質、データ。ほかのページと同じく、どの行も罫線の行（--line-h）に乗せる。項目の間は一行あける */
+/* 設定：音、揺れ、画質、部屋、データ。ほかのページと同じく、どの行も罫線の行（--line-h）に乗せる。項目の間は一行あける */
 .leaf .settings {
   font-size: 12px;
   line-height: var(--line-h);
@@ -930,7 +930,8 @@ body {
 
 .leaf .sound,
 .leaf .motion,
-.leaf .quality {
+.leaf .quality,
+.leaf .room {
   margin-bottom: var(--line-h);
 }
 

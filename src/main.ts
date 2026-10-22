@@ -1,6 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { BOOK, FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, QUALITY, SIM, SLOSH, UNCLE } from './config';
+import { BOOK, FIND_LOOK, HANDLING, KICK, LOUPE, MOTION, NOTEBOOK, QUALITY, SIM, SLOSH, UNCLE, type RoomName } from './config';
 import { DebugPanel } from './debug/panel';
 import { Game } from './game';
 import { App } from './render/app';
@@ -37,6 +37,39 @@ const params = new URLSearchParams(location.search);
 const debug = params.has('debug') || location.hash === '#debug';
 /** 確認用（?debug のときだけ）：自動では進めず、外から1コマずつ進める */
 const capture = debug && params.has('capture');
+
+/**
+ * 研究室の入り口（?room=lab。お母さん用）。この端末は研究室に固定して、設定で部屋を選べなくする。
+ * ホーム画面に置いても研究室の入り口から開くよう、manifest も研究室用にする（iOS はホーム画面の分の保存が別なので、固定だけでは足りない）
+ */
+const labEntry = params.get('room') === 'lab';
+/** 開いたときに先に読み込む部屋の覚え（この端末だけの手がかり。正は保存した設定） */
+const ROOM_HINT_KEY = 'kuragebin.room';
+
+function roomHint(): RoomName {
+  if (labEntry) return 'lab';
+  try {
+    const v = localStorage.getItem(ROOM_HINT_KEY);
+    if (v === 'home' || v === 'lab') return v;
+  } catch {
+    // 覚えが読めなくても、保存した設定に合わせ直す
+  }
+  return 'home';
+}
+
+function rememberRoom(room: RoomName): void {
+  try {
+    localStorage.setItem(ROOM_HINT_KEY, room);
+  } catch {
+    // 覚えられなくても動く（次に開いたとき、読み込んでから部屋を合わせる）
+  }
+}
+
+/** ホーム画面に置くときの manifest を研究室用に（研究室の入り口から開く） */
+function useLabManifest(): void {
+  const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+  if (link) link.href = `${import.meta.env.BASE_URL}manifest-lab.webmanifest`;
+}
 
 function supportsWebGL2(): boolean {
   try {
@@ -93,6 +126,7 @@ async function main(): Promise<void> {
   const clock = new Clock();
   const gameReady = Game.start(clock);
 
+  if (labEntry) useLabManifest();
   const app = new App(canvas);
   if (debug) {
     // 確認用：中間の画像を出す（?view=bg / contents / glow / room）、部品を隠す（?hide=snow,table など）
@@ -112,7 +146,26 @@ async function main(): Promise<void> {
   window.addEventListener('scroll', () => {
     if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
   });
-  const [game] = await Promise.all([gameReady, app.load(import.meta.env.BASE_URL)]);
+  const [game] = await Promise.all([gameReady, app.load(import.meta.env.BASE_URL, roomHint())]);
+
+  /** 部屋（背景の写真の組）を設定に合わせる。研究室に固定した端末は研究室だけ */
+  const applyRoom = async (): Promise<void> => {
+    const s = game.state.settings;
+    const room: RoomName = s.roomLocked ? 'lab' : s.room;
+    if (s.roomLocked) useLabManifest();
+    rememberRoom(room);
+    await app.setRoom(room);
+  };
+  // 研究室の入り口から開いた：この端末を研究室に固定する
+  if (labEntry && !(game.state.settings.roomLocked && game.state.settings.room === 'lab')) game.updateSettings({ room: 'lab', roomLocked: true });
+  await applyRoom();
+  /** 部屋を変える（日誌の設定）。研究室に固定した端末では変えられない */
+  const setRoom = (room: RoomName): void => {
+    const s = game.state.settings;
+    if (s.roomLocked || s.room === room) return;
+    game.updateSettings({ room });
+    void applyRoom();
+  };
 
   /** 画質（日誌の設定）：描く解像度・マリンスノーの数・虫眼鏡の描き方を合わせ、描き直す大きさを決め直す。1秒に描く回数はループで */
   const applyQuality = (): void => {
@@ -253,6 +306,7 @@ async function main(): Promise<void> {
     app.setLampOn(game.state.settings.lamp);
     lampToggle.set(game.state.settings.lamp);
     jumpToSavedJar();
+    void applyRoom();
   };
 
   // おじさんの手紙。机の上の封筒（最初の手紙）はタップで読み、読んだら日誌のその日のページに留まる。
@@ -293,6 +347,8 @@ async function main(): Promise<void> {
     playSound: (name) => sound.play(name),
     quality: () => game.state.settings.quality,
     setQuality,
+    room: () => (game.state.settings.roomLocked ? null : game.state.settings.room),
+    setRoom,
     opened: () => {
       tag.hide();
       game.markJournalRead();
@@ -370,6 +426,11 @@ async function main(): Promise<void> {
             app.setLampOn(game.state.settings.lamp);
             lampToggle.set(game.state.settings.lamp);
             jumpToSavedJar();
+            void applyRoom();
+          },
+          onRoomUnlock: () => {
+            game.updateSettings({ roomLocked: false });
+            void applyRoom();
           },
           onExport: () => game.exportJson(),
           onImport: (text) => {
@@ -455,6 +516,8 @@ async function main(): Promise<void> {
     refreshPanel = (): void => {
       panel.showState(game.state, game.info, clock.speed, clock.drift);
       panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers, game.state.time + game.state.pending);
+      const rs = game.state.settings;
+      panel.showRoom(`部屋 ${rs.room === 'lab' ? '研究室' : '家'}${rs.roomLocked ? '（固定）' : ''}`);
       panel.showFeed(feedText());
       panel.showUncle(game.state);
       panel.showFinds(game.state);
@@ -820,6 +883,11 @@ async function main(): Promise<void> {
       loupeHome: () => loupe.returnToTable(),
       lowQuality: (on: boolean) => setQuality(on ? 'low' : 'high'),
       quality: (q: Settings['quality']) => setQuality(q),
+      /** 部屋：設定で選ぶのと同じ（写真を読み込み終わるまで待つ）。固定している端末では変わらない */
+      room: async (r: RoomName) => {
+        setRoom(r);
+        await applyRoom();
+      },
       lensImage: (px = 256) => {
         const img = app.captureLens(px);
         if (!img) return null;
