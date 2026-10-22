@@ -56,7 +56,6 @@ ${common}
 ${LAMP_GLSL}
 #define FG_START ${ROOM.foregroundStart.toFixed(1)}
 #define FG_BAND ${ROOM.foregroundBand.toFixed(1)}
-#define FG_FADE ${ROOM.foregroundFade.toFixed(1)}
 #define FG_DEFOCUS ${ROOM.foregroundDefocus.toFixed(1)}
 uniform sampler2D tFull[4];
 uniform sampler2D tMid[4];
@@ -71,6 +70,8 @@ uniform vec2 uCoverOffset;
 uniform vec2 uCurve[${MAX_CURVE}];
 uniform int uCurveCount;
 uniform float uEdgeFade;
+/** 手前の天板が黒に溶けきるまでの長さ（写真px）。写真の下に足した分だけ長い */
+uniform float uFgFade;
 uniform int uOverlay;
 uniform int uPattern;
 /** 写真のカメラ（天板の上の点を求めるため） */
@@ -164,7 +165,7 @@ vec3 roomAt(vec2 uv, vec2 geo, float b) {
 vec3 foreground(float x, float t, float b0, vec2 geo) {
   // 引き伸ばし：始まりでは写真そのまま、下へ行くほど帯の下端（縁の手前）へ寄って大きく写る
   float ys = FG_START + FG_BAND * (1.0 - exp(-t / FG_BAND));
-  float k = saturate(t / FG_FADE);
+  float k = saturate(t / uFgFade);
   float b = mix(b0, 1.0, smoothstep(0.0, 0.6, k));
   // ピントの外れ：手前ほど横に大きくぼける
   float sigma = FG_DEFOCUS * k / ${PHOTO.width.toFixed(1)};
@@ -198,8 +199,12 @@ void main() {
   vec3 c;
   if (py > FG_START) {
     c = foreground(uv.x, py - FG_START, min(1.0, blurAmount(FG_START) + extra), geo);
-  } else {
+  } else if (py >= 0.0) {
     c = roomAt(uv, geo, min(1.0, blurAmount(py) + extra));
+  } else {
+    // 写真の上端より上（縦長の画面で足した分）：上端の壁を伸ばし、上へ行くほど少し暗く
+    c = roomAt(vec2(uv.x, 1.0), geo, min(1.0, blurAmount(0.0) + extra));
+    c *= mix(1.0, ${ROOM.topDim.toFixed(3)}, smoothstep(0.0, ${ROOM.topDimLength.toFixed(1)}, -py));
   }
   c *= edge * edge;
   // 確認用：屈折の写り方を見るための縦縞
@@ -290,6 +295,7 @@ export class Room {
       },
       uCurveCount: { value: ROOM.blurCurve.length },
       uEdgeFade: { value: 0 },
+      uFgFade: { value: ROOM.foregroundFade as number },
       uOverlay: { value: -1 },
       uPattern: { value: 0 },
       uShift: { value: new Vector2(0, 0) },
@@ -366,6 +372,8 @@ export class Room {
     u.uCoverOffset.value.set(cover.offset[0]! + cover.scale[0]! * rx, cover.offset[1]! + cover.scale[1]! * ry);
     // 写真が画面より狭いとき（横長の画面）だけ端を溶かす
     u.uEdgeFade.value = cover.scale[0]! > 1.0001 ? ROOM.edgeFade : 0;
+    // 写真の下に足した分（写真px）だけ、手前の天板を長く伸ばしてから黒に溶かす
+    u.uFgFade.value = ROOM.foregroundFade + ((cover.scale[1]! - 1) / 2) * PHOTO.height;
     if (this.debugOnly) {
       const i = PHOTO_NAMES.indexOf(this.debugOnly);
       u.uWeights.value.set(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0, i === 3 ? 1 : 0);

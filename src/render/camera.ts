@@ -1,6 +1,6 @@
 // 背景写真に合わせたカメラ。瓶の位置を写真の座標で固定し、画面比率が変わってもずれないようにする。
 // 瓶の底の中心がワールド原点、y が上。カメラは +z 側から少し見下ろす。
-import { PHOTO, JAR, type Vec3 } from '../config';
+import { PHOTO, JAR, ROOM, type Vec3 } from '../config';
 
 export interface PhotoCamera {
   position: Vec3;
@@ -49,11 +49,20 @@ export function solvePhotoCamera(): PhotoCamera {
 }
 
 /**
- * 画面UV→写真UVの変換（写真UV = uv * scale + offset）。写真はいつも高さいっぱいに置く。
- * 写真より縦長の画面では左右が切れ、横長の画面では左右に写真の外（黒）が出る
+ * 画面UV→写真UVの変換（写真UV = uv * scale + offset）。写真はふだん高さいっぱいに置く。
+ * 写真より縦長の画面では左右が切れ、横長の画面では左右に写真の外（黒）が出る。
+ * 写真の横幅の ROOM.minPhotoWidth より狭くしか見えないほど縦長の画面では、写真を小さく置いて上下に写真の外を出す
+ * （写真の真ん中はカメラの軸のまま。カメラの画角は screenFovDeg で合わせる）
  */
 export function coverTransform(aspect: number): { scale: [number, number]; offset: [number, number] } {
   const photoAspect = PHOTO.width / PHOTO.height;
-  const sx = aspect / photoAspect;
-  return { scale: [sx, 1], offset: [(1 - sx) / 2, 0] };
+  const sy = Math.max(1, (ROOM.minPhotoWidth * photoAspect) / aspect);
+  const sx = (aspect * sy) / photoAspect;
+  return { scale: [sx, sy], offset: [(1 - sx) / 2, (1 - sy) / 2] };
+}
+
+/** 画面の縦いっぱいに対応する縦の画角（度）。写真を高さいっぱいより小さく置くときは、そのぶん広い */
+export function screenFovDeg(aspect: number): number {
+  const sy = coverTransform(aspect).scale[1];
+  return (2 * Math.atan((sy * PHOTO.height) / 2 / PHOTO.focalPx) * 180) / Math.PI;
 }
