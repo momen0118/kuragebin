@@ -33,7 +33,7 @@ import type { SoundName, SoundOptions } from '../sound/sound';
 import type { Kick } from '../ui/motionFilter';
 import { Bloom } from './bloom';
 import { Box } from './box';
-import { coverTransform, solvePhotoCamera, type PhotoCamera } from './camera';
+import { coverTransform, screenFovDeg, solvePhotoCamera, type PhotoCamera } from './camera';
 import { createComposite } from './composite';
 import { FullscreenPass } from './fullscreen';
 import { Creatures } from './creatures';
@@ -379,6 +379,7 @@ export class App {
     this.width = w;
     this.height = h;
     this.camera.aspect = cssWidth / cssHeight;
+    this.camera.fov = screenFovDeg(this.camera.aspect);
     this.camera.updateProjectionMatrix();
     for (const rt of [this.roomRT, this.bgRT, this.contentRT, this.glowRT]) rt.dispose();
     this.roomRT = createTarget(w, h);
@@ -390,6 +391,7 @@ export class App {
     this.shared.uPixelRatio.value = ratio;
     this.shared.tRoom.value = this.roomRT.texture;
     this.jarCam.aspect = this.camera.aspect;
+    this.jarCam.fov = this.camera.fov;
     this.jarCam.updateProjectionMatrix();
     this.shared.uViewProj.value.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     const cover = coverTransform(cssWidth / cssHeight);
@@ -416,7 +418,7 @@ export class App {
     this.spacingPx = (this.spacing / halfWidth) * (cssWidth / 2);
     // 写真のずれ（写真px）。瓶1つ分は瓶の奥行きで spacing、写真では瓶の高さ（jarHeightPx）が 1
     const stepPx = this.spacing * (PHOTO.jarHeightPx / JAR.height);
-    const visiblePx = PHOTO.height * (cssWidth / cssHeight);
+    const visiblePx = PHOTO.width * coverTransform(cssWidth / cssHeight).scale[0];
     const margin = Math.max(0, (PHOTO.width - visiblePx) / 2);
     let wall = SWIPE.parallaxWall * stepPx;
     let table = SWIPE.parallaxTable * stepPx;
