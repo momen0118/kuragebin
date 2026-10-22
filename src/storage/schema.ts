@@ -328,10 +328,13 @@ function validate(d: Raw): GameState {
   d.book = validateBook(d.book, d.createdAt as number);
   // 設定は足りない項目を初期値で埋める（あとから設定が増えても読める）
   const settings = isObject(d.settings) ? d.settings : {};
-  const merged = { ...DEFAULT_SETTINGS, ...settings };
+  const merged: Raw = { ...DEFAULT_SETTINGS, ...settings };
   if (!isNumber(merged.jar) || merged.jar < 0 || merged.jar >= d.jars.length) merged.jar = 0;
-  if (!(ROOM_NAMES as readonly unknown[]).includes(merged.room)) merged.room = DEFAULT_SETTINGS.room;
-  if (typeof merged.roomLocked !== 'boolean') merged.roomLocked = false;
+  // 部屋を持っていないデータ（部屋を選べるようになる前から遊んでいたデータ）と、読めない部屋は家のまま。
+  // 新しく始めたデータの初期値（研究室）にはしない
+  if (!(ROOM_NAMES as readonly unknown[]).includes(settings.room)) merged.room = 'home';
+  // 研究室の入り口で部屋を固定していたころの印は使わない
+  delete merged.roomLocked;
   d.settings = merged;
   return d as unknown as GameState;
 }

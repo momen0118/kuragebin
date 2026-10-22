@@ -35,8 +35,8 @@ export interface NotebookOptions {
   /** 画質（高・中・低）と、それを変える */
   quality(): Settings['quality'];
   setQuality(q: Settings['quality']): void;
-  /** 部屋（家・研究室）と、それを変える。部屋を選べない端末（研究室の入り口から始めた）では null で、欄を出さない */
-  room(): RoomName | null;
+  /** 部屋（家・研究室）と、それを変える */
+  room(): RoomName;
   setRoom(r: RoomName): void;
   /** 日誌のページに留めた手紙をタップした（手紙を読む紙を開く） */
   readLetter(id: number): void;
@@ -371,13 +371,6 @@ export class Notebook {
     const sound = this.opts.sound();
     const quality = this.opts.quality();
     const room = this.opts.room();
-    const roomRow =
-      room === null
-        ? ''
-        : `<div class="room">
-        <p class="label">部屋</p>
-        <div class="data-buttons choice">${ROOM_CHOICES.map(([r, label]) => `<button type="button" data-room="${r}" aria-pressed="${r === room}">${label}</button>`).join('')}</div>
-      </div>`;
     return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">設定</h2><button type="button" class="to-journal">日誌へ</button></div>
       <div class="settings">
       <div class="sound">
@@ -394,7 +387,10 @@ export class Notebook {
         <p class="hint">低いほど、電池と熱にやさしい</p>
         <div class="data-buttons choice">${QUALITY_CHOICES.map(([q, label]) => `<button type="button" data-quality="${q}" aria-pressed="${q === quality}">${label}</button>`).join('')}</div>
       </div>
-      ${roomRow}
+      <div class="room">
+        <p class="label">部屋</p>
+        <div class="data-buttons choice">${ROOM_CHOICES.map(([r, label]) => `<button type="button" data-room="${r}" aria-pressed="${r === room}">${label}</button>`).join('')}</div>
+      </div>
       <div class="data">
         <p class="label">データ</p>
         <p class="hint">機種を変えるときに</p>

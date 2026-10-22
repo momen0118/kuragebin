@@ -10,7 +10,7 @@ import { closeAllFacts, openAllFacts } from './sim/book';
 import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, editSex, growAdult, growFull, skipMaturity, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit, type SexEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
 import { broodAmount } from './sim/sex';
-import type { GameState, Letter, Settings, Stage } from './sim/state';
+import { DEFAULT_SETTINGS, type GameState, type Letter, type Settings, type Stage } from './sim/state';
 import { deliverReplyNow, resetFirstLetter } from './sim/uncle';
 import { Carry } from './ui/carry';
 import { JarDots } from './ui/dots';
@@ -38,23 +38,17 @@ const debug = params.has('debug') || location.hash === '#debug';
 /** 確認用（?debug のときだけ）：自動では進めず、外から1コマずつ進める */
 const capture = debug && params.has('capture');
 
-/**
- * 研究室の入り口（?room=lab。お母さん用）。この端末は研究室に固定して、設定で部屋を選べなくする。
- * ホーム画面に置いても研究室の入り口から開くよう、manifest も研究室用にする（iOS はホーム画面の分の保存が別なので、固定だけでは足りない）
- */
-const labEntry = params.get('room') === 'lab';
 /** 開いたときに先に読み込む部屋の覚え（この端末だけの手がかり。正は保存した設定） */
 const ROOM_HINT_KEY = 'kuragebin.room';
 
 function roomHint(): RoomName {
-  if (labEntry) return 'lab';
   try {
     const v = localStorage.getItem(ROOM_HINT_KEY);
     if (v === 'home' || v === 'lab') return v;
   } catch {
     // 覚えが読めなくても、保存した設定に合わせ直す
   }
-  return 'home';
+  return DEFAULT_SETTINGS.room;
 }
 
 function rememberRoom(room: RoomName): void {
@@ -63,12 +57,6 @@ function rememberRoom(room: RoomName): void {
   } catch {
     // 覚えられなくても動く（次に開いたとき、読み込んでから部屋を合わせる）
   }
-}
-
-/** ホーム画面に置くときの manifest を研究室用に（研究室の入り口から開く） */
-function useLabManifest(): void {
-  const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
-  if (link) link.href = `${import.meta.env.BASE_URL}manifest-lab.webmanifest`;
 }
 
 function supportsWebGL2(): boolean {
@@ -126,7 +114,6 @@ async function main(): Promise<void> {
   const clock = new Clock();
   const gameReady = Game.start(clock);
 
-  if (labEntry) useLabManifest();
   const app = new App(canvas);
   if (debug) {
     // 確認用：中間の画像を出す（?view=bg / contents / glow / room）、部品を隠す（?hide=snow,table など）
@@ -148,21 +135,16 @@ async function main(): Promise<void> {
   });
   const [game] = await Promise.all([gameReady, app.load(import.meta.env.BASE_URL, roomHint())]);
 
-  /** 部屋（背景の写真の組）を設定に合わせる。研究室に固定した端末は研究室だけ */
+  /** 部屋（背景の写真の組）を設定に合わせる（写真と、部屋ごとの位置合わせ・天板の光の強さ） */
   const applyRoom = async (): Promise<void> => {
-    const s = game.state.settings;
-    const room: RoomName = s.roomLocked ? 'lab' : s.room;
-    if (s.roomLocked) useLabManifest();
+    const room = game.state.settings.room;
     rememberRoom(room);
     await app.setRoom(room);
   };
-  // 研究室の入り口から開いた：この端末を研究室に固定する
-  if (labEntry && !(game.state.settings.roomLocked && game.state.settings.room === 'lab')) game.updateSettings({ room: 'lab', roomLocked: true });
   await applyRoom();
-  /** 部屋を変える（日誌の設定）。研究室に固定した端末では変えられない */
+  /** 部屋を変える（日誌の設定） */
   const setRoom = (room: RoomName): void => {
-    const s = game.state.settings;
-    if (s.roomLocked || s.room === room) return;
+    if (game.state.settings.room === room) return;
     game.updateSettings({ room });
     void applyRoom();
   };
@@ -347,7 +329,7 @@ async function main(): Promise<void> {
     playSound: (name) => sound.play(name),
     quality: () => game.state.settings.quality,
     setQuality,
-    room: () => (game.state.settings.roomLocked ? null : game.state.settings.room),
+    room: () => game.state.settings.room,
     setRoom,
     opened: () => {
       tag.hide();
@@ -426,10 +408,6 @@ async function main(): Promise<void> {
             app.setLampOn(game.state.settings.lamp);
             lampToggle.set(game.state.settings.lamp);
             jumpToSavedJar();
-            void applyRoom();
-          },
-          onRoomUnlock: () => {
-            game.updateSettings({ roomLocked: false });
             void applyRoom();
           },
           onExport: () => game.exportJson(),
@@ -516,8 +494,6 @@ async function main(): Promise<void> {
     refreshPanel = (): void => {
       panel.showState(game.state, game.info, clock.speed, clock.drift);
       panel.showCreatures(game.state.jars[slider.index]!, game.lifeRules.maxSwimmers, game.state.time + game.state.pending);
-      const rs = game.state.settings;
-      panel.showRoom(`部屋 ${rs.room === 'lab' ? '研究室' : '家'}${rs.roomLocked ? '（固定）' : ''}`);
       panel.showFeed(feedText());
       panel.showUncle(game.state);
       panel.showFinds(game.state);
@@ -883,7 +859,7 @@ async function main(): Promise<void> {
       loupeHome: () => loupe.returnToTable(),
       lowQuality: (on: boolean) => setQuality(on ? 'low' : 'high'),
       quality: (q: Settings['quality']) => setQuality(q),
-      /** 部屋：設定で選ぶのと同じ（写真を読み込み終わるまで待つ）。固定している端末では変わらない */
+      /** 部屋：設定で選ぶのと同じ（写真を読み込み終わるまで待つ） */
       room: async (r: RoomName) => {
         setRoom(r);
         await applyRoom();
