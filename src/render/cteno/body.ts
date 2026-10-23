@@ -64,6 +64,7 @@ out vec3 vWorldNormal;
 out vec3 vViewNormal;
 out vec2 vUV;
 out float vPart;
+out vec3 vLocal;
 void main() {
   vec3 p = swayPoint(position, aSide);
   vec3 n = swayDir(normal, aSide);
@@ -73,6 +74,7 @@ void main() {
     p += n * sin(t * 9.0 - (uTime + uPhase) * ${f3(CTENO.auricle.waveSpeed * Math.PI * 2)}) * ${f3(CTENO.auricle.wave)} * t;
   }
   vUV = aUV;
+  vLocal = position;
   vPart = aPart;
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
@@ -100,6 +102,7 @@ in vec3 vWorldNormal;
 in vec3 vViewNormal;
 in vec2 vUV;
 in float vPart;
+in vec3 vLocal;
 
 const float ROWS[8] = float[8](${ROW_ANGLES.map((a) => f3(a)).join(', ')});
 
@@ -113,13 +116,13 @@ float rowCanals(float v, float phi) {
   return c * smoothstep(0.04, 0.12, v);
 }
 
-// 口葉の中をうねって走る管と、先の帯（袋の横の輪郭は、見る向きで決まる明るさ rim に任せる）
-float lobeCanals(float a, float b) {
-  float edge = smoothstep(0.93, 1.0, a);
-  float wave = 0.6 + 0.09 * sin(a * 17.0 + sign(b) * 1.3) + 0.04 * sin(a * 41.0);
-  float meander = exp(-pow((abs(b) - wave) / 0.035, 2.0)) * smoothstep(0.05, 0.2, a) * (1.0 - smoothstep(0.82, 0.95, a));
-  float center = exp(-pow(b / 0.05, 2.0)) * smoothstep(0.02, 0.15, a) * (1.0 - smoothstep(0.55, 0.8, a)) * 0.6;
-  return min(1.0, max(meander, center) + 0.8 * edge);
+// 口葉の中をうねって走る管：外形に沿って、少し内側をうねりながら一周する。その内側にもう一本、淡く。
+// rho は外形への近さ（1 で外形の上）、t は外形の上の位置（輪郭は見る向きで決まる明るさ rim に任せる）
+float lobeCanals(float rho, float t) {
+  float wave = 0.82 + 0.03 * sin(t * TAU * 3.0 + 0.4);
+  float outer = exp(-pow((rho - wave) / 0.025, 2.0));
+  float inner = exp(-pow((rho - (0.55 + 0.05 * sin(t * TAU * 2.0 + 1.1))) / 0.025, 2.0)) * 0.4;
+  return max(outer, inner);
 }
 
 void main() {
@@ -162,7 +165,7 @@ void main() {
   } else if (part == ${PART.lobe}) {
     float c = lobeCanals(vUV.x, vUV.y);
     // 付け根（胴の中に埋まっている所）は見せない
-    float root = smoothstep(0.12, 0.38, vUV.x);
+    float root = 1.0 - smoothstep(-0.13, 0.05, vLocal.y);
     // 袋の中は透けて、管と輪郭だけが光を散らす
     density = (0.002 + 0.045 * rim + 0.03 * c) * root;
     scatter = (0.05 * rim + 0.18 * c) * root;
@@ -417,20 +420,20 @@ function shellGeometry(f: CtenoForm): BufferGeometry {
     }
   }
   gridIndices(start, V, U, g.idx);
-  // 口葉（付け根から先、断面を一周）。uv の横は cos ψ（-1〜1、両面で同じ）
+  // 口葉（前の面の真ん中から外形を通って後ろの面の真ん中まで、外形を一周）。uv は外形への近さ（sin ψ）と外形の上の位置 t
   for (const side of [-1, 1] as const) {
     start = g.pos.length / 3;
-    const NA = 30;
-    const NB = 40;
-    for (let i = 0; i <= NA; i++) {
-      const a = i / NA;
-      lobeCenter(f, side, a, inside);
-      for (let j = 0; j <= NB; j++) {
-        const psi = (j / NB) * Math.PI * 2;
-        pushVertex(g, lobePoint(f, side, a, psi, p), [a, Math.cos(psi)], PART.lobe, side, inside);
+    const NP = 24;
+    const NT = 96;
+    lobeCenter(f, side, inside);
+    for (let i = 0; i <= NP; i++) {
+      const psi = Math.max((i / NP) * Math.PI, 1e-4);
+      for (let j = 0; j <= NT; j++) {
+        const t = j / NT;
+        pushVertex(g, lobePoint(f, side, t, psi, p), [Math.sin(psi), t], PART.lobe, side, inside);
       }
     }
-    gridIndices(start, NA, NB, g.idx);
+    gridIndices(start, NP, NT, g.idx);
   }
   // 耳状突起（芯に沿った細い帯。帯の面は x の向き）
   for (let k = 0; k < 4; k++) {
