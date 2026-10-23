@@ -7,7 +7,7 @@ import { App } from './render/app';
 import { hourOf, lightAt, sunOf, type LightState } from './render/lighting';
 import { Clock } from './sim/clock';
 import { closeAllFacts, openAllFacts } from './sim/book';
-import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, editSex, growAdult, growFull, skipMaturity, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit, type SexEdit } from './sim/edit';
+import { broodNow, clearFed, clearFinds, clearMeals, clearSpecimens, editGenes, editSex, growAdult, growFull, hatchNow, layEggsNow, skipMaturity, fillAdults, removeCreature, setDiscs, setProgress, setSediment, setStage, spawnCreature, spawnFind, type GeneEdit, type SexEdit } from './sim/edit';
 import { feedingPlan, lastMealAt } from './sim/feed';
 import { inSakuraSeason, petalOf, type Petal } from './sim/season';
 import { broodAmount } from './sim/sex';
@@ -438,6 +438,9 @@ async function main(): Promise<void> {
       }),
     /** 成体になってからの成長：'day'（1日ぶん進める）、'full'（育ちきらせる） */
     grow: (id: number, e: 'day' | 'full') => game.edit((s) => (e === 'day' ? growAdult(s, id, 86400) : growFull(s, id))),
+    /** カブトクラゲ：成体 id に今すぐ卵を産ませる、瓶 jar の卵を今すぐ孵す */
+    layEggs: (id: number) => game.edit((s, rules) => layEggsNow(s, id, rules)),
+    hatch: (jar: number) => game.edit((s, rules) => hatchNow(s, jar, rules)),
     feedClear: () => game.edit((s) => clearFed(s, null)),
     sediment: (jar: number, value: number) => game.edit((s) => setSediment(s, jar, value)),
     replyNow: () => game.edit((s) => deliverReplyNow(s)),
@@ -506,6 +509,8 @@ async function main(): Promise<void> {
           onGenes: debugEdits.genes,
           onSex: debugEdits.sex,
           onGrow: debugEdits.grow,
+          onLayEggs: debugEdits.layEggs,
+          onHatch: () => debugEdits.hatch(slider.index),
           onCap: (n) => game.setRules({ maxSwimmers: n }),
           onRealSize: (on) => setRealSize(on),
           onFeed: () => void feedNow(true),
@@ -810,6 +815,9 @@ async function main(): Promise<void> {
       sex: debugEdits.sex,
       // 成体になってからの成長：'day'（1日ぶん進める）、'full'（育ちきらせる）
       grow: debugEdits.grow,
+      // カブトクラゲ：卵を産ませる（成体の番号）、表示中の瓶の卵を孵す
+      layEggs: debugEdits.layEggs,
+      hatch: () => debugEdits.hatch(slider.index),
       setProgress: debugEdits.setProgress,
       setDiscs: debugEdits.setDiscs,
       remove: debugEdits.remove,

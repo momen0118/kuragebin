@@ -6,15 +6,39 @@ import { BASE_GENES, type BolinopsisGenes, type Genes } from './genes';
 import { createRng } from './rng';
 
 /** 保存形式の版。形を変えたら上げて、storage/schema.ts にマイグレーションを足す */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /** 種：ミズクラゲ、カブトクラゲ（おじさんから届く） */
 export type Species = 'aurelia' | 'bolinopsis';
 
 export const SPECIES: readonly Species[] = ['aurelia', 'bolinopsis'];
-export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'adult';
+export type Stage = 'polyp' | 'strobila' | 'ephyra' | 'larva' | 'adult';
 
-export const STAGES: readonly Stage[] = ['polyp', 'strobila', 'ephyra', 'adult'];
+/** すべての段階（読み込みの確かめ）。種ごとの段階は SPECIES_STAGES */
+export const STAGES: readonly Stage[] = ['polyp', 'strobila', 'ephyra', 'larva', 'adult'];
+
+/** 種ごとの段階：ミズクラゲはポリプ→ストロビラ→エフィラ→成体、カブトクラゲは（卵→）幼生→成体 */
+export const SPECIES_STAGES: Readonly<Record<Species, readonly Stage[]>> = {
+  aurelia: ['polyp', 'strobila', 'ephyra', 'adult'],
+  bolinopsis: ['larva', 'adult'],
+};
+
+/**
+ * カブトクラゲの卵（瓶に漂う一腹ぶん）。見せる粒は shown 粒で、孵るのは count 匹（ほかの粒は孵らない）。
+ * 孵った幼生は親の遺伝子を受け継ぎ、代は generation（親の代＋1）
+ */
+export interface EggClutch {
+  /** 産んだ親の番号と時刻（ゲーム内の秒。描画が卵を見分けるのにも使う）、孵る時刻 */
+  parent: number | null;
+  laidAt: number;
+  hatchAt: number;
+  count: number;
+  shown: number;
+  /** 粒の並び方の種 */
+  seed: number;
+  genes: BolinopsisGenes;
+  generation: number;
+}
 
 /** 雌雄。成体・エフィラは生まれたときに決まる（ポリプとストロビラは持たない） */
 export type Sex = 'male' | 'female';
@@ -132,6 +156,8 @@ export interface JarState {
   stirredUntil: number | null;
   /** 抱えていた粒が離れて、瓶底に付くのを待っているプラヌラ（付いたら除く） */
   planulae: Planula[];
+  /** カブトクラゲの卵（孵ったら除く） */
+  eggs: EggClutch[];
 }
 
 /** 日誌に載せる出来事の種類 */
@@ -159,7 +185,11 @@ export type JournalKind =
   /** 手紙が届いていた（版6までに始めていた人の、最初の手紙。jar は -1） */
   | 'firstLetter'
   /** おじさんの手紙に添えて、新しい種が届いた（瓶の行。species がその種） */
-  | 'gift';
+  | 'gift'
+  /** カブトクラゲが卵を産んだ（count 匹） */
+  | 'eggs'
+  /** 卵から幼生が孵った（count 匹） */
+  | 'hatch';
 
 /** 観察日誌の出来事。文にするのは日誌を開いたとき（ui） */
 export interface JournalEntry {
@@ -178,7 +208,7 @@ export interface JournalEntry {
    * くびれ始めた・成体になったは本人、離れたは放したストロビラ、休み・再開はポリプが1つのときだけ
    */
   name: string | null;
-  /** 届いた種（gift の行だけ） */
+  /** その行の種（届いた種、カブトクラゲの出来事。ミズクラゲの出来事は書かない） */
   species?: Species;
 }
 
@@ -333,7 +363,7 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 /** 段階ごとの長さの範囲（秒） */
-export function stageRange(stage: Stage, rules = LIFE): readonly [number, number] {
+export function stageRange(stage: Stage, rules = LIFE, species: Species = 'aurelia'): readonly [number, number] {
   switch (stage) {
     case 'polyp':
       return rules.polyp;
@@ -341,8 +371,11 @@ export function stageRange(stage: Stage, rules = LIFE): readonly [number, number
       return rules.strobila;
     case 'ephyra':
       return rules.ephyra;
+    case 'larva':
+      return rules.larva;
     case 'adult':
-      return rules.adultPolyp;
+      // 成体の段階の長さ：ミズクラゲは次のポリプを付けるまで、カブトクラゲは次に卵を産むまで
+      return species === 'bolinopsis' ? rules.lay : rules.adultPolyp;
   }
 }
 
@@ -358,7 +391,7 @@ export function wallAt(state: GameState, t: number): number {
 
 /** 泳ぐ段階か（成体とエフィラ） */
 export function isSwimmer(stage: Stage): boolean {
-  return stage === 'adult' || stage === 'ephyra';
+  return stage === 'adult' || stage === 'ephyra' || stage === 'larva';
 }
 
 /**
@@ -408,6 +441,7 @@ export function createInitialState(nowMs: number, seed: number = SIM.seed): Game
     waterDue: null,
     stirredUntil: null,
     planulae: [],
+    eggs: [],
   }));
   return {
     schema: SCHEMA_VERSION,

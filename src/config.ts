@@ -615,6 +615,15 @@ export const CTENO = {
    * 少し後ずさる（離れる強さ。ミズクラゲの離れ方に対する割合）
    */
   poke: { close: 0.15, closeTime: 0.35, reopen: 3.5, reverseTime: 1.6, reverse: 0.5, flee: 0.9 } as const,
+  /**
+   * 卵：見せる粒の数（実物の数には合わせない。孵るのは LIFE.hatchCount 匹で、ほかは孵らずに消える）。描画の値は render 側（CTENO_EGGS）
+   */
+  eggs: { shown: [15, 25] as const },
+  /**
+   * 幼生：孵ったときの大きさ（成体の長さ CTENO.length に対する割合。エフィラが放されたときと同じくらいの小さな粒）。
+   * 成体になるまでに、成体になった直後の大きさ（ADULT_GROWTH.start）へ指数的に育つ
+   */
+  larva: { start: 0.18 },
   /** 体の色と濃さ（ミズクラゲより透ける）。夜のライトが体の輪郭で散る強さ */
   color: [0.84, 0.9, 1.0] as Vec3,
   density: 0.75,
@@ -905,6 +914,11 @@ export interface LifeRules {
   strobila: readonly [number, number];
   ephyra: readonly [number, number];
   ephyraCount: readonly [number, number];
+  /** カブトクラゲ：成熟した成体が卵を産む間、卵が孵るまで、孵る数、幼生が成体になるまで */
+  lay: readonly [number, number];
+  eggHatch: readonly [number, number];
+  hatchCount: readonly [number, number];
+  larva: readonly [number, number];
   maxSwimmers: number;
   maxPolyps: number;
   spotRadius: number;
@@ -925,6 +939,15 @@ export const LIFE: LifeRules = {
   ephyra: [5 * DAY, 7 * DAY],
   /** 1つのストロビラが放すエフィラの数 */
   ephyraCount: [1, 3],
+  /**
+   * カブトクラゲ（雌雄同体。ポリプはない）。実物には合わせず、ミズクラゲに合わせた（ユーザーと決めた）：
+   * 成熟した成体（成体になって SEX.matureAfter）が3〜4日ごとに卵を産み、卵は半日ほどで孵って幼生が1〜3匹、幼生は5〜7日で成体。
+   * 卵を産んだときに孵る数を泳ぐ個体の上限に数える（ミズクラゲのストロビラと同じく早い者勝ち）。空きがなければ産まずに待つ
+   */
+  lay: [3 * DAY, 4 * DAY],
+  eggHatch: [10 * 3600, 14 * 3600],
+  hatchCount: [1, 3],
+  larva: [5 * DAY, 7 * DAY],
   /**
    * 1瓶あたりの上限。泳ぐ個体（成体＋エフィラ。ストロビラが放す予定の数も数える）と、瓶底のポリプ（ストロビラを含む）。
    * 泳ぐ個体が上限に達すると、ポリプは休眠して進まない。空きができると再開する

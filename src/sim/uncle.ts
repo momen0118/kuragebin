@@ -27,12 +27,14 @@ export function canSend(state: GameState, id: number): SendResult {
 
 /**
  * その種の最後の一匹か：同じ種がほかに、どの瓶にもどの段階でもいない（瓶底のポリプ・ストロビラも数える）。
- * ミズクラゲは、瓶底に付くのを待っているプラヌラがいれば最後ではない
+ * ミズクラゲは瓶底に付くのを待っているプラヌラ、カブトクラゲは孵るのを待つ卵があれば最後ではない
  */
 export function isLastOfSpecies(state: GameState, c: Creature): boolean {
   for (const jar of state.jars) {
     if (jar.creatures.some((x) => x.id !== c.id && x.species === c.species)) return false;
     if (c.species === 'aurelia' && jar.planulae.length > 0) return false;
+    // カブトクラゲは、孵るのを待つ卵があれば最後ではない（孵る数は上限に数えてあるので、必ず孵る）
+    if (c.species === 'bolinopsis' && jar.eggs.length > 0) return false;
   }
   return true;
 }
@@ -170,7 +172,7 @@ const GIFTS = ['bolinopsis'] as const satisfies readonly Species[];
  * 新しい種の入る瓶：何もいない瓶（瓶底のプラヌラもない）が最優先で 1→2→3、なければ泳ぐ個体に空きのある瓶を 1→2→3。どこもなければ null
  */
 export function giftJar(state: GameState, rules: LifeRules = LIFE): number | null {
-  const empty = state.jars.findIndex((j) => j.creatures.length === 0 && j.planulae.length === 0);
+  const empty = state.jars.findIndex((j) => j.creatures.length === 0 && j.planulae.length === 0 && j.eggs.length === 0);
   if (empty >= 0) return empty;
   const free = state.jars.findIndex((j) => freeSwimmerSlots(j, rules) > 0);
   return free >= 0 ? free : null;

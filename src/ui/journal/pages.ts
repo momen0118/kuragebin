@@ -103,7 +103,7 @@ function lead(part: Daypart, named: boolean): string {
   }
 }
 
-/** 出来事の本文（時間帯を除く）。species は届いた種（gift の行だけ） */
+/** 出来事の本文（時間帯を除く）。species は届いた種（gift の行）と、カブトクラゲの出来事の種 */
 function body(kind: JournalKind, count: number, name: string | null, species?: Species): string {
   const n = kanji(count);
   switch (kind) {
@@ -114,9 +114,12 @@ function body(kind: JournalKind, count: number, name: string | null, species?: S
       return count > 1 ? `ポリプが${n}つくびれ始めた` : 'ポリプがくびれ始めた';
     case 'release':
       return name ? `${name}からエフィラが${n}匹離れた` : `エフィラが${n}匹離れた`;
-    case 'adult':
+    case 'adult': {
       if (name) return `${name}が成体になった`;
-      return count > 1 ? `エフィラが${n}匹、成体になった` : 'エフィラが成体になった';
+      // カブトクラゲは幼生から
+      const young = species === 'bolinopsis' ? '幼生' : 'エフィラ';
+      return count > 1 ? `${young}が${n}匹、成体になった` : `${young}が成体になった`;
+    }
     case 'planula':
       return `${name ?? (count > 1 ? `${n}匹` : '一匹')}が口腕にプラヌラを抱えていた`;
     case 'rest':
@@ -133,6 +136,11 @@ function body(kind: JournalKind, count: number, name: string | null, species?: S
       return '手紙が届いていた';
     case 'gift':
       return `おじさんの手紙に添えて、${SPECIES[species ?? 'aurelia']}が一匹届いた`;
+    case 'eggs':
+      if (name) return `${name}が卵を産んだ`;
+      return count > 1 ? `カブトクラゲが${n}匹、卵を産んだ` : 'カブトクラゲが卵を産んだ';
+    case 'hatch':
+      return `卵から幼生が${n}匹孵った`;
   }
 }
 
@@ -149,8 +157,8 @@ export function lineText(part: Daypart, kind: JournalKind, count: number, name: 
 }
 
 /** 数を足してまとめる出来事（休み・再開・水換えは、まとめても一行のまま数えない） */
-const COUNTED: ReadonlySet<JournalKind> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'sent', 'letter']);
-const KINDS: ReadonlySet<string> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'rest', 'wake', 'water', 'sent', 'letter', 'firstLetter', 'gift']);
+const COUNTED: ReadonlySet<JournalKind> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'sent', 'letter', 'eggs', 'hatch']);
+const KINDS: ReadonlySet<string> = new Set(['polyp', 'strobila', 'release', 'adult', 'planula', 'rest', 'wake', 'water', 'sent', 'letter', 'firstLetter', 'gift', 'eggs', 'hatch']);
 
 interface Group {
   part: Daypart;
