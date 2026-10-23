@@ -1,6 +1,7 @@
 // 瓶1つの個体を描く。状態の個体（sim の Creature）に合わせて、泳ぐ個体（成体・エフィラ）と
 // 瓶底の個体（ポリプ・ストロビラ）を作ったり消したりし、毎フレーム動かす。
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
+// カブトクラゲの卵（cteno/eggs.ts）も瓶ごとにここで描く。孵った幼生は、残っていた粒の所から泳ぎ出す。
 import { Group, Quaternion, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
 import { EPHYRA, SWIM } from '../config';
 import { genesKey } from '../sim/genes';
@@ -12,6 +13,7 @@ import type { Eater } from './food';
 import type { SwimBody } from './swimBody';
 import type { FloorSortable } from './finds';
 import { Ctenophore } from './cteno/ctenophore';
+import { EggCloud } from './cteno/eggs';
 import { Jellyfish } from './jelly/jellyfish';
 import { Polyp } from './jelly/polyp';
 import { swimBounds, type Neighbor } from './jelly/swim';
@@ -59,6 +61,8 @@ export class Creatures {
   private righted = 0;
   /** 見せ場で食べる個体（毎フレーム作り直さないよう使い回す） */
   private readonly eaterList: Eater[] = [];
+  /** カブトクラゲの卵 */
+  private readonly eggs: EggCloud;
 
   constructor(
     private readonly shared: SharedUniforms,
@@ -66,7 +70,10 @@ export class Creatures {
     private readonly glowLayer: number,
     /** カップで運んでいる個体（どの瓶にも描かない。すべての瓶で共有） */
     private readonly carried: Set<number> = new Set(),
-  ) {}
+  ) {
+    this.eggs = new EggCloud(shared);
+    this.group.add(this.eggs.points);
+  }
 
   /** 確認用：ポリプ・ストロビラ・エフィラを実物大で描く */
   setRealSize(on: boolean): void {
@@ -79,6 +86,11 @@ export class Creatures {
 
   /** 瓶の個体に合わせる。新しい個体は作り、いなくなった個体は消す。time はゲーム内の今（胃の餌の薄れ方に使う） */
   sync(jar: JarState, time: number): void {
+    // 卵が先（孵った卵の粒の場所を、新しい幼生が使う）
+    this.eggs.sync(jar.eggs, time, (id) => {
+      const v = this.views.get(id);
+      return v?.kind === 'swimmer' && !v.waiting ? v.jelly.swimmer.pos : null;
+    });
     const seen = new Set<number>();
     for (const c of jar.creatures) {
       seen.add(c.id);
@@ -103,7 +115,7 @@ export class Creatures {
       // 種で体を選ぶ：ミズクラゲは傘、カブトクラゲは櫛板の列のある体
       const jelly: SwimBody =
         c.species === 'bolinopsis'
-          ? new Ctenophore(this.shared, rng, c.genes, c.seed, bodySize(c))
+          ? new Ctenophore(this.shared, rng, c.genes, c.seed, this.growthOf(c), bodySize(c))
           : new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius(), c.genes, c.seed);
       jelly.group.traverse((o) => o.layers.enable(this.glowLayer));
       const view: SwimmerView = { kind: 'swimmer', genes: genesKey(c.genes), jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, righting: false };
@@ -118,8 +130,10 @@ export class Creatures {
           jelly.group.visible = true;
         });
       } else {
-        // ほかの個体から離れた所で泳ぎはじめる（重なって現れないように）
-        this.placeApart(jelly, c.seed);
+        // 孵ったばかりの幼生は、卵の粒の所から。ほかはほかの個体から離れた所で泳ぎはじめる（重なって現れないように）
+        const egg = c.stage === 'larva' ? this.eggs.takeHatchPoint(c.parent) : null;
+        if (egg) jelly.relocate(egg);
+        else this.placeApart(jelly, c.seed);
       }
       v = view;
       this.group.add(jelly.group);
@@ -196,9 +210,9 @@ export class Creatures {
     }
   }
 
-  /** 育ち具合（エフィラは段階の進み、成体は 1） */
+  /** 育ち具合（エフィラと幼生は段階の進み、成体は 1） */
   private growthOf(c: Creature): number {
-    return c.stage === 'ephyra' ? c.progress : 1;
+    return c.stage === 'ephyra' || c.stage === 'larva' ? c.progress : 1;
   }
 
   private startRadius(): number {
@@ -253,6 +267,7 @@ export class Creatures {
       v.righting = r;
     }
     for (const v of polyps) v.polyp.update(dt);
+    this.eggs.update(dt, water);
     const far = (o: Vector3): number => -o.distanceToSquared(cam);
     swim.sort((a, b) => far(a.jelly.swimmer.pos) - far(b.jelly.swimmer.pos));
     swim.forEach((v, i) => v.jelly.setRenderOrder(30 + i));

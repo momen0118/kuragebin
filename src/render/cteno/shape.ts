@@ -209,3 +209,28 @@ export function rowPoints(f: CtenoForm, i: number, gap: number): RowPoint[] {
   }
   return out;
 }
+
+const LV = CTENO.larva;
+
+/** 幼生の丸い体の面の点（θ は頂 0 から口の側 π、φ は胴と同じ） */
+export function larvaPoint(theta: number, phi: number, out: Vector3): Vector3 {
+  const s = Math.sin(theta);
+  return out.set(LV.rx * s * Math.cos(phi), LV.center + LV.ry * Math.cos(theta), LV.rx * s * Math.sin(phi));
+}
+
+/** 幼生の丸い体の面の外向き */
+export function larvaNormal(theta: number, phi: number, out: Vector3): Vector3 {
+  const s = Math.sin(theta);
+  return out.set((s * Math.cos(phi)) / LV.rx, Math.cos(theta) / LV.ry, (s * Math.sin(phi)) / LV.rx).normalize();
+}
+
+/** 幼生の丸い体の上で、頂から口の側へ向かう向き */
+export function larvaTangent(theta: number, phi: number, out: Vector3): Vector3 {
+  const c = Math.cos(theta);
+  return out.set(LV.rx * c * Math.cos(phi), -LV.ry * Math.sin(theta), LV.rx * c * Math.sin(phi)).normalize();
+}
+
+/** 幼生の口葉・耳状突起がしまわれている所（育つにつれて、ここから外へ広がる）。side は口葉の側 */
+export function larvaBud(side: number, out: Vector3): Vector3 {
+  return out.set(side * LV.rx * 0.35, LV.center - LV.ry * 0.75, 0);
+}

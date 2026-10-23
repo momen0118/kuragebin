@@ -1,12 +1,14 @@
 // 泳ぐカブトクラゲ一匹。体（body.ts）を、泳ぎ（jelly/swim.ts）の位置と向きに置く。
 // 拍動はせず、櫛板が打ち続けてなめらかに進む（drive.ts）。頂を上にしたまま、ほとんど沈まずにゆっくり漂う。
 // つつかれると口葉をきゅっと閉じ、櫛板を逆に打って少し後ずさる。揺れのあとは、平衡器で傾きを感じて櫛板でゆっくり起き直る。
+// 幼生（触手のある小さな粒）は、丸い体に長い触手が2本。育つにつれて口葉が広がり、触手が縮んで成体の形になる。
 // ローカルの +y が頂（平衡器のある側）で、泳ぎの「傘の頂点の向き」に合わせてある
 import { Group, Matrix4, Vector3, type Material } from 'three';
 import { CTENO, POKE, RENDER } from '../../config';
 import { genesKey, type BolinopsisGenes } from '../../sim/genes';
 import type { Rng } from '../../sim/rng';
 import type { Sex } from '../../sim/state';
+import type { RootFrame } from '../jelly/tentacles';
 import { Swimmer, swimBounds, type Neighbor } from '../jelly/swim';
 import type { WaterField } from '../slosh';
 import { Stomach } from '../stomach';
@@ -14,7 +16,8 @@ import type { SwimBody } from '../swimBody';
 import type { SharedUniforms } from '../uniforms';
 import { createCtenoBody, type CtenoBody } from './body';
 import { CombDrive } from './drive';
-import { ctenoForm, type CtenoForm } from './shape';
+import { bodyPoint, ctenoForm, larvaNormal, larvaPoint, type CtenoForm } from './shape';
+import { LarvaTentacles } from './tentacles';
 
 const STEP = 1 / RENDER.simHz;
 
@@ -39,6 +42,11 @@ export class Ctenophore implements SwimBody {
   private pokeStrength = 0;
   private readonly matrix = new Matrix4();
   private readonly scale = new Vector3(CTENO.length, CTENO.length, CTENO.length);
+  /** 幼生の触手と、その根元（ローカル。体の形が移るのに合わせて求めなおす） */
+  private readonly tentacles: LarvaTentacles;
+  private readonly rootLocal = [new Vector3(), new Vector3()];
+  private readonly rootDirLocal = [new Vector3(), new Vector3()];
+  private readonly root: RootFrame = { pos: new Vector3(), dir: new Vector3() };
   private readonly carryTarget = new Vector3();
   private readonly carryUp = new Vector3();
   private size = 1;
@@ -47,7 +55,7 @@ export class Ctenophore implements SwimBody {
   /** 口葉の開閉の時間（個体ごとにずらす） */
   private swayT: number;
 
-  constructor(shared: SharedUniforms, rng: Rng, genes: Readonly<BolinopsisGenes>, seed = 0, size = 1) {
+  constructor(shared: SharedUniforms, rng: Rng, genes: Readonly<BolinopsisGenes>, seed = 0, growth = 1, size = 1) {
     this.genesKey = genesKey(genes);
     this.form = ctenoForm(genes, seed);
     this.drive = new CombDrive(rng, this.form.tempo);
@@ -56,7 +64,9 @@ export class Ctenophore implements SwimBody {
     this.swayT = rng.range(0, CTENO.lobeSwayPeriod);
     this.body = createCtenoBody(shared, this.form, rng.range(0, 10));
     this.group.add(...this.body.meshes);
-    this.setGrowth(1, undefined, size);
+    this.tentacles = new LarvaTentacles(shared, { uBody: this.body.look.uBody, uGlow: { value: new Vector3() }, uOpacity: this.body.look.uOpacity }, rng);
+    this.group.add(this.tentacles.mesh);
+    this.setGrowth(growth, undefined, size);
     this.updateMatrix();
     this.sync();
   }
@@ -78,11 +88,26 @@ export class Ctenophore implements SwimBody {
     return false;
   }
 
-  /** 育ち具合は使わない（まだ成体だけ）。size は大きさの倍率 */
-  setGrowth(_growth: number, _startRadius?: number, size: number = this.size): void {
+  /**
+   * 育ち具合（幼生の段階の進み。成体は 1）と大きさの倍率。幼生の姿から成体の形へ移る割合と、触手の長さが決まる
+   */
+  setGrowth(growth: number, _startRadius?: number, size: number = this.size): void {
     this.size = size;
     this.scale.setScalar(CTENO.length * size);
     this.swimmer.setForm(this.radius, 0);
+    const LV = CTENO.larva;
+    const m = 1 - smooth((growth - LV.shape[0]) / (LV.shape[1] - LV.shape[0]));
+    const reach = 1 - smooth((growth - LV.tentacles[0]) / (LV.tentacles[1] - LV.tentacles[0]));
+    this.body.look.uLarva.value = m;
+    this.tentacles.setLength(LV.tentacle.length * CTENO.length * size * reach, CTENO.length * size);
+    // 触手の根元：丸い体の横（±z）。成体の形へ移るにつれて、胴の同じ所へ
+    const th = LV.tentacle.rootTheta * Math.PI;
+    const tmp = new Vector3();
+    for (let i = 0; i < 2; i++) {
+      const phi = i === 0 ? -Math.PI / 2 : Math.PI / 2;
+      larvaPoint(th, phi, this.rootLocal[i]!).lerp(bodyPoint(this.form, LV.tentacle.rootTheta, phi, tmp), 1 - m);
+      larvaNormal(th, phi, this.rootDirLocal[i]!).add(tmp.set(0, -LV.tentacle.droop, 0)).normalize();
+    }
   }
 
   /** 雌雄同体なので何もしない */
@@ -90,12 +115,14 @@ export class Ctenophore implements SwimBody {
 
   place(pos: Vector3, up: Vector3, vel: Vector3, mode: 'cruise' | 'drift' = 'cruise'): void {
     this.swimmer.place(pos, up, vel, mode);
+    this.tentacles.reset();
     this.updateMatrix();
     this.sync();
   }
 
   relocate(pos: Vector3): void {
     this.swimmer.pos.copy(pos);
+    this.tentacles.reset();
     this.updateMatrix();
     this.sync();
   }
@@ -126,6 +153,7 @@ export class Ctenophore implements SwimBody {
 
   translate(dx: number): void {
     this.swimmer.translate(dx);
+    this.tentacles.translate(dx);
     this.updateMatrix();
     this.sync();
   }
@@ -140,6 +168,7 @@ export class Ctenophore implements SwimBody {
     inner!.renderOrder = base + 0.1;
     plates!.renderOrder = base + 0.2;
     front!.renderOrder = base + 0.3;
+    this.tentacles.mesh.renderOrder = base + 0.05;
   }
 
   /** 拍動しないので水面は揺らさない */
@@ -189,11 +218,29 @@ export class Ctenophore implements SwimBody {
   dispose(): void {
     for (const g of this.body.geometries) g.dispose();
     for (const m of this.body.meshes) (m.material as Material).dispose();
+    this.tentacles.dispose();
   }
 
   private step(dt: number): void {
     this.drive.update(dt);
-    this.swimmer.update(dt, this.drive, this.neighbors, this.swimmer.isCarried || this.swimmer.isGuided ? null : this.water);
+    const water = this.swimmer.isCarried || this.swimmer.isGuided ? null : this.water;
+    this.swimmer.update(dt, this.drive, this.neighbors, water);
+    // カップの水ごと運ばれている：触手も水と一緒に動く。瓶の壁の中に収めない
+    const carried = this.swimmer.isCarried;
+    this.tentacles.confined = !carried;
+    const w = this.swimmer.carryShift;
+    if (carried && w.lengthSq() > 0) this.tentacles.translate(w.x, w.y, w.z);
+    this.updateMatrix();
+    const M = this.matrix;
+    this.tentacles.step(
+      dt,
+      (i) => {
+        this.root.pos.copy(this.rootLocal[i]!).applyMatrix4(M);
+        this.root.dir.copy(this.rootDirLocal[i]!).transformDirection(M);
+        return this.root;
+      },
+      water,
+    );
   }
 
   /** 口葉を閉じている割合（0〜1）：つつかれてすぐ閉じ、ゆっくり開いて戻る */
@@ -218,5 +265,6 @@ export class Ctenophore implements SwimBody {
     const close = this.closed() * CTENO.poke.close;
     this.body.look.uSway.value.set(a * Math.sin(this.swayT * w) - close, a * Math.sin(this.swayT * w + 0.7) - close);
     this.body.look.uBeatPhase.value = this.drive.beatPhase;
+    this.tentacles.updateGeometry();
   }
 }

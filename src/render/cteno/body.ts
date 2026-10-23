@@ -1,5 +1,6 @@
 // カブトクラゲの体の描画。胴・口葉・耳状突起（外の面）、咽頭と平衡器（中）、櫛板（虹）。
 // 形は shape.ts で一度だけ求めて頂点に置き、口葉の開閉と耳状突起の波、櫛板の打ち方は頂点シェーダで動かす。
+// 幼生の丸い体の形も頂点に一緒に持ち、育ち具合（uLarva、1 で幼生の姿）で成体の形へ移す（口葉と耳状突起はしまわれた所から広がる）。
 // 光の受け方はミズクラゲの傘（jelly/bell.ts）と同じ考え方：輪郭だけが細く明るく、中は透ける。夜はデスクライトの光が輪郭で散る。
 // 櫛板の虹は反射なので、窓の光とライトの光が当たっている所だけに出る（光がなければ見えない）
 import {
@@ -24,7 +25,21 @@ import { CLIP_GLSL } from '../shaders/clip';
 import common from '../shaders/common.glsl?raw';
 import { frag } from '../shaders/glsl';
 import type { SharedUniforms } from '../uniforms';
-import { auriclePoint, auricleWidth, bodyPoint, lobeAttach, lobeCenter, lobePoint, rowAngles, rowPoints, type CtenoForm } from './shape';
+import {
+  auriclePoint,
+  auricleWidth,
+  bodyPoint,
+  larvaBud,
+  larvaNormal,
+  larvaPoint,
+  larvaTangent,
+  lobeAttach,
+  lobeCenter,
+  lobePoint,
+  rowAngles,
+  rowPoints,
+  type CtenoForm,
+} from './shape';
 
 /** 面の部品の番号（シェーダで見分ける） */
 const PART = { body: 0, lobe: 1, auricle: 2, gut: 3, statocyst: 4 } as const;
@@ -56,9 +71,12 @@ ${common}
 ${SWAY_GLSL}
 uniform float uTime;
 uniform float uPhase;
+uniform float uLarva;
 in float aPart;
 in float aSide;
 in vec2 aUV;
+in vec3 aLarva;
+in vec3 aLarvaN;
 out vec3 vWorldPos;
 out vec3 vWorldNormal;
 out vec3 vViewNormal;
@@ -73,6 +91,9 @@ void main() {
     float t = aUV.x;
     p += n * sin(t * 9.0 - (uTime + uPhase) * ${f3(CTENO.auricle.waveSpeed * Math.PI * 2)}) * ${f3(CTENO.auricle.wave)} * t;
   }
+  // 幼生の姿へ寄せる
+  p = mix(p, aLarva, uLarva);
+  n = normalize(mix(n, aLarvaN, uLarva));
   vUV = aUV;
   vLocal = position;
   vPart = aPart;
@@ -93,6 +114,7 @@ ${CLIP_GLSL}
 uniform float uOpacity;
 uniform float uDensity;
 uniform float uGlowPass;
+uniform float uLarva;
 uniform vec3 uKey, uKeyDir, uAmbient;
 uniform vec3 uBody;
 uniform sampler2D tRoom;
@@ -162,6 +184,10 @@ void main() {
     float pole = exp(-pow(vUV.x / 0.08, 2.0));
     density = 0.004 + 0.16 * rim + 0.02 * canal + 0.02 * pole;
     scatter = 0.05 * rim + 0.08 * canal + 0.05 * pole;
+    // 幼生の小さな丸い体は、輪郭が見えるよう濃いめ
+    float dense = mix(1.0, ${f3(CTENO.larva.density)}, uLarva);
+    density *= dense;
+    scatter *= dense;
   } else if (part == ${PART.lobe}) {
     float c = lobeCanals(vUV.x, vUV.y);
     // 付け根（胴の中に埋まっている所）は見せない
@@ -172,9 +198,15 @@ void main() {
     refr = rim * 0.04 * root;
     // 袋なので面が重なる。重なっても暗く濁らないように
     cover = 0.22;
+    // 幼生のうちはしまわれていて見えない
+    float bud = pow(1.0 - uLarva, 2.0);
+    density *= bud;
+    scatter *= bud;
+    refr *= bud;
   } else if (part == ${PART.auricle}) {
-    density = 0.008 + 0.06 * rim;
-    scatter = 0.25 + 0.15 * rim;
+    float bud = pow(1.0 - uLarva, 2.0);
+    density = (0.008 + 0.06 * rim) * bud;
+    scatter = (0.25 + 0.15 * rim) * bud;
     refr = 0.0;
   } else if (part == ${PART.gut}) {
     // 咽頭は少しだけ光を散らす平たい管（暗い穴に見えないように）
@@ -210,26 +242,36 @@ in float aAcross;
 in float aAlong;
 in float aSide;
 in float aFade;
+in vec3 aLarvaC;
+in vec3 aLarvaT;
+in vec3 aLarvaN;
+in float aRowT;
+uniform float uLarva;
 out vec3 vWorldPos;
 out vec3 vT;
 out vec3 vN;
 out float vAcross;
 out float vAlong;
+out float vRowT;
 out float vFade;
 void main() {
-  vec3 c = swayPoint(aCenter, aSide);
-  vec3 t = normalize(swayDir(aTangent, aSide));
-  vec3 n = normalize(swayDir(aNormal, aSide));
+  // 幼生の姿では、列は丸い体の頂のそばから口のそばまで（口葉の上の分も、そのまま続ける）
+  vec3 c = mix(swayPoint(aCenter, aSide), aLarvaC, uLarva);
+  vec3 t = normalize(mix(swayDir(aTangent, aSide), aLarvaT, uLarva));
+  vec3 n = normalize(mix(swayDir(aNormal, aSide), aLarvaN, uLarva));
   vec3 s = normalize(cross(n, t));
-  // 列は胴の面に沿った細い帯。櫛板の一枚一枚は、帯の上で光の返し方として描く
-  vec3 p = c + n * ${f3(CTENO.plateLift)} + s * aAcross * ${f3(CTENO.plateWidth * 0.5)};
+  // 列は胴の面に沿った細い帯。櫛板の一枚一枚は、帯の上で光の返し方として描く（幼生は板が少なく大きい）
+  float width = mix(${f3(CTENO.plateWidth * 0.5)}, ${f3(CTENO.larva.plateWidth * 0.5)}, uLarva);
+  vec3 p = c + n * ${f3(CTENO.plateLift)} + s * aAcross * width;
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
   vT = normalize(mat3(modelMatrix) * t);
   vN = normalize(mat3(modelMatrix) * n);
   vAcross = aAcross;
   vAlong = aAlong;
-  vFade = aFade;
+  vRowT = aRowT;
+  // 幼生の姿では、列の両端だけを消す（胴から口葉へ移る所は切れない）
+  vFade = mix(aFade, clamp(min(aRowT, 1.0 - aRowT) / 0.08, 0.0, 1.0), uLarva);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
@@ -243,12 +285,14 @@ uniform float uGlowPass;
 uniform float uTime;
 uniform float uPhase;
 uniform float uBeatPhase;
+uniform float uLarva;
 uniform vec3 uKey, uKeyDir, uAmbient;
 in vec3 vWorldPos;
 in vec3 vT;
 in vec3 vN;
 in float vAcross;
 in float vAlong;
+in float vRowT;
 in float vFade;
 
 vec3 spectrum(float h) {
@@ -289,7 +333,7 @@ void main() {
   col += iridescence(N, V, lampDir(vWorldPos)) * uLampColor * lampSpot(vWorldPos) * ${f3(CTENO.rainbowLamp)};
   col *= beat;
   // 板は一枚ずつ離れて並ぶ（粒の鎖）。帯の縁はやわらかく
-  float d = abs(fract(vAlong / ${f3(CTENO.plateGap)}) - 0.5);
+  float d = abs(fract(mix(vAlong / ${f3(CTENO.plateGap)}, vRowT * ${f3(CTENO.larva.plates)}, uLarva)) - 0.5);
   float comb = 1.0 - smoothstep(${f3(CTENO.plateFill * 0.5 - 0.07)}, ${f3(CTENO.plateFill * 0.5 + 0.03)}, d);
   float edge = (1.0 - smoothstep(0.35, 1.0, abs(vAcross))) * smoothstep(0.0, 1.0, vFade);
   // 光がなくても、ガラスのような細い筋はかすかに見える
@@ -318,16 +362,25 @@ interface ShellBuild {
   uv: number[];
   part: number[];
   side: number[];
+  /** 幼生の姿の位置と外向き（外向きを持たない頂点は NaN。成体の外向きをそのまま使う） */
+  lpos: number[];
+  lnrm: number[];
   idx: number[];
 }
 
-function pushVertex(g: ShellBuild, p: Vector3, uv: [number, number], part: number, side: number, inside: Vector3): void {
+const newShell = (): ShellBuild => ({ ref: [], pos: [], nrm: [], uv: [], part: [], side: [], lpos: [], lnrm: [], idx: [] });
+
+/** 頂点を足す。larva は幼生の姿の位置（なければ同じ所）、larvaN はその外向き（なければ成体の外向き） */
+function pushVertex(g: ShellBuild, p: Vector3, uv: [number, number], part: number, side: number, inside: Vector3, larva: Vector3 = p, larvaN?: Vector3): void {
   g.ref.push(inside.x, inside.y, inside.z);
   g.pos.push(p.x, p.y, p.z);
   g.nrm.push(0, 0, 0);
   g.uv.push(uv[0], uv[1]);
   g.part.push(part);
   g.side.push(side);
+  g.lpos.push(larva.x, larva.y, larva.z);
+  if (larvaN) g.lnrm.push(larvaN.x, larvaN.y, larvaN.z);
+  else g.lnrm.push(NaN, NaN, NaN);
 }
 
 /** 三角形の向きから頂点の法線を求め、外向き（面の内側の点から離れる向き）に表をそろえる */
@@ -392,6 +445,11 @@ function finishShell(g: ShellBuild): BufferGeometry {
     g.nrm[k] = n.x;
     g.nrm[k + 1] = n.y;
     g.nrm[k + 2] = n.z;
+    if (Number.isNaN(g.lnrm[k])) {
+      g.lnrm[k] = n.x;
+      g.lnrm[k + 1] = n.y;
+      g.lnrm[k + 2] = n.z;
+    }
   }
   const geo = new BufferGeometry();
   geo.setAttribute('position', new Float32BufferAttribute(g.pos, 3));
@@ -399,15 +457,19 @@ function finishShell(g: ShellBuild): BufferGeometry {
   geo.setAttribute('aUV', new Float32BufferAttribute(g.uv, 2));
   geo.setAttribute('aPart', new Float32BufferAttribute(g.part, 1));
   geo.setAttribute('aSide', new Float32BufferAttribute(g.side, 1));
+  geo.setAttribute('aLarva', new Float32BufferAttribute(g.lpos, 3));
+  geo.setAttribute('aLarvaN', new Float32BufferAttribute(g.lnrm, 3));
   geo.setIndex(idx);
   return geo;
 }
 
 /** 外の面：胴・口葉2枚・耳状突起4つ */
 function shellGeometry(f: CtenoForm): BufferGeometry {
-  const g: ShellBuild = { ref: [], pos: [], nrm: [], uv: [], part: [], side: [], idx: [] };
+  const g = newShell();
   const p = new Vector3();
   const inside = new Vector3();
+  const lp = new Vector3();
+  const ln = new Vector3();
   // 胴（頂から下端まで、まわり一周）
   const V = 40;
   const U = 56;
@@ -416,7 +478,9 @@ function shellGeometry(f: CtenoForm): BufferGeometry {
     const v = Math.max(i / V, 0.002);
     for (let j = 0; j <= U; j++) {
       const phi = (j / U) * Math.PI * 2;
-      pushVertex(g, bodyPoint(f, v, phi, p), [v, phi], PART.body, 0, inside.set(0, p.y, 0));
+      // 幼生の丸い体では、頂（v = 0）から口の側（v = 1）まで
+      const th = v * Math.PI;
+      pushVertex(g, bodyPoint(f, v, phi, p), [v, phi], PART.body, 0, inside.set(0, p.y, 0), larvaPoint(th, phi, lp), larvaNormal(th, phi, ln));
     }
   }
   gridIndices(start, V, U, g.idx);
@@ -426,11 +490,13 @@ function shellGeometry(f: CtenoForm): BufferGeometry {
     const NP = 24;
     const NT = 96;
     lobeCenter(f, side, inside);
+    // 幼生のうちは、口のそばにしまわれている
+    larvaBud(side, lp);
     for (let i = 0; i <= NP; i++) {
       const psi = Math.max((i / NP) * Math.PI, 1e-4);
       for (let j = 0; j <= NT; j++) {
         const t = j / NT;
-        pushVertex(g, lobePoint(f, side, t, psi, p), [Math.sin(psi), t], PART.lobe, side, inside);
+        pushVertex(g, lobePoint(f, side, t, psi, p), [Math.sin(psi), t], PART.lobe, side, inside, lp);
       }
     }
     gridIndices(start, NP, NT, g.idx);
@@ -440,11 +506,12 @@ function shellGeometry(f: CtenoForm): BufferGeometry {
     start = g.pos.length / 3;
     const NT = 12;
     const q = new Vector3();
+    larvaBud(k % 2 === 0 ? -1 : 1, lp);
     for (let i = 0; i <= NT; i++) {
       const t = i / NT;
       auriclePoint(f, k, t, q);
       const w = auricleWidth(t);
-      for (const s of [-1, 1]) pushVertex(g, p.copy(q).add(new Vector3(0, s * w * 0.5, s * w * 0.3)), [t, s], PART.auricle, 0, inside.set(0, q.y, 0));
+      for (const s of [-1, 1]) pushVertex(g, p.copy(q).add(new Vector3(0, s * w * 0.5, s * w * 0.3)), [t, s], PART.auricle, 0, inside.set(0, q.y, 0), lp);
     }
     gridIndices(start, NT, 1, g.idx);
   }
@@ -453,7 +520,7 @@ function shellGeometry(f: CtenoForm): BufferGeometry {
 
 /** 中：咽頭（平たい管）と、頂の平衡器（小さな粒） */
 function innerGeometry(): BufferGeometry {
-  const g: ShellBuild = { ref: [], pos: [], nrm: [], uv: [], part: [], side: [], idx: [] };
+  const g = newShell();
   const p = new Vector3();
   const inside = new Vector3();
   const ellipsoid = (cy: number, ry: number, rx: number, rz: number, part: number, n: number): void => {
@@ -484,10 +551,18 @@ function plateGeometry(f: CtenoForm): BufferGeometry {
   const along: number[] = [];
   const side: number[] = [];
   const fade: number[] = [];
+  const lc: number[] = [];
+  const lt: number[] = [];
+  const ln: number[] = [];
+  const rowT: number[] = [];
   const idx: number[] = [];
+  const [th0, th1] = CTENO.larva.rows;
+  const phis = rowAngles();
+  const q = new Vector3();
   let n = 0;
   for (let r = 0; r < 8; r++) {
     const pts = rowPoints(f, r, CTENO.plateGap * 0.5);
+    const total = pts.length ? pts[pts.length - 1]!.along + CTENO.plateGap * 0.25 : 1;
     // 帯の端（列の始まりと終わり、胴から口葉へ移る所）は少しずつ消す
     const ends: number[] = [];
     pts.forEach((pt, i) => {
@@ -496,7 +571,18 @@ function plateGeometry(f: CtenoForm): BufferGeometry {
     });
     pts.forEach((pt, i) => {
       const d = Math.min(...ends.map((e) => Math.abs(pt.along - e)));
+      // 幼生の丸い体の上の、同じ列の同じ割合の所
+      const u = pt.along / total;
+      const th = Math.PI * (th0 + (th1 - th0) * u);
+      const phi = phis[r]!;
       for (const a of [-1, 1]) {
+        larvaPoint(th, phi, q);
+        lc.push(q.x, q.y, q.z);
+        larvaTangent(th, phi, q);
+        lt.push(q.x, q.y, q.z);
+        larvaNormal(th, phi, q);
+        ln.push(q.x, q.y, q.z);
+        rowT.push(u);
         fade.push(Math.min(1, d / 0.03));
         center.push(pt.pos.x, pt.pos.y, pt.pos.z);
         tangent.push(pt.tangent.x, pt.tangent.y, pt.tangent.z);
@@ -520,6 +606,10 @@ function plateGeometry(f: CtenoForm): BufferGeometry {
   geo.setAttribute('aAlong', new Float32BufferAttribute(along, 1));
   geo.setAttribute('aSide', new Float32BufferAttribute(side, 1));
   geo.setAttribute('aFade', new Float32BufferAttribute(fade, 1));
+  geo.setAttribute('aLarvaC', new Float32BufferAttribute(lc, 3));
+  geo.setAttribute('aLarvaT', new Float32BufferAttribute(lt, 3));
+  geo.setAttribute('aLarvaN', new Float32BufferAttribute(ln, 3));
+  geo.setAttribute('aRowT', new Float32BufferAttribute(rowT, 1));
   geo.setIndex(idx);
   return geo;
 }
@@ -534,6 +624,8 @@ export interface CtenoLook {
   /** 個体ごとの時間のずれ（耳状突起の波）と、櫛板の波の位相（泳ぎが押し出す強さに合わせて進める） */
   uPhase: { value: number };
   uBeatPhase: { value: number };
+  /** 幼生の姿の割合（1 で丸い体、0 で成体の形） */
+  uLarva: { value: number };
 }
 
 export interface CtenoBody {
@@ -553,6 +645,7 @@ export function createCtenoBody(shared: SharedUniforms, form: CtenoForm, phase: 
     uPivot: { value: new Vector2(attach.x, CTENO.lobe.attach) },
     uPhase: { value: phase },
     uBeatPhase: { value: 0 },
+    uLarva: { value: 0 },
   };
   const shell = shellGeometry(form);
   const inner = innerGeometry();
@@ -569,6 +662,7 @@ export function createCtenoBody(shared: SharedUniforms, form: CtenoForm, phase: 
     uSway: look.uSway,
     uPivot: look.uPivot,
     uPhase: look.uPhase,
+    uLarva: look.uLarva,
   };
   const shellMat = (side: Side): ShaderMaterial =>
     new ShaderMaterial({
