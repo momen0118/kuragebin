@@ -16,19 +16,23 @@ const FIRST: readonly string[] = [
 ];
 
 /**
- * 新しい種に添えた手紙（封筒のまま天板に置く）。pick 1 は、空きを訊いてから届いたとき（書き出しだけ変わる）。
- * 仮の文面（ユーザーに見てもらって決める）
+ * 新しい種に添えた手紙（封筒のまま天板に置く）。見ればわかることは語りすぎない。
+ * 夜のライトの一行は、櫛板の虹がライトの光でしか見えないことへの手がかり
  */
-const GIFT: Record<Exclude<Species, 'aurelia'>, readonly [string, string, readonly string[]]> = {
+const GIFT: Record<Exclude<Species, 'aurelia'>, readonly string[]> = {
   bolinopsis: [
-    '研究室で殖えたので、カブトクラゲを一匹送ります。',
-    'そろそろ空いた頃かと思うので、約束の一匹を送ります。カブトクラゲです。',
-    ['傘も拍動もありません。体の脇の列を波打たせて、ゆっくり進みます。', '光の当たり方によっては、色が流れて見えます。', 'ミズクラゲと同じ瓶で構いません。一匹でも殖えます。'],
+    '研究室で殖えたので、一匹送ります。カブトクラゲです。',
+    '名前はクラゲですが、ミズクラゲとはだいぶ勝手が違います。',
+    '同じ瓶で構いません。',
+    '夜は、ライトを点けたり消したりしてみてください。',
   ],
 };
 
-/** 新しい種を送る前に、瓶の空きを訊く手紙（日誌のページに留まる）。仮の文面 */
-const ASK: readonly string[] = ['こちらでまた別のが殖えています。', '瓶に空きができたら、一匹送ります。'];
+/**
+ * 新しい種の届く日に、どの瓶もいっぱいだったときの手紙（日誌のページに留まる）。瓶に空きを作れば届く、という手がかり。
+ * 返事はできないが、空きを作ることが返事になる
+ */
+const ASK: readonly string[] = ['こちらでまた別のが殖えています。', 'そちらの瓶に、空きはありますか。', '空いているようなら、一匹送ります。'];
 
 /** 返事の文面（送った子の特徴ごと） */
 const REPLIES: Record<LetterTopic, ReadonlyArray<readonly string[]>> = {
@@ -46,8 +50,7 @@ export function letterLines(l: Pick<Letter, 'kind' | 'topic' | 'pick' | 'gift'>)
   if (l.kind === 'first') return FIRST;
   if (l.kind === 'ask') return ASK;
   if (l.kind === 'gift') {
-    const [opening, afterAsk, rest] = l.gift && l.gift.species !== 'aurelia' ? GIFT[l.gift.species] : GIFT.bolinopsis;
-    return [l.pick === 1 ? afterAsk : opening, ...rest];
+    return l.gift && l.gift.species !== 'aurelia' ? GIFT[l.gift.species] : GIFT.bolinopsis;
   }
   const list = REPLIES[l.topic ?? 'plain'] ?? REPLIES.plain;
   return list[l.pick % list.length]!;
