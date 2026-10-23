@@ -4,6 +4,7 @@
 // （元の瓶の上なら元の瓶へ戻す）。状態を移すのは指を離したとき。
 // 運んでいる間は、天板の手前に「おじさんに送る」と下向きの印が出る。指をそこ（画面の下のほう）まで運ぶと箱がせり上がり、離すとカップが箱の上へ行き、
 // 「この子を送る？」と確かめる。送るなら箱の中の水へ放し、やめるなら瓶の口の上へ戻って瓶の水へ放す。
+// その種の最後の一匹は送れないので、印を出さず、画面の下へ運んでも箱はせり上がらない（離すと瓶へ戻す）。
 import { BOX, HANDLING } from '../config';
 import type { Game } from '../game';
 import type { App } from '../render/app';
@@ -19,6 +20,8 @@ export class Carry {
   private edge = 0;
   /** 指が画面の下のほう（箱のあたり）にあるか */
   private nearBox = false;
+  /** 運んでいる個体をおじさんへ送れるか（その種の最後の一匹なら送れない） */
+  private sendable = false;
   private timer: number | undefined;
 
   constructor(
@@ -37,12 +40,18 @@ export class Carry {
     return this.active && this.nearBox;
   }
 
+  /** 運んでいる個体をおじさんへ送れるか（「おじさんに送る」の印を出すか） */
+  get canSend(): boolean {
+    return this.active && this.sendable;
+  }
+
   /** 個体 id をカップに入れて上げはじめる。はじめられたら true */
   start(id: number, p: Point): boolean {
     if (!this.app.scoopStart(id)) return false;
     this.active = true;
     this.edge = 0;
     this.nearBox = false;
+    this.sendable = this.game.canSend(id) === 'sent';
     this.app.scoopNearBox(false);
     this.source = this.app.scoopDestination;
     const [x, y] = this.toNdc(p);
@@ -54,7 +63,7 @@ export class Carry {
     if (!this.active) return;
     const [x, y] = this.toNdc(p);
     this.app.scoopFollow(x, y);
-    this.nearBox = y < -1 + 2 * BOX.zone;
+    this.nearBox = this.sendable && y < -1 + 2 * BOX.zone;
     this.app.scoopNearBox(this.nearBox);
     const w = this.width();
     const zone = w * HANDLING.edgeZone;

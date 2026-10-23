@@ -12,13 +12,29 @@ import { withStateRng, type Rng } from './rng';
 import { shownSex } from './sex';
 import { gameNow, isSwimmer, wallAt, type Creature, type GameState, type Letter, type LetterTopic, type SentRecord, type Species, type SpeciesGenes } from './state';
 
-export type SendResult = 'sent' | 'fixed' | 'missing';
+export type SendResult = 'sent' | 'fixed' | 'missing' | 'last';
 
-/** 送れるか。送れるのは泳ぐ個体（成体・エフィラ）だけ。ポリプとストロビラは瓶底に付いているので送れない */
+/**
+ * 送れるか。送れるのは泳ぐ個体（成体・エフィラ）だけ。ポリプとストロビラは瓶底に付いているので送れない。
+ * その種の最後の一匹も送れない（送るとその種が瓶からいなくなり、もう戻らないので）
+ */
 export function canSend(state: GameState, id: number): SendResult {
   const found = findCreature(state, id);
   if (!found) return 'missing';
-  return isSwimmer(found.creature.stage) ? 'sent' : 'fixed';
+  if (!isSwimmer(found.creature.stage)) return 'fixed';
+  return isLastOfSpecies(state, found.creature) ? 'last' : 'sent';
+}
+
+/**
+ * その種の最後の一匹か：同じ種がほかに、どの瓶にもどの段階でもいない（瓶底のポリプ・ストロビラも数える）。
+ * ミズクラゲは、瓶底に付くのを待っているプラヌラがいれば最後ではない
+ */
+export function isLastOfSpecies(state: GameState, c: Creature): boolean {
+  for (const jar of state.jars) {
+    if (jar.creatures.some((x) => x.id !== c.id && x.species === c.species)) return false;
+    if (c.species === 'aurelia' && jar.planulae.length > 0) return false;
+  }
+  return true;
 }
 
 /**

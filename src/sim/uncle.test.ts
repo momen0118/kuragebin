@@ -94,6 +94,8 @@ describe('おじさん：送る', () => {
         const s = createInitialState(T0, seed);
         const c = s.jars[0]!.creatures[0]!;
         c.genes = { ...genes };
+        // 最後の一匹は送れないので、もう一匹いることにする
+        spawnCreature(s, 1, 'polyp');
         sendCreature(s, c.id);
         if (s.uncle.reply) n++;
       }
@@ -162,3 +164,28 @@ describe('おじさん：送る', () => {
     expect(split.uncle).toEqual(once.uncle);
   });
 });
+
+describe('最後の一匹は送れない', () => {
+  test('同じ種がほかにどこにもいなければ送れない。瓶底のポリプか、付くのを待つプラヌラがいれば送れる', () => {
+    const s = createInitialState(T0);
+    const first = s.jars[0]!.creatures[0]!;
+    expect(canSend(s, first.id)).toBe('last');
+    expect(sendCreature(s, first.id)).toBe('last');
+    expect(s.jars[0]!.creatures).toHaveLength(1);
+    const p = spawnCreature(s, 2, 'polyp');
+    expect(canSend(s, first.id)).toBe('sent');
+    s.jars[2]!.creatures = s.jars[2]!.creatures.filter((c) => c.id !== p.id);
+    s.jars[1]!.planulae.push({ at: s.time + 3600, parent: first.id, genes: { ...BASE_GENES }, generation: 2 });
+    expect(canSend(s, first.id)).toBe('sent');
+  });
+
+  test('種ごとに数える：ミズクラゲがいても、カブトクラゲが一匹だけなら送れない', () => {
+    const s = createInitialState(T0);
+    spawnCreature(s, 0, 'adult');
+    const k = spawnCreature(s, 1, 'adult', undefined, 'bolinopsis');
+    expect(canSend(s, k.id)).toBe('last');
+    spawnCreature(s, 2, 'adult', undefined, 'bolinopsis');
+    expect(canSend(s, k.id)).toBe('sent');
+  });
+});
+
