@@ -9,8 +9,8 @@ import { createRng } from '../../sim/rng';
 export interface CtenoForm {
   /** 胴のいちばん太い所の半径 */
   radius: number;
-  /** 口葉（[-x の側, +x の側]）の長さと幅 */
-  lobeLength: [number, number];
+  /** 口葉（[-x の側, +x の側]）の大きさの倍率と、前後の厚み */
+  lobeScale: [number, number];
   lobeWidth: [number, number];
   /** 輪郭のいびつさ（欠けて直ったあとのような左右差）の大きさと向き */
   warp: number;
@@ -28,12 +28,12 @@ export function ctenoForm(g: Readonly<BolinopsisGenes>, seed: number): CtenoForm
   const rng = createRng((seed ^ 0x6c8e9cf5) >>> 0);
   // 左右の口葉の差：どちらが大きいかは個体の種で
   const skew = g.lobeSkew * k.lobeSkew * (rng.next() < 0.5 ? -1 : 1);
-  const len = CTENO.lobe.length * (1 + g.lobe * k.lobeLength);
+  const len = 1 + g.lobe * k.lobeLength;
   const wid = CTENO.lobe.width * (1 + g.lobe * k.lobeWidth);
   const rowEnds = Array.from({ length: 8 }, () => 1 - g.rowJitter * k.rowJitter * rng.next());
   return {
     radius: CTENO.body.radius * (1 - g.build * k.build),
-    lobeLength: [len * (1 - skew), len * (1 + skew)],
+    lobeScale: [len * (1 - skew), len * (1 + skew)],
     lobeWidth: [wid * (1 - skew * 0.6), wid * (1 + skew * 0.6)],
     warp: g.warp * k.warp,
     warpPhase: rng.range(0, Math.PI * 2),
@@ -51,14 +51,14 @@ export function bodyY(v: number): number {
   return B.top - (B.top - B.bottom) * v;
 }
 
-/** 胴の半径（頂は丸く閉じ、下のほうで少しすぼまる） */
+/** 胴の半径（頂は丸く閉じ、頂の側ほど少し細い釣鐘の形） */
 export function bodyRadius(f: CtenoForm, v: number): number {
+  const taper = 1 - B.taper * (1 - v);
   if (v < B.cap) {
     const t = 1 - v / B.cap;
-    return f.radius * Math.sqrt(Math.max(0, 1 - t * t));
+    return f.radius * taper * Math.sqrt(Math.max(0, 1 - t * t));
   }
-  const t = (v - B.cap) / (1 - B.cap);
-  return f.radius * (1 - 0.12 * t * t);
+  return f.radius * taper;
 }
 
 /** 胴の面の点（φ は口葉の向き +x から +z へ測る） */
@@ -67,47 +67,56 @@ export function bodyPoint(f: CtenoForm, v: number, phi: number, out: Vector3): V
   return out.set(r * Math.cos(phi), bodyY(v), r * Math.sin(phi) * B.flat);
 }
 
-/** 口葉が胴に付く所の v と、付け根の x（口葉が開閉する軸） */
+/** 口葉が胴に付く所（胴の列が口葉へ移る高さ）の v と、開閉の軸の x（外の縁の始まり） */
 export function lobeAttach(f: CtenoForm): { v: number; x: number } {
   const v = (B.top - L.attach) / (B.top - B.bottom);
-  return { v, x: bodyRadius(f, v) * L.inset };
+  const [sx, sy] = L.outline[L.shoulder]!;
+  return { v, x: scaled(sx, sy, (f.lobeScale[0] + f.lobeScale[1]) / 2)[0] };
 }
 
-/** 口葉の丸み（a は付け根 0 から先 1）：付け根で 0.55、いちばん広い所で 1、そこから先へ丸く閉じて 0 */
-function lobeRound(a: number): number {
-  if (a < L.round) return 0.55 + 0.45 * Math.pow(a / L.round, 0.7);
-  const t = (a - L.round) / (1 - L.round);
-  return Math.sqrt(Math.max(0, 1 - t * t));
+const OUT = L.outline;
+const N_OUT = OUT.length;
+
+/** 外形の上の t（0〜1 で一周、点 i は i / 点の数） */
+export function outlineT(i: number): number {
+  return i / N_OUT;
 }
 
-/** 口葉の芯（断面の真ん中）の x（side を掛ける前）と高さ */
-function lobeCore(f: CtenoForm, side: -1 | 1, a: number): { x: number; y: number } {
-  const len = f.lobeLength[side < 0 ? 0 : 1]!;
-  const xb = lobeAttach(f).x;
-  return { x: xb + L.flare * Math.sin(Math.PI * a * 0.85) - L.tuck * a * a * a, y: L.attach - a * len };
+/** 大きさの倍率 scale を掛けた点（付け根の高さを中心に、下と外へ広がる） */
+function scaled(x: number, y: number, scale: number): [number, number] {
+  return [x * (1 + (scale - 1) * 0.6), L.attach + (y - L.attach) * scale];
+}
+
+/** 外形の点（+x の側）。点の間はなめらかにつなぐ（Catmull-Rom） */
+function outlinePoint(t: number, scale: number): [number, number] {
+  const u = (((t % 1) + 1) % 1) * N_OUT;
+  const i = Math.floor(u);
+  const s = u - i;
+  const p = (k: number): readonly [number, number] => OUT[(((i + k) % N_OUT) + N_OUT) % N_OUT]!;
+  const [p0, p1, p2, p3] = [p(-1), p(0), p(1), p(2)];
+  const cr = (a: number, b: number, c: number, d: number): number =>
+    0.5 * (2 * b + (-a + c) * s + (2 * a - 5 * b + 4 * c - d) * s * s + (-a + 3 * b - 3 * c + d) * s * s * s);
+  return scaled(cr(p0[0], p1[0], p2[0], p3[0]), cr(p0[1], p1[1], p2[1], p3[1]), scale);
 }
 
 /**
- * 口葉の面の点。口葉は平たい袋：断面は横（±z）に広く、厚み（±x）は薄い楕円。
- * side は -1（-x の側）か +1。a は付け根 0 から先 1、ψ は断面を一周する角度（cos ψ が横、sin ψ が外側の向き）。
- * 外へ張り出しながら垂れ、先は少し内へ戻る。横の端は内側（軸の側）へ丸まる
+ * 口葉の面の点。口葉は外形（開いて見える向きの輪郭）の中で前後に厚みを持つ座布団のような形。
+ * side は -1（-x の側）か +1。t は外形を一周する位置（0 が付け根）、ψ は 0（前、+z）から π（後ろ、-z）まで。
+ * sin ψ が外形への近さ（1 で外形の上）、cos ψ が前後の厚みの割合
  */
-export function lobePoint(f: CtenoForm, side: -1 | 1, a: number, psi: number, out: Vector3): Vector3 {
+export function lobePoint(f: CtenoForm, side: -1 | 1, t: number, psi: number, out: Vector3): Vector3 {
   const i = side < 0 ? 0 : 1;
-  const k = lobeRound(a);
-  const w = f.lobeWidth[i]! * k;
-  const h = L.thickness * k * (1 - 0.6 * a);
-  const core = lobeCore(f, side, a);
-  const b = Math.cos(psi);
-  const x = core.x + h * Math.sin(psi) - L.cup * w * b * b;
-  return out.set(side * x, core.y, b * w);
+  const scale = f.lobeScale[i]!;
+  const [ox, oy] = outlinePoint(t, scale);
+  const [cx, cy] = scaled(L.center[0], L.center[1], scale);
+  const rho = Math.sin(psi);
+  return out.set(side * (cx + (ox - cx) * rho), cy + (oy - cy) * rho, f.lobeWidth[i]! * Math.cos(psi));
 }
 
 /** 口葉の芯の点（面の外向きを決めるため） */
-export function lobeCenter(f: CtenoForm, side: -1 | 1, a: number, out: Vector3): Vector3 {
-  const core = lobeCore(f, side, a);
-  const w = f.lobeWidth[side < 0 ? 0 : 1]! * lobeRound(a);
-  return out.set(side * (core.x - L.cup * w * 0.5), core.y, 0);
+export function lobeCenter(f: CtenoForm, side: -1 | 1, out: Vector3): Vector3 {
+  const [cx, cy] = scaled(L.center[0], L.center[1], f.lobeScale[side < 0 ? 0 : 1]!);
+  return out.set(side * cx, cy, 0);
 }
 
 const A = CTENO.auricle;
@@ -156,7 +165,7 @@ export function rowPoints(f: CtenoForm, i: number, gap: number): RowPoint[] {
   const attach = lobeAttach(f);
   const end = f.rowEnds[i]!;
   // 道筋を細かくたどる：胴の上（v）、続けて口葉の上（a）
-  const path: Array<{ p: Vector3; side: number; at: (o: Vector3) => Vector3; a?: number }> = [];
+  const path: Array<{ p: Vector3; side: number; at: (o: Vector3) => Vector3 }> = [];
   const steps = 120;
   const vEnd = long ? attach.v : CTENO.rowStart + (CTENO.rowShortEnd - CTENO.rowStart) * end;
   for (let s = 0; s <= steps; s++) {
@@ -165,17 +174,17 @@ export function rowPoints(f: CtenoForm, i: number, gap: number): RowPoint[] {
     path.push({ p: at(new Vector3()), side: 0, at });
   }
   if (long) {
-    // 口葉の外側の面へ続く（胴の上と同じ横の位置から）
+    // 口葉の外の縁に沿って、細い先の手前まで続く（胴の上と同じ前後の側、外形のすぐ内側）
     const side: -1 | 1 = Math.cos(phi) > 0 ? 1 : -1;
-    const zb = path[path.length - 1]!.p.z;
-    const w0 = f.lobeWidth[side < 0 ? 0 : 1]! * 0.55;
-    const b = Math.max(-0.7, Math.min(0.7, zb / w0));
-    const psi = Math.acos(b);
-    const aEnd = CTENO.rowLobeEnd * end;
+    const front = Math.sin(phi) > 0;
+    const rho = 0.94;
+    const psi = front ? Math.asin(rho) : Math.PI - Math.asin(rho);
+    const t0 = outlineT(L.shoulder);
+    const t1 = t0 + (outlineT(L.tip) - t0) * CTENO.rowLobeEnd * end;
     for (let s = 1; s <= steps; s++) {
-      const a = aEnd * (s / steps);
-      const at = (o: Vector3): Vector3 => lobePoint(f, side, a, psi, o);
-      path.push({ p: at(new Vector3()), side, at, a });
+      const t = t0 + (t1 - t0) * (s / steps);
+      const at = (o: Vector3): Vector3 => lobePoint(f, side, t, psi, o);
+      path.push({ p: at(new Vector3()), side, at });
     }
   }
   // 長さに沿って間隔 gap ごとに
@@ -191,8 +200,7 @@ export function rowPoints(f: CtenoForm, i: number, gap: number): RowPoint[] {
       const pos = a.p.clone().lerp(b.p, t);
       const tangent = b.p.clone().sub(a.p).normalize();
       // 外向き：胴は軸から離れる向き、口葉は口葉の芯から離れる向き。列に直角にそろえる
-      const radial =
-        b.side === 0 ? new Vector3(pos.x, 0, pos.z / B.flat) : pos.clone().sub(lobeCenter(f, b.side as -1 | 1, b.a ?? 0, new Vector3())).setY(0);
+      const radial = b.side === 0 ? new Vector3(pos.x, 0, pos.z / B.flat) : pos.clone().sub(lobeCenter(f, b.side as -1 | 1, new Vector3()));
       const normal = radial.sub(tangent.clone().multiplyScalar(radial.dot(tangent))).normalize();
       out.push({ pos, normal, tangent, along: next, side: b.side });
       next += gap;

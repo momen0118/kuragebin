@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Vector3 } from 'three';
 import { CTENO } from '../../config';
 import { BASE_BOLINOPSIS_GENES } from '../../sim/genes';
-import { bodyRadius, ctenoForm, lobePoint, rowPoints } from './shape';
+import { bodyRadius, ctenoForm, lobePoint, outlineT, rowPoints } from './shape';
 
 describe('カブトクラゲの形', () => {
   test('櫛板の列：口葉の側の4本は口葉へ続いて長く、ほかの4本は短い。どれも頂の側から口の側へ並ぶ', () => {
@@ -25,7 +25,7 @@ describe('カブトクラゲの形', () => {
     const slim = ctenoForm({ ...BASE_BOLINOPSIS_GENES, build: 1 }, 7);
     const lobe = ctenoForm({ ...BASE_BOLINOPSIS_GENES, lobe: 1 }, 7);
     expect(bodyRadius(slim, 0.6)).toBeLessThan(bodyRadius(base, 0.6));
-    const tip = (f: typeof base) => lobePoint(f, 1, 1, Math.PI / 2, new Vector3()).y;
+    const tip = (f: typeof base) => lobePoint(f, 1, outlineT(CTENO.lobe.tip), Math.PI / 2, new Vector3()).y;
     expect(tip(lobe)).toBeLessThan(tip(base));
     expect(ctenoForm(BASE_BOLINOPSIS_GENES, 7)).toEqual(base);
   });
