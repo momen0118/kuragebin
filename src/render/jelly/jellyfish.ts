@@ -7,6 +7,7 @@ import type { Rng } from '../../sim/rng';
 import type { Sex } from '../../sim/state';
 import type { WaterField } from '../slosh';
 import { Stomach } from '../stomach';
+import type { SwimBody } from '../swimBody';
 import type { SharedUniforms } from '../uniforms';
 import { createBell, type Bell, type BellLook } from './bell';
 import { ADULT_FORM, armReach, formAt, pulseParams, shapeParams, type JellyForm } from './form';
@@ -19,7 +20,7 @@ import { Tentacles, type RootFrame } from './tentacles';
 
 const STEP = 1 / RENDER.simHz;
 
-export class Jellyfish {
+export class Jellyfish implements SwimBody {
   readonly group = new Group();
   readonly pulse: Pulse;
   readonly swimmer: Swimmer;
@@ -293,6 +294,16 @@ export class Jellyfish {
   /** 光る種の光が周りを照らす位置（ワールド） */
   glowPosition(out: Vector3): Vector3 {
     return out.set(0, JELLY_LOOK.lightCenterY, 0).applyMatrix4(this.matrix);
+  }
+
+  /** 光る種の光の色（今の強さを掛けたもの） */
+  glowColor(out: Vector3): Vector3 {
+    return out.copy(this.look.uGlow.value);
+  }
+
+  /** 水面を揺らす強さ：縮んでいる間 */
+  stirRate(): number {
+    return Math.max(this.pulse.rate(), 0);
   }
 
   /**

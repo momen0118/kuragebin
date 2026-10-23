@@ -828,8 +828,8 @@ async function main(): Promise<void> {
         p.project(app.camera);
         return [((p.x + 1) / 2) * canvas.clientWidth, ((1 - p.y) / 2) * canvas.clientHeight];
       },
-      place: (id: number, pos: [number, number, number], up: [number, number, number] = [0, 1, 0]) =>
-        app.creatures.placeForDebug(id, new Vector3(...pos), new Vector3(...up)),
+      place: (id: number, pos: [number, number, number], up: [number, number, number] = [0, 1, 0], yaw = 0) =>
+        app.creatures.placeForDebug(id, new Vector3(...pos), new Vector3(...up), yaw),
       realSize: (on: boolean) => setRealSize(on),
       // 画面の上の位置（CSS px）をタップしたのと同じ（札、つつく）
       tap: (x: number, y: number) => tapAt({ x, y }),

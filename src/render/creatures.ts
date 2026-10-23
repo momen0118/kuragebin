@@ -1,15 +1,17 @@
 // 瓶1つの個体を描く。状態の個体（sim の Creature）に合わせて、泳ぐ個体（成体・エフィラ）と
 // 瓶底の個体（ポリプ・ストロビラ）を作ったり消したりし、毎フレーム動かす。
 // ストロビラがエフィラを放したときは、皿が上から1枚ずつ離れて、そのままエフィラとして泳ぎ出す。
-import { Group, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
+import { Group, Quaternion, Vector3, type Camera, type Object3D, type PerspectiveCamera } from 'three';
 import { EPHYRA, SWIM } from '../config';
-import { BASE_GENES, genesKey, type Genes } from '../sim/genes';
+import { genesKey } from '../sim/genes';
 import { broodAmount, sexColorAmount } from '../sim/sex';
 import { bodySize } from '../sim/size';
 import { createRng } from '../sim/rng';
 import { isSwimmer, type Creature, type JarState } from '../sim/state';
 import type { Eater } from './food';
+import type { SwimBody } from './swimBody';
 import type { FloorSortable } from './finds';
+import { Ctenophore } from './cteno/ctenophore';
 import { Jellyfish } from './jelly/jellyfish';
 import { Polyp } from './jelly/polyp';
 import { swimBounds, type Neighbor } from './jelly/swim';
@@ -20,7 +22,7 @@ interface SwimmerView {
   kind: 'swimmer';
   /** 作ったときの遺伝子（変わったら作り直す。確認用に書き換えたとき） */
   genes: string;
-  jelly: Jellyfish;
+  jelly: SwimBody;
   neighbor: Neighbor;
   /** 皿から離れるのを待っている（まだ描かない） */
   waiting: boolean;
@@ -35,15 +37,6 @@ interface PolypView {
 }
 
 type View = SwimmerView | PolypView;
-
-/**
- * 描くときの遺伝子。カブトクラゲは体をまだ作っていないので、仮にミズクラゲの体を借りる（青みを強く、触手を短くして見分ける）。
- * 透け具合・速さ・いびつさだけ、カブトクラゲの値を使う
- */
-function viewGenes(c: Creature): Genes {
-  if (c.species === 'aurelia') return c.genes;
-  return { ...BASE_GENES, hue: -1, tentacle: -1, clarity: c.genes.clarity, tempo: c.genes.tempo, warp: c.genes.warp };
-}
 
 /** 放されたエフィラが泳ぎ出すときの、上への勢い（瓶の高さ/秒） */
 const LAUNCH_SPEED = 0.02;
@@ -93,7 +86,7 @@ export class Creatures {
       if (this.carried.has(c.id)) continue;
       let v = this.views.get(c.id);
       const kind = isSwimmer(c.stage) ? 'swimmer' : 'polyp';
-      if (v && (v.kind !== kind || v.genes !== genesKey(viewGenes(c)))) {
+      if (v && (v.kind !== kind || v.genes !== genesKey(c.genes))) {
         this.remove(c.id);
         v = undefined;
       }
@@ -107,10 +100,13 @@ export class Creatures {
     const rng = createRng(c.seed);
     let v: View;
     if (isSwimmer(c.stage)) {
-      const genes = viewGenes(c);
-      const jelly = new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius(), genes, c.seed);
+      // 種で体を選ぶ：ミズクラゲは傘、カブトクラゲは櫛板の列のある体
+      const jelly: SwimBody =
+        c.species === 'bolinopsis'
+          ? new Ctenophore(this.shared, rng, c.genes, c.seed, bodySize(c))
+          : new Jellyfish(this.shared, rng, this.growthOf(c), this.startRadius(), c.genes, c.seed);
       jelly.group.traverse((o) => o.layers.enable(this.glowLayer));
-      const view: SwimmerView = { kind: 'swimmer', genes: genesKey(genes), jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, righting: false };
+      const view: SwimmerView = { kind: 'swimmer', genes: genesKey(c.genes), jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, righting: false };
       // 皿を放しているストロビラの子なら、その皿が離れるまで待ってから泳ぎ出す
       const parent = c.parent !== null ? this.views.get(c.parent) : undefined;
       if (c.stage === 'ephyra' && parent?.kind === 'polyp' && parent.polyp.isReleasing) {
@@ -128,9 +124,10 @@ export class Creatures {
       v = view;
       this.group.add(jelly.group);
     } else {
-      const genes = viewGenes(c);
-      const polyp = new Polyp(this.shared, rng, c.spot ?? [0, 0], genes.hue);
-      v = { kind: 'polyp', genes: genesKey(genes), polyp };
+      // 瓶底の段階はミズクラゲだけ
+      const hue = c.species === 'aurelia' ? c.genes.hue : 0;
+      const polyp = new Polyp(this.shared, rng, c.spot ?? [0, 0], hue);
+      v = { kind: 'polyp', genes: genesKey(c.genes), polyp };
       this.group.add(polyp.group);
     }
     this.views.set(c.id, v);
@@ -138,7 +135,7 @@ export class Creatures {
   }
 
   /** 泳げる範囲からいくつか場所を選び、ほかの泳ぐ個体からいちばん離れた所に置く（画面の上での離れ方で比べる） */
-  private placeApart(jelly: Jellyfish, seed: number): void {
+  private placeApart(jelly: SwimBody, seed: number): void {
     const others = this.swimmers.filter((j) => j !== jelly);
     if (!others.length) return;
     const rng = createRng((seed ^ 0x9e3779b9) >>> 0);
@@ -209,8 +206,8 @@ export class Creatures {
   }
 
   /** 泳ぐ個体（皿から離れるのを待っているものは除く） */
-  get swimmers(): Jellyfish[] {
-    const out: Jellyfish[] = [];
+  get swimmers(): SwimBody[] {
+    const out: SwimBody[] = [];
     for (const v of this.views.values()) if (v.kind === 'swimmer' && !v.waiting) out.push(v.jelly);
     return out;
   }
@@ -345,7 +342,8 @@ export class Creatures {
     out.length = 0;
     for (const [id, v] of this.views) {
       if (v.kind === 'swimmer') {
-        if (!v.waiting) out.push({ id, stomach: v.jelly.stomach, jelly: v.jelly, polyp: null });
+        // 餌の見せ場はミズクラゲの体だけ（カブトクラゲの食べ方はまだ作っていない）
+        if (!v.waiting && v.jelly instanceof Jellyfish) out.push({ id, stomach: v.jelly.stomach, jelly: v.jelly, polyp: null });
       } else {
         out.push({ id, stomach: v.polyp.stomach, jelly: null, polyp: v.polyp });
       }
@@ -359,7 +357,7 @@ export class Creatures {
   }
 
   /** 泳ぐ個体をカップへ移す（この瓶では描かない）。移せたらその個体 */
-  lift(id: number): Jellyfish | null {
+  lift(id: number): SwimBody | null {
     const v = this.views.get(id);
     if (v?.kind !== 'swimmer' || v.waiting) return null;
     // 餌の見せ場の途中なら、胃の色はすぐに食べた量の分にする
@@ -371,7 +369,7 @@ export class Creatures {
   }
 
   /** カップから出ていった個体を、この瓶の個体にする（動きはそのまま） */
-  adopt(id: number, jelly: Jellyfish): void {
+  adopt(id: number, jelly: SwimBody): void {
     this.carried.delete(id);
     this.views.set(id, { kind: 'swimmer', genes: jelly.genesKey, jelly, neighbor: { pos: jelly.swimmer.pos, radius: jelly.radius }, waiting: false, righting: false });
     this.group.add(jelly.group);
@@ -384,10 +382,12 @@ export class Creatures {
     return v.kind === 'swimmer' ? v.jelly.swimmer.pos.clone() : v.polyp.base.clone();
   }
 
-  /** 確認用：泳ぐ個体を決めた位置・向きに置く */
-  placeForDebug(id: number, pos: Vector3, up: Vector3): void {
+  /** 確認用：泳ぐ個体を決めた位置・向きに置く。yaw は体の軸まわりの回り（ラジアン） */
+  placeForDebug(id: number, pos: Vector3, up: Vector3, yaw = 0): void {
     const v = this.views.get(id);
-    if (v?.kind === 'swimmer') v.jelly.place(pos, up, new Vector3());
+    if (v?.kind !== 'swimmer') return;
+    v.jelly.place(pos, up, new Vector3());
+    if (yaw) v.jelly.swimmer.quat.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), yaw));
   }
 
   /** 確認用：部品ごとの表示の切り替えに使う */

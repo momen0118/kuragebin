@@ -8,7 +8,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { BOX, CUP, JAR, SCOOP } from '../config';
 import { SPOUT_LIP, type Cup } from './cup';
-import type { Jellyfish } from './jelly/jellyfish';
+import type { SwimBody } from './swimBody';
 
 export interface ScoopHost {
   /** 隣の瓶との間（ワールド） */
@@ -24,11 +24,11 @@ export interface ScoopHost {
   /** 水の中のカップを、瓶 jar の泳ぐ個体によけさせる（真ん中と半径、瓶の座標）。null でやめる */
   obstruct(jar: number, center: Vector3 | null, radius: number): void;
   /** 放した個体を瓶 jar の個体にする（泳ぎつづける） */
-  adopt(jar: number, id: number, jelly: Jellyfish): void;
+  adopt(jar: number, id: number, jelly: SwimBody): void;
   /** おじさんへ送る箱の底の真ん中（瓶 jar の座標） */
   boxBottom(jar: number, out: Vector3): Vector3;
   /** 箱の中の袋の水へ放し終えた（送った個体の描画を片付ける） */
-  sent(id: number, jelly: Jellyfish): void;
+  sent(id: number, jelly: SwimBody): void;
 }
 
 type Phase = 'idle' | 'rise' | 'hover' | 'cross' | 'lower' | 'tilt' | 'wait' | 'leave' | 'toBox' | 'boxHold' | 'fromBox' | 'boxLower' | 'boxWait' | 'boxLeave';
@@ -71,7 +71,7 @@ export class Scoop {
   /** 今の座標の瓶 */
   private jar = 0;
   private id = -1;
-  private jelly: Jellyfish | null = null;
+  private jelly: SwimBody | null = null;
   /** カップの底の真ん中（瓶の座標） */
   private readonly pos = new Vector3();
   /** 水の中にあるとき：カップの真ん中（瓶の座標） */
@@ -153,7 +153,7 @@ export class Scoop {
   }
 
   /** 長押し：瓶 jar の個体 jelly を、カップに入れて瓶の口から上げる */
-  begin(jar: number, id: number, jelly: Jellyfish): void {
+  begin(jar: number, id: number, jelly: SwimBody): void {
     this.jar = jar;
     this.id = id;
     this.jelly = jelly;

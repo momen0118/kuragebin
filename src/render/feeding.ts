@@ -7,7 +7,7 @@
 import { Vector3 } from 'three';
 import { FEEDING, FOOD, JAR } from '../config';
 import type { Eater, Food } from './food';
-import type { Jellyfish } from './jelly/jellyfish';
+import type { SwimBody } from './swimBody';
 import type { Pipette } from './pipette';
 
 export interface FeedingHost {
@@ -16,7 +16,7 @@ export interface FeedingHost {
   /** 水の中のスポイトの先を、瓶 jar の泳ぐ個体によけさせる。null でやめる */
   obstruct(jar: number, center: Vector3 | null, radius: number): void;
   /** 瓶 jar の泳ぐ個体（先を下ろす所を、水面の近くの海月から離す） */
-  swimmers(jar: number): readonly Jellyfish[];
+  swimmers(jar: number): readonly SwimBody[];
   /** 瓶 jar の個体（見せ場で食べる） */
   eaters(jar: number): readonly Eater[];
   /** 見せ場が終わった。食べきっていない個体の胃の色を合わせる（immediate ならすぐ） */

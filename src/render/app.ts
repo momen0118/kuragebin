@@ -1068,7 +1068,7 @@ export class App {
       // 拍動が水面を揺らす（水面に近いほど強い。小さな個体ほど弱い）
       let stir = 0;
       for (const j of creatures.swimmers) {
-        const rate = Math.max(j.pulse.rate(), 0);
+        const rate = j.stirRate();
         const near = Math.exp(-(JAR.waterLevel - j.swimmer.pos.y) / 0.3);
         stir += rate * near * (j.radius / RENDER_ADULT_RADIUS);
       }
@@ -1122,7 +1122,7 @@ export class App {
     const glowJelly = this.creatures.swimmers.find((j) => j.glowing);
     if (glowJelly) {
       glowJelly.glowPosition(s.uGlowPos.value);
-      s.uGlowColor.value.copy(glowJelly.look.uGlow.value).multiplyScalar(0.6);
+      glowJelly.glowColor(s.uGlowColor.value).multiplyScalar(0.6);
     } else {
       s.uGlowColor.value.set(0, 0, 0);
     }
