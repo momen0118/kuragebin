@@ -52,7 +52,7 @@ describe('新しい種（カブトクラゲ）が届く', () => {
     expect(giftJar(s)).toBe(1);
   });
 
-  test('どの瓶もいっぱいなら、空きを訊く手紙を一通だけ出し、空いたら届く（手紙の書き出しが変わる）', () => {
+  test('どの瓶もいっぱいなら、空きを訊く手紙を一通だけ出し、空いたら届く', () => {
     let s = createInitialState(T0);
     for (let j = 0; j < 3; j++) fillAdults(s, j, LIFE.maxSwimmers);
     s = advance(s, AFTER + 2 * DAY);
@@ -69,9 +69,8 @@ describe('新しい種（カブトクラゲ）が届く', () => {
     const got = kabuto(s);
     expect(got).toHaveLength(1);
     expect(got[0]!.jar).toBe(2);
-    const letter = s.letters.find((l) => l.kind === 'gift')!;
-    expect(letter.pick).toBe(1);
-    expect(letterLines(letter)[0]).toContain('空いた頃');
+    expect(letterLines(asks[0]!).join()).toContain('空きはありますか');
+    expect(s.letters.filter((l) => l.kind === 'gift')).toHaveLength(1);
   });
 
   test('入る瓶を見ている間は届かず、見ていないときに届く', () => {

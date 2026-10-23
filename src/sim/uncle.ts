@@ -185,8 +185,7 @@ function deliverGift(state: GameState, species: (typeof GIFTS)[number], jar: num
   const letter = addLetter(state, {
     kind: 'gift',
     topic: null,
-    // 空きを訊いてから届いたときは、書き出しが変わる
-    pick: state.uncle.asked.includes(species) ? 1 : 0,
+    pick: 0,
     about: null,
     arrivedAt: state.time,
     wallTime: wall,
