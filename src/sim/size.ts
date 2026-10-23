@@ -1,7 +1,8 @@
-// 泳ぐ個体の大きさ（傘の半径の倍率。1 が今までの成体の大きさ）。描画とデバッグパネルが使う。
+// 泳ぐ個体の大きさ（傘の半径の倍率。1 が今までの成体の大きさ。カブトクラゲは体の長さの倍率）。描画とデバッグパネルが使う。
 // エフィラは放されたときの大きさから育ち、成体になった直後は育ちきった大きさの ADULT_GROWTH.start ほど。
+// カブトクラゲの幼生は小さな粒（CTENO.larva.start）から、成体になった直後の大きさへ指数的に育つ。
 // そこから数日かけて、はじめは速く、だんだんゆっくり育ちきった大きさ（個体ごとの fullSize）に近づく。
-import { ADULT_GROWTH } from '../config';
+import { ADULT_GROWTH, CTENO } from '../config';
 import type { Creature } from './state';
 
 /** 成体になってからの育ち（0〜1）での、育ちきった大きさに対する割合 */
@@ -17,9 +18,9 @@ export function adultSizeFraction(growth: number): number {
  */
 export function bodySize(c: Pick<Creature, 'stage' | 'progress' | 'adultGrowth' | 'fullSize'>): number {
   if (c.stage === 'adult') return c.fullSize * adultSizeFraction(c.adultGrowth);
-  if (c.stage === 'ephyra') {
-    const end = c.fullSize * ADULT_GROWTH.start;
-    return 1 + (end - 1) * Math.min(Math.max(c.progress, 0), 1);
-  }
+  const p = Math.min(Math.max(c.progress, 0), 1);
+  const end = c.fullSize * ADULT_GROWTH.start;
+  if (c.stage === 'ephyra') return 1 + (end - 1) * p;
+  if (c.stage === 'larva') return CTENO.larva.start * (end / CTENO.larva.start) ** p;
   return 1;
 }

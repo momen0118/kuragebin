@@ -10,7 +10,7 @@ import { bodySize } from '../sim/size';
 import type { GameInfo } from '../game';
 import type { GeneEdit, SexEdit } from '../sim/edit';
 import type { SoundName, SoundOptions } from '../sound/sound';
-import { gameNow, STAGES, type Creature, type GameState, type JarState, type Species, type Stage } from '../sim/state';
+import { gameNow, SPECIES_STAGES, STAGES, type Creature, type GameState, type JarState, type Species, type Stage } from '../sim/state';
 import { downloadText, exportFilename } from '../ui/download';
 import { FIND_NAMES, STAGE_LABELS } from '../ui/labels';
 
@@ -33,8 +33,7 @@ export interface DebugPanelOptions {
   onExport(): string;
   /** JSON を読み込む。読めなければ投げる */
   onImport(text: string): void;
-  /** 個体：表示中の瓶に出す、段階・進み・皿の数を変える、消す */
-  /** 個体を出す。カブトクラゲはまだ成体だけ */
+  /** 個体：表示中の瓶に出す（その種の段階で）、段階・進み・皿の数を変える、消す */
   onSpawn(stage: Stage, species?: Species): void;
   onStage(id: number, stage: Stage): void;
   onProgress(id: number, progress: number): void;
@@ -46,6 +45,9 @@ export interface DebugPanelOptions {
   onSex(id: number, edit: SexEdit | 'mature' | 'brood'): void;
   /** 成体になってからの成長（選んでいる個体）：1日ぶん進める、育ちきった大きさにする */
   onGrow(id: number, edit: 'day' | 'full'): void;
+  /** カブトクラゲ：選んでいる成体に今すぐ卵を産ませる、表示中の瓶の卵を今すぐ孵す */
+  onLayEggs(id: number): void;
+  onHatch(): void;
   /** 泳ぐ個体を成体 n 匹にする（混み具合の確認） */
   onFill(n: number): void;
   /** 泳ぐ個体の上限を差し替える（保存しない） */
@@ -121,7 +123,10 @@ function span(seconds: number): string {
 
 /** 選んでいる個体の雌雄：雌雄、成熟まで（または色の出かた）、プラヌラを抱えている残り。泳ぐ個体は大きさも */
 function sexInfo(c: Creature, time: number): string {
-  if (c.species === 'bolinopsis') return `雌雄同体（カブトクラゲ）　大きさ ${bodySize(c).toFixed(2)}`;
+  if (c.species === 'bolinopsis') {
+    const lay = c.stage !== 'adult' ? '' : !isMature(c) ? `・成熟まで ${span(SEX.matureAfter - c.adultAge)}` : `・次の卵まで ${span((1 - c.progress) * c.stageLength)}`;
+    return `雌雄同体（カブトクラゲ${lay}）　大きさ ${bodySize(c).toFixed(2)}`;
+  }
   if (!c.sex) return '雌雄なし（瓶底の段階）';
   return `${sexText(c, time)}　大きさ ${bodySize(c).toFixed(2)}（育ちきって ${c.fullSize.toFixed(2)}${c.stage === 'adult' ? `・育ち ${Math.round(c.adultGrowth * 100)}%` : ''}）`;
 }
@@ -164,6 +169,7 @@ export class DebugPanel {
   private readonly capSel: HTMLSelectElement;
   private readonly feedEl: HTMLDivElement;
   private readonly genesEl: HTMLDivElement;
+  private readonly eggsEl: HTMLDivElement;
   private readonly sexEl: HTMLDivElement;
   private readonly motionEl: HTMLDivElement;
   private readonly uncleEl: HTMLDivElement;
@@ -205,7 +211,8 @@ export class DebugPanel {
       </details>
       <details open>
         <summary>個体（表示中の瓶）</summary>
-        <div class="row buttons spawn">${STAGES.map((st) => `<button type="button" data-spawn="${st}">${STAGE_NAMES[st]}</button>`).join('')}<button type="button" data-spawn="adult" data-species="bolinopsis">カブトクラゲ</button></div>
+        <div class="row buttons spawn">${SPECIES_STAGES.aurelia.map((st) => `<button type="button" data-spawn="${st}">${STAGE_NAMES[st]}</button>`).join('')}</div>
+        <div class="row buttons spawn">カブトクラゲ ${SPECIES_STAGES.bolinopsis.map((st) => `<button type="button" data-spawn="${st}" data-species="bolinopsis">${STAGE_NAMES[st]}</button>`).join('')}</div>
         <div class="creature-list sub"></div>
         <div class="row selected">
           <select class="stage" aria-label="段階">${STAGES.map((st) => `<option value="${st}">${STAGE_NAMES[st]}</option>`).join('')}</select>
@@ -237,6 +244,11 @@ export class DebugPanel {
         <div class="row buttons">
           <button type="button" data-grow="day">成長を1日進める</button>
           <button type="button" data-grow="full">育ちきらせる</button>
+        </div>
+        <div class="eggs sub"></div>
+        <div class="row buttons">
+          <button type="button" class="lay-eggs">卵を産ませる</button>
+          <button type="button" class="hatch">卵を孵す</button>
         </div>
         <div class="row buttons">
           <button type="button" data-fill="4">成体4</button>
@@ -453,6 +465,11 @@ export class DebugPanel {
         if (this.selected !== null) this.opts.onGrow(this.selected, b.dataset.grow as 'day' | 'full');
       });
     }
+    this.eggsEl = root.querySelector('.eggs')!;
+    root.querySelector('.lay-eggs')!.addEventListener('click', () => {
+      if (this.selected !== null) this.opts.onLayEggs(this.selected);
+    });
+    root.querySelector('.hatch')!.addEventListener('click', () => this.opts.onHatch());
     const real = root.querySelector<HTMLInputElement>('.real')!;
     real.addEventListener('change', () => this.opts.onRealSize(real.checked));
 
@@ -553,6 +570,10 @@ export class DebugPanel {
           })
           .join('') + (jar.resting ? '<div>（いっぱいでポリプが休んでいる）</div>' : '');
     }
+    const eggs = jar.eggs.length
+      ? `卵 ${jar.eggs.map((e) => `${e.shown}粒（孵る${e.count}匹・あと${span(e.hatchAt - time)}・${e.generation}代）`).join('、')}`
+      : '卵 なし';
+    if (this.eggsEl.textContent !== eggs) this.eggsEl.textContent = eggs;
     const rows = this.listEl.querySelectorAll<HTMLElement>('[data-id]');
     jar.creatures.forEach((c, i) => {
       const pct = rows[i]?.querySelector('.pct');
@@ -573,6 +594,8 @@ export class DebugPanel {
       genes += `　${c.generation}代目`;
       if (this.genesEl.textContent !== genes) this.genesEl.textContent = genes;
       if (this.sexEl.textContent !== sexText) this.sexEl.textContent = sexText;
+      // その種にない段階は選べない
+      for (const o of this.stageSel.options) o.disabled = !SPECIES_STAGES[c.species].includes(o.value as Stage);
       this.stageSel.value = c.stage;
       this.discsSel.disabled = c.stage !== 'strobila';
       if (c.stage === 'strobila') this.discsSel.value = String(c.discs);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { ADULT_GROWTH, SEX } from '../config';
-import { spawnCreature } from '../sim/edit';
+import { ADULT_GROWTH, LIFE, SEX } from '../config';
+import { layEggsNow, spawnCreature } from '../sim/edit';
 import { bodySize } from '../sim/size';
 import { advance } from '../sim/advance';
 import { BASE_GENES } from '../sim/genes';
@@ -339,5 +339,58 @@ describe('版11からのマイグレーション', () => {
     expect(mk.sex).toBeNull();
     expect(mk.genes).toEqual({ clarity: 0, tempo: 0, lobe: 1, build: 0, warp: 0, lobeSkew: 0, rowJitter: 0 });
     expect(m.jars[0]!.creatures[0]!.species).toBe('aurelia');
+  });
+});
+
+describe('版12からのマイグレーション', () => {
+  test('卵はなし。いたカブトクラゲの成体は、次に卵を産むまでを数えはじめる', () => {
+    const s = createInitialState(T0);
+    const k = spawnCreature(s, 1, 'adult', undefined, 'bolinopsis');
+    const v12 = JSON.parse(JSON.stringify(s));
+    v12.schema = 12;
+    for (const j of v12.jars) delete j.eggs;
+    const rk = v12.jars[1].creatures.find((c: { id: number }) => c.id === k.id);
+    rk.progress = 0.8;
+    rk.stageLength = 1;
+    const m = migrate(v12);
+    expect(m.schema).toBe(SCHEMA_VERSION);
+    expect(m.jars.map((j) => j.eggs)).toEqual([[], [], []]);
+    const mk = m.jars[1]!.creatures.find((c) => c.id === k.id)!;
+    expect(mk.progress).toBe(0);
+    expect(mk.stageLength).toBe((LIFE.lay[0] + LIFE.lay[1]) / 2);
+    // ミズクラゲの成体はそのまま
+    expect(m.jars[0]!.creatures[0]!.stageLength).toBe(s.jars[0]!.creatures[0]!.stageLength);
+  });
+
+  test('その種にない段階（確認用に変えたカブトクラゲのポリプ）は、その種の成体にする', () => {
+    const s = createInitialState(T0);
+    const k = spawnCreature(s, 1, 'adult', undefined, 'bolinopsis');
+    const raw = JSON.parse(JSON.stringify(s));
+    const rk = raw.jars[1].creatures.find((c: { id: number }) => c.id === k.id);
+    rk.stage = 'polyp';
+    rk.spot = [0.1, 0.1];
+    raw.jars[0].creatures[0].stage = 'larva';
+    const m = migrate(raw);
+    const mk = m.jars[1]!.creatures.find((c) => c.id === k.id)!;
+    expect(mk.stage).toBe('adult');
+    expect(mk.spot).toBeNull();
+    expect(m.jars[0]!.creatures[0]!.stage).toBe('adult');
+  });
+
+  test('卵と幼生を書き出して読み込める。読めない卵だけ除く', () => {
+    const s = createInitialState(T0);
+    const k = spawnCreature(s, 1, 'adult', undefined, 'bolinopsis');
+    layEggsNow(s, k.id);
+    spawnCreature(s, 1, 'larva', undefined, 'bolinopsis');
+    expect(importState(exportState(s, T0))).toEqual(s);
+    const raw = JSON.parse(JSON.stringify(s));
+    raw.jars[1].eggs.push({ laidAt: 'x' }, { laidAt: 0, hatchAt: 10, count: 0 });
+    raw.jars[1].eggs[0].genes = { lobe: 9 };
+    raw.jars[1].eggs[0].shown = 0;
+    const m = migrate(raw);
+    expect(m.jars[1]!.eggs).toHaveLength(1);
+    const e = m.jars[1]!.eggs[0]!;
+    expect(e.genes.lobe).toBe(1);
+    expect(e.shown).toBe(e.count);
   });
 });

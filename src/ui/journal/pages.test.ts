@@ -109,6 +109,29 @@ describe('日誌のページ', () => {
     expect(lines).toEqual([['昼のうちに一匹が口腕にプラヌラを抱えていた'], ['夜のうちに、ぽこが口腕にプラヌラを抱えていた'], ['昼のうちに二匹が口腕にプラヌラを抱えていた']]);
   });
 
+  test('カブトクラゲ：卵を産んだ（名前があれば名前で）、孵った、幼生が成体になった（エフィラとはまとめない）', () => {
+    const k = (e: JournalEntry): JournalEntry => ({ ...e, species: 'bolinopsis' });
+    const pages = journalPages(
+      [
+        k(entry('eggs', 1, local(27, 12), 1)),
+        k(entry('eggs', 1, local(27, 13), 1)),
+        k(entry('eggs', 1, local(27, 14), 1, 'みず')),
+        k(entry('hatch', 1, local(27, 23), 2)),
+        k(entry('hatch', 1, local(27, 23, 30), 1)),
+        k(entry('adult', 1, local(27, 22), 1)),
+        entry('adult', 1, local(27, 22, 10), 1),
+      ],
+      { sun },
+    );
+    expect(pages[0]!.sections[0]!.lines).toEqual([
+      '昼のうちにカブトクラゲが二匹、卵を産んだ',
+      '昼のうちに、みずが卵を産んだ',
+      '夜のうちに卵から幼生が三匹孵った',
+      '夜のうちに幼生が成体になった',
+      '夜のうちにエフィラが成体になった',
+    ]);
+  });
+
   test('知らない出来事は書かない', () => {
     const odd = { ...entry('polyp', 0, local(27, 12)), kind: 'visitor' as JournalKind };
     expect(journalPages([odd], { sun })).toEqual([]);

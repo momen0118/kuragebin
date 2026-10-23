@@ -5,7 +5,7 @@ import { createBook, FACT_KEYS } from '../sim/book';
 import { BASE_GENES, sanitizeBolinopsisGenes, sanitizeGenes } from '../sim/genes';
 import { createRng } from '../sim/rng';
 import { sexFromSeed } from '../sim/sex';
-import { DEFAULT_SETTINGS, firstLetter, LETTER_KINDS, SCHEMA_VERSION, SPECIES, STAGES, stageRange, type GameState, type Sex, type Species, type Stage } from '../sim/state';
+import { DEFAULT_SETTINGS, firstLetter, LETTER_KINDS, SCHEMA_VERSION, SPECIES, SPECIES_STAGES, STAGES, stageRange, type GameState, type Sex, type Species, type Stage } from '../sim/state';
 
 type Raw = Record<string, unknown>;
 
@@ -201,6 +201,24 @@ const MIGRATIONS: Record<number, (data: Raw) => Raw> = {
       uncle: isObject(d.uncle) ? { ...d.uncle, asked: [], given: [] } : d.uncle,
     };
   },
+  // 13：カブトクラゲの卵と幼生（それまでは卵がない）。いたカブトクラゲの成体は、次に卵を産むまでを数えはじめる
+  // （それまではミズクラゲの成体の長さを持っていた）
+  12: (d) => {
+    const jars = Array.isArray(d.jars) ? d.jars : [];
+    const [lo, hi] = stageRange('adult', LIFE, 'bolinopsis');
+    return {
+      ...d,
+      jars: jars.map((jar: unknown) => {
+        if (!isObject(jar)) return jar;
+        const creatures = Array.isArray(jar.creatures)
+          ? jar.creatures.map((c: unknown) =>
+              isObject(c) && c.species === 'bolinopsis' && c.stage === 'adult' ? { ...c, progress: 0, stageLength: (lo + hi) / 2 } : c,
+            )
+          : jar.creatures;
+        return { ...jar, creatures, eggs: [] };
+      }),
+    };
+  },
 };
 
 /** 個体の種から育ちきった大きさを決める（版10までのエフィラなど。乱数の並びを変えないため） */
@@ -282,6 +300,22 @@ function validate(d: Raw): GameState {
     jar.planulae = (Array.isArray(jar.planulae) ? jar.planulae : [])
       .filter((p: unknown) => isObject(p) && isNumber(p.at))
       .map((p: Raw) => ({ at: p.at, parent: isNumber(p.parent) ? p.parent : null, genes: sanitizeGenes(p.genes), generation: generationOr1(p.generation) }));
+    // カブトクラゲの卵：読めないものだけ除く。孵る数は1匹以上、見せる粒は孵る数以上
+    jar.eggs = (Array.isArray(jar.eggs) ? jar.eggs : [])
+      .filter((e: unknown) => isObject(e) && isNumber(e.laidAt) && isNumber(e.hatchAt) && isNumber(e.count) && e.count >= 1)
+      .map((e: Raw) => {
+        const count = Math.floor(e.count as number);
+        return {
+          parent: isNumber(e.parent) ? e.parent : null,
+          laidAt: e.laidAt,
+          hatchAt: e.hatchAt,
+          count,
+          shown: isNumber(e.shown) ? Math.max(count, Math.floor(e.shown)) : count,
+          seed: isNumber(e.seed) ? e.seed >>> 0 : 0,
+          genes: sanitizeBolinopsisGenes(e.genes),
+          generation: generationOr1(e.generation),
+        };
+      });
     for (const c of jar.creatures) {
       if (
         !isObject(c) ||
@@ -303,13 +337,18 @@ function validate(d: Raw): GameState {
       if (!isMeal(c.meal)) c.meal = null;
       // 種（読めなければミズクラゲ）と、その種の遺伝子（読めない値だけ基準にする）。代は読めなければ1代目
       if (!isSpecies(c.species)) c.species = 'aurelia';
+      // その種にない段階（確認用に変えたカブトクラゲのポリプなど）は、その種の成体にする（データ全体は捨てない）
+      if (!SPECIES_STAGES[c.species as Species].includes(c.stage as Stage)) {
+        const [lo, hi] = stageRange('adult', LIFE, c.species as Species);
+        Object.assign(c, { stage: 'adult', progress: 0, stageLength: (lo + hi) / 2, spot: null, discs: 0 });
+      }
       c.genes = c.species === 'bolinopsis' ? sanitizeBolinopsisGenes(c.genes) : sanitizeGenes(c.genes);
       c.generation = generationOr1(c.generation);
       // 来た日が読めなければ、始めた日にする
       if (!isNumber(c.arrivedWallTime)) c.arrivedWallTime = d.createdAt;
       // 雌雄：泳ぐ個体だけ（読めなければ個体の種から）。成体になってからの時間と、抱えているプラヌラは成体だけ
       // カブトクラゲは雌雄同体なので持たない
-      const swimmer = c.stage === 'adult' || c.stage === 'ephyra';
+      const swimmer = c.stage === 'adult' || c.stage === 'ephyra' || c.stage === 'larva';
       if (!swimmer || c.species !== 'aurelia') c.sex = null;
       else if (!isSex(c.sex)) c.sex = sexFromSeed(c.seed as number);
       if (c.stage !== 'adult' || !isNumber(c.adultAge) || c.adultAge < 0) c.adultAge = 0;

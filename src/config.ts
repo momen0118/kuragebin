@@ -615,6 +615,33 @@ export const CTENO = {
    * 少し後ずさる（離れる強さ。ミズクラゲの離れ方に対する割合）
    */
   poke: { close: 0.15, closeTime: 0.35, reopen: 3.5, reverseTime: 1.6, reverse: 0.5, flee: 0.9 } as const,
+  /**
+   * 卵：見せる粒の数（実物の数には合わせない。孵るのは LIFE.hatchCount 匹で、ほかは孵らずに消える）。見え方は CTENO_EGGS
+   */
+  eggs: { shown: [15, 25] as const },
+  /**
+   * 幼生（触手のある小さな粒）。孵ったときの大きさ start（成体の長さ CTENO.length に対する割合。エフィラが放されたときと同じくらい）。
+   * 成体になるまでに、成体になった直後の大きさ（ADULT_GROWTH.start）へ指数的に育つ。
+   * 姿：丸い体（中心の高さ center、縦と横の半径 ry・rx。前後もまるい）に櫛板の列8本（頂のそば rows[0] から口のそば rows[1] まで、
+   * 角度 θ/π で。一列に plates 枚の、成体より大きな板、帯の幅 plateWidth）と、横（±z）から出る長い触手2本。
+   * 育ち具合（段階の進み）につれて、shape の範囲で丸い体から成体の形へ移り（口葉と耳状突起が育つ）、tentacles の範囲で触手が縮んでなくなる。
+   * 触手：根元の角度 rootTheta（θ/π）と、出る向きの下への傾き droop、長さ（成体の長さに対する割合）、節の数、太さ（画面px）と明るさ、
+   * 水の抵抗と重さ、外へ広がる強さ（2本が「八」の字に開く）、ゆるい流れで揺れる強さ（重さと流れは小さな体ほど弱いが、大きさの平方根で）
+   */
+  larva: {
+    start: 0.22,
+    center: 0.16,
+    ry: 0.32,
+    rx: 0.27,
+    rows: [0.1, 0.82] as const,
+    plates: 7,
+    plateWidth: 0.05,
+    shape: [0.15, 1] as const,
+    tentacles: [0.3, 0.75] as const,
+    tentacle: { rootTheta: 0.42, droop: 0.8, length: 2.4, nodes: 18, widthPx: 0.75, brightness: 1.6, drag: 0.08, gravity: 0.1, spread: 0.05, current: 0.08 },
+    /** 丸い体の濃さ（成体の胴に対する倍率。小さな粒でも輪郭が見えるように） */
+    density: 2.5,
+  },
   /** 体の色と濃さ（ミズクラゲより透ける）。夜のライトが体の輪郭で散る強さ */
   color: [0.84, 0.9, 1.0] as Vec3,
   density: 0.75,
@@ -624,6 +651,32 @@ export const CTENO = {
    * 輪郭のいびつさ、櫛板の列の長さのむら、濃さ（透け具合）、櫛板を打つ速さ
    */
   genes: { build: 0.14, lobeLength: 0.12, lobeWidth: 0.1, lobeSkew: 0.15, warp: 0.09, rowJitter: 0.22, density: 0.3, tempo: 0.25 } as const,
+} as const;
+
+/**
+ * カブトクラゲの卵の見え方（数と孵る時刻は sim、CTENO.eggs と LIFE）。透き通った小さな粒（半径 radius、瓶の高さ単位）。
+ * 産んだ親のそば（見ていなければ瓶の中ほどの、個体の種で決めた所）に固まって現れ、水に漂いながら広がり（clump から spread へ）、
+ * 孵るころまでにゆっくり瓶底の近くへ沈む（sinkBy：孵るまでの何割で沈みきるか）。一粒ずつ wobble の幅で揺れる（周期 wobblePeriod 秒）。
+ * 孵らない粒は、孵るまでの dudFade の間のどこかで淡くなって消える（dudFadeLength の間に）。
+ * 見ている間に産んだときは、fadeIn 秒（描画の時間）かけて親のそばからふわっと広がりながら現れる
+ */
+export const CTENO_EGGS = {
+  radius: 0.0032,
+  clump: 0.02,
+  spread: 0.08,
+  sinkBy: 0.85,
+  wobble: 0.003,
+  wobblePeriod: [7, 15] as const,
+  dudFade: [0.3, 0.85] as const,
+  dudFadeLength: 0.08,
+  fadeIn: 6,
+  /** 現れる高さ（泳げる範囲の下から上を 0〜1 で）と、瓶の真ん中からの離れ方（泳げる範囲の半径に対する割合） */
+  height: [0.45, 0.8] as const,
+  reach: 0.55,
+  /** 明るさ：窓の光とライトの光で縁が光る強さ、中の淡い濁り、真ん中の胚の芯 */
+  rim: 0.8,
+  fill: 0.1,
+  core: 0.45,
 } as const;
 
 /**
@@ -905,6 +958,11 @@ export interface LifeRules {
   strobila: readonly [number, number];
   ephyra: readonly [number, number];
   ephyraCount: readonly [number, number];
+  /** カブトクラゲ：成熟した成体が卵を産む間、卵が孵るまで、孵る数、幼生が成体になるまで */
+  lay: readonly [number, number];
+  eggHatch: readonly [number, number];
+  hatchCount: readonly [number, number];
+  larva: readonly [number, number];
   maxSwimmers: number;
   maxPolyps: number;
   spotRadius: number;
@@ -925,6 +983,15 @@ export const LIFE: LifeRules = {
   ephyra: [5 * DAY, 7 * DAY],
   /** 1つのストロビラが放すエフィラの数 */
   ephyraCount: [1, 3],
+  /**
+   * カブトクラゲ（雌雄同体。ポリプはない）。実物には合わせず、ミズクラゲに合わせた（ユーザーと決めた）：
+   * 成熟した成体（成体になって SEX.matureAfter）が3〜4日ごとに卵を産み、卵は半日ほどで孵って幼生が1〜3匹、幼生は5〜7日で成体。
+   * 卵を産んだときに孵る数を泳ぐ個体の上限に数える（ミズクラゲのストロビラと同じく早い者勝ち）。空きがなければ産まずに待つ
+   */
+  lay: [3 * DAY, 4 * DAY],
+  eggHatch: [10 * 3600, 14 * 3600],
+  hatchCount: [1, 3],
+  larva: [5 * DAY, 7 * DAY],
   /**
    * 1瓶あたりの上限。泳ぐ個体（成体＋エフィラ。ストロビラが放す予定の数も数える）と、瓶底のポリプ（ストロビラを含む）。
    * 泳ぐ個体が上限に達すると、ポリプは休眠して進まない。空きができると再開する

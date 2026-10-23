@@ -11,6 +11,7 @@ export const STAGE_LABELS: Record<Stage, string> = {
   polyp: 'ポリプ',
   strobila: 'ストロビラ',
   ephyra: 'エフィラ',
+  larva: '幼生',
   adult: '成体',
 };
 

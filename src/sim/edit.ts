@@ -2,13 +2,11 @@
 // 上限は見ない（見た目の確認のために、何匹でも出せる）。
 import { ADULT_GROWTH, LIFE, SEX, type LifeRules } from '../config';
 import { addFind, takenSpots } from './finds';
-import { createBolinopsis, createCreature, enterStage, pickSpot, updateResting } from './lifecycle';
+import { createBolinopsis, createCreature, enterStage, hatchClutch, layEggs, pickSpot, updateResting } from './lifecycle';
 import { BASE_BOLINOPSIS_GENES, BASE_GENES, inheritBolinopsisGenes, inheritGenes, sanitizeGenes, type Genes } from './genes';
 import { withStateRng } from './rng';
 import { startBrood } from './sex';
-import { gameNow, isSwimmer, wallAt, type Creature, type GameState, type Species, type Stage } from './state';
-
-
+import { gameNow, isSwimmer, SPECIES_STAGES, wallAt, type Creature, type GameState, type Species, type Stage } from './state';
 
 export function findCreature(state: GameState, id: number): { jar: number; creature: Creature } | null {
   for (let j = 0; j < state.jars.length; j++) {
@@ -21,12 +19,13 @@ export function findCreature(state: GameState, id: number): { jar: number; creat
 /** 確認用に出す個体の年齢（育ちきった姿で出す） */
 const GROWN_AGE = 86400;
 
-/** 瓶に、段階を選んで個体を1つ出す（育ちきった姿で）。カブトクラゲはまだ成体だけ */
+/** 瓶に、段階を選んで個体を1つ出す（育ちきった姿で。幼生は孵ったばかり）。その種にない段階なら成体 */
 export function spawnCreature(state: GameState, jarIndex: number, stage: Stage, rules: LifeRules = LIFE, species: Species = 'aurelia'): Creature {
   return withStateRng(state, (rng) => {
     const jar = state.jars[jarIndex]!;
-    const grown = { age: GROWN_AGE, stageAge: GROWN_AGE };
-    const c = species === 'bolinopsis' ? createBolinopsis(state, 'adult', rng, rules, grown) : createCreature(state, stage, rng, rules, grown);
+    const s = SPECIES_STAGES[species].includes(stage) ? stage : 'adult';
+    const grown = s === 'larva' ? {} : { age: GROWN_AGE, stageAge: GROWN_AGE };
+    const c = species === 'bolinopsis' ? createBolinopsis(state, s, rng, rules, grown) : createCreature(state, s, rng, rules, grown);
     if (c.stage === 'adult') c.adultGrowth = 1;
     if (!isSwimmer(c.stage)) c.spot = pickSpot(takenSpots(state, jarIndex), rng, rules);
     if (c.stage === 'strobila') c.discs = rules.ephyraCount[1];
@@ -36,11 +35,12 @@ export function spawnCreature(state: GameState, jarIndex: number, stage: Stage, 
   });
 }
 
-/** 段階を変える（進みは 0 から） */
+/** 段階を変える（進みは 0 から）。その種にない段階には変えない */
 export function setStage(state: GameState, id: number, stage: Stage, rules: LifeRules = LIFE): void {
   const found = findCreature(state, id);
   if (!found) return;
   const c = found.creature;
+  if (!SPECIES_STAGES[c.species].includes(stage)) return;
   withStateRng(state, (rng) => {
     enterStage(c, stage, rng, rules);
     if (!isSwimmer(stage) && !c.spot) c.spot = pickSpot(takenSpots(state, found.jar), rng, rules);
@@ -179,6 +179,30 @@ export function broodNow(state: GameState, id: number): void {
   if (!c || c.stage !== 'adult' || c.sex !== 'female') return;
   c.adultAge = Math.max(c.adultAge, SEX.matureAfter);
   withStateRng(state, (rng) => startBrood(c, gameNow(state), rng));
+}
+
+/** 確認用：カブトクラゲの成体に今すぐ卵を産ませる（成熟前なら成熟させる。上限は見ない、孵る数はいちばん多いとき）。日誌には書かない */
+export function layEggsNow(state: GameState, id: number, rules: LifeRules = LIFE): void {
+  const found = findCreature(state, id);
+  const c = found?.creature;
+  if (!found || !c || c.species !== 'bolinopsis' || c.stage !== 'adult') return;
+  c.adultAge = Math.max(c.adultAge, SEX.matureAfter);
+  withStateRng(state, (rng) => {
+    state.jars[found.jar]!.eggs.push(layEggs(state, c, rng, rules, rules.hatchCount[1]));
+    enterStage(c, 'adult', rng, rules);
+  });
+}
+
+/** 確認用：瓶 jar の卵を今すぐ孵す（上限は見ない）。日誌には書かない */
+export function hatchNow(state: GameState, jarIndex: number, rules: LifeRules = LIFE): void {
+  const jar = state.jars[jarIndex];
+  if (!jar) return;
+  const eggs = jar.eggs;
+  jar.eggs = [];
+  withStateRng(state, (rng) => {
+    for (const e of eggs) hatchClutch(state, jar, e, e.count, rng, rules, wallAt(state, gameNow(state)));
+  });
+  updateResting(state, jar, jarIndex, rules, null);
 }
 
 /** 確認用：成体の成長を seconds（ゲーム内の秒）ぶん進める */
