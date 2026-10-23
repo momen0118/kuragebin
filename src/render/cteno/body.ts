@@ -113,9 +113,9 @@ float rowCanals(float v, float phi) {
   return c * smoothstep(0.04, 0.12, v);
 }
 
-// 口葉の中をうねって走る管と、縁の帯
+// 口葉の中をうねって走る管と、先の帯（袋の横の輪郭は、見る向きで決まる明るさ rim に任せる）
 float lobeCanals(float a, float b) {
-  float edge = smoothstep(0.86, 1.0, abs(b)) + smoothstep(0.93, 1.0, a);
+  float edge = smoothstep(0.93, 1.0, a);
   float wave = 0.6 + 0.09 * sin(a * 17.0 + sign(b) * 1.3) + 0.04 * sin(a * 41.0);
   float meander = exp(-pow((abs(b) - wave) / 0.035, 2.0)) * smoothstep(0.05, 0.2, a) * (1.0 - smoothstep(0.82, 0.95, a));
   float center = exp(-pow(b / 0.05, 2.0)) * smoothstep(0.02, 0.15, a) * (1.0 - smoothstep(0.55, 0.8, a)) * 0.6;
@@ -163,8 +163,9 @@ void main() {
     float c = lobeCanals(vUV.x, vUV.y);
     // 付け根（胴の中に埋まっている所）は見せない
     float root = smoothstep(0.12, 0.38, vUV.x);
-    density = (0.003 + 0.07 * rim + 0.022 * c) * root;
-    scatter = (0.08 * rim + 0.1 * c) * root;
+    // 袋の中は透けて、管と輪郭だけが光を散らす
+    density = (0.002 + 0.045 * rim + 0.03 * c) * root;
+    scatter = (0.05 * rim + 0.18 * c) * root;
     refr = rim * 0.04 * root;
     // 袋なので面が重なる。重なっても暗く濁らないように
     cover = 0.22;
@@ -175,7 +176,7 @@ void main() {
   } else if (part == ${PART.gut}) {
     // 咽頭は少しだけ光を散らす平たい管（暗い穴に見えないように）
     density = 0.006 + 0.05 * rim;
-    scatter = 0.06 + 0.08 * rim;
+    scatter = 0.02 + 0.05 * rim;
     refr = 0.0;
     cover = 0.1;
     tint = uBody * vec3(1.0, 0.96, 0.9);
@@ -284,8 +285,9 @@ void main() {
   vec3 col = iridescence(N, V, uKeyDir) * uKey * ${f3(CTENO.rainbowKey)};
   col += iridescence(N, V, lampDir(vWorldPos)) * uLampColor * lampSpot(vWorldPos) * ${f3(CTENO.rainbowLamp)};
   col *= beat;
-  // 板の並び（細かな櫛の目）と、帯の縁のやわらかさ
-  float comb = 0.6 + 0.4 * smoothstep(0.1, 0.45, abs(fract(vAlong / ${f3(CTENO.plateGap)}) - 0.5));
+  // 板は一枚ずつ離れて並ぶ（粒の鎖）。帯の縁はやわらかく
+  float d = abs(fract(vAlong / ${f3(CTENO.plateGap)}) - 0.5);
+  float comb = 1.0 - smoothstep(${f3(CTENO.plateFill * 0.5 - 0.07)}, ${f3(CTENO.plateFill * 0.5 + 0.03)}, d);
   float edge = (1.0 - smoothstep(0.35, 1.0, abs(vAcross))) * smoothstep(0.0, 1.0, vFade);
   // 光がなくても、ガラスのような細い筋はかすかに見える
   vec3 base = (uAmbient * 0.6 + uKey * 0.05) * 0.05;

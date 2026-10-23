@@ -58,7 +58,7 @@ export function bodyRadius(f: CtenoForm, v: number): number {
     return f.radius * Math.sqrt(Math.max(0, 1 - t * t));
   }
   const t = (v - B.cap) / (1 - B.cap);
-  return f.radius * (1 - 0.12 * t * t);
+  return f.radius * (1 - 0.04 * t * t);
 }
 
 /** 胴の面の点（φ は口葉の向き +x から +z へ測る） */
@@ -73,18 +73,19 @@ export function lobeAttach(f: CtenoForm): { v: number; x: number } {
   return { v, x: bodyRadius(f, v) * L.inset };
 }
 
-/** 口葉の丸み（a は付け根 0 から先 1）：付け根で 0.55、いちばん広い所で 1、そこから先へ丸く閉じて 0 */
+/** 口葉の丸み（a は付け根 0 から先 1）：付け根で 0.55、いちばん広い所で 1、そこから先は角の丸い四角のように閉じて 0 */
 function lobeRound(a: number): number {
   if (a < L.round) return 0.55 + 0.45 * Math.pow(a / L.round, 0.7);
   const t = (a - L.round) / (1 - L.round);
-  return Math.sqrt(Math.max(0, 1 - t * t));
+  const p = L.roundness;
+  return Math.pow(Math.max(0, 1 - Math.pow(t, p)), 1 / p);
 }
 
 /** 口葉の芯（断面の真ん中）の x（side を掛ける前）と高さ */
 function lobeCore(f: CtenoForm, side: -1 | 1, a: number): { x: number; y: number } {
   const len = f.lobeLength[side < 0 ? 0 : 1]!;
   const xb = lobeAttach(f).x;
-  return { x: xb + L.flare * Math.sin(Math.PI * a * 0.85) - L.tuck * a * a * a, y: L.attach - a * len };
+  return { x: xb + L.flare * Math.sin(Math.PI * a), y: L.attach - a * len };
 }
 
 /**
@@ -96,7 +97,7 @@ export function lobePoint(f: CtenoForm, side: -1 | 1, a: number, psi: number, ou
   const i = side < 0 ? 0 : 1;
   const k = lobeRound(a);
   const w = f.lobeWidth[i]! * k;
-  const h = L.thickness * k * (1 - 0.6 * a);
+  const h = L.thickness * k;
   const core = lobeCore(f, side, a);
   const b = Math.cos(psi);
   const x = core.x + h * Math.sin(psi) - L.cup * w * b * b;
