@@ -242,7 +242,7 @@ uniform float uOpacity;
 uniform float uGlowPass;
 uniform float uTime;
 uniform float uPhase;
-uniform float uBeatRate;
+uniform float uBeatPhase;
 uniform vec3 uKey, uKeyDir, uAmbient;
 in vec3 vWorldPos;
 in vec3 vT;
@@ -274,7 +274,7 @@ void main() {
   vec3 n = normalize(vN);
   vec3 s = normalize(cross(n, t));
   // 波：頂の側から口の側へ流れる。速く打って（有効打）、ゆっくり戻る
-  float u = fract(vAlong * ${f3(CTENO.beatWaves)} - (uTime * uBeatRate + uPhase));
+  float u = fract(vAlong * ${f3(CTENO.beatWaves)} - uBeatPhase);
   float k = ${f3(CTENO.beatStroke)};
   float beta = u < k
     ? mix(-${f3(CTENO.beatSwing)}, ${f3(CTENO.beatSwing)}, smoothstep(0.0, 1.0, u / k))
@@ -531,9 +531,9 @@ export interface CtenoLook {
   /** 口葉の開き（[-x の側, +x の側]、ラジアン）と、開閉の軸（付け根の x と y） */
   uSway: { value: Vector2 };
   uPivot: { value: Vector2 };
-  /** 個体ごとの時間のずれと、櫛板を打つ速さ（1秒に打つ回数） */
+  /** 個体ごとの時間のずれ（耳状突起の波）と、櫛板の波の位相（泳ぎが押し出す強さに合わせて進める） */
   uPhase: { value: number };
-  uBeatRate: { value: number };
+  uBeatPhase: { value: number };
 }
 
 export interface CtenoBody {
@@ -552,7 +552,7 @@ export function createCtenoBody(shared: SharedUniforms, form: CtenoForm, phase: 
     uSway: { value: new Vector2() },
     uPivot: { value: new Vector2(attach.x, CTENO.lobe.attach) },
     uPhase: { value: phase },
-    uBeatRate: { value: CTENO.beatRate * form.tempo },
+    uBeatPhase: { value: 0 },
   };
   const shell = shellGeometry(form);
   const inner = innerGeometry();
@@ -596,7 +596,7 @@ export function createCtenoBody(shared: SharedUniforms, form: CtenoForm, phase: 
     blending: CustomBlending,
     blendSrc: OneFactor,
     blendDst: OneFactor,
-    uniforms: { ...common, uBeatRate: look.uBeatRate },
+    uniforms: { ...common, uBeatPhase: look.uBeatPhase },
   });
   const mesh = (geo: BufferGeometry, mat: ShaderMaterial, order: number): Mesh => {
     const m = new Mesh(geo, mat);
