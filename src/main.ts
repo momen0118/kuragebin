@@ -770,7 +770,7 @@ async function main(): Promise<void> {
     tag.update(dt);
     placeEnvelope();
     placePetal();
-    sendHint.set(app.scoopCarrying && !carry.atBox);
+    sendHint.set(app.scoopCarrying && carry.canSend && !carry.atBox);
     feedButton.setBusy(app.feedingBusy);
     feedButton.setReady(game.canFeed(slider.index) === 'fed');
   };
