@@ -233,7 +233,8 @@ export interface SentRecordBase {
 }
 
 /** 返事で触れる送った子の特徴（文面を選ぶ） */
-export type LetterTopic = 'five' | 'three' | 'pink' | 'blue' | 'flawed' | 'ephyra' | 'plain';
+/** 返事で触れる特徴。ミズクラゲ：五つ葉・三つ葉・薄桃・青み・崩し・エフィラ・ほか。カブトクラゲ：代を重ねた子・幼生・崩し・ほか */
+export type LetterTopic = 'five' | 'three' | 'pink' | 'blue' | 'flawed' | 'ephyra' | 'plain' | 'bGeneration' | 'bLarva' | 'bFlawed' | 'bPlain';
 
 export type LetterKind = 'first' | 'reply' | 'gift' | 'ask';
 

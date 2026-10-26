@@ -224,6 +224,8 @@ async function main(): Promise<void> {
     app.setLampOn(on);
     game.updateSettings({ lamp: on });
     applyLight();
+    // 夜、カブトクラゲのいる瓶を見ながらライトを切り替えた（虹は光が当たる所だけ）
+    if (game.state.jars[slider.index]?.creatures.some((c) => c.species === 'bolinopsis')) game.noteFact('bLamp');
   }, game.state.settings.lamp);
 
   // 瓶を揺らす：端末の動き（DeviceMotion）。「揺れを使う」がオンで、許可があるときだけ受け取る。
@@ -296,13 +298,15 @@ async function main(): Promise<void> {
   // おじさんの手紙。机の上の封筒（最初の手紙）はタップで読み、読んだら日誌のその日のページに留まる。
   // 留めた手紙は、日誌のページでタップすると少し大きく開く
   const reader = new LetterReader();
+  /** 返事で触れる送った子の代（文面に入れる） */
+  const aboutGeneration = (l: Letter): number => game.state.sent.find((s) => s.id === l.about)?.generation ?? 1;
   /** 机の上にある封筒（まだ開いていない手紙） */
   const sealedLetter = (): Letter | null => game.state.letters.find((l) => l.sealed) ?? null;
   const envelope = new Envelope(() => {
     const l = sealedLetter();
     if (!l || reader.isOpen) return;
     tag.hide();
-    reader.open(l, () => game.openLetter(l.id));
+    reader.open(l, aboutGeneration(l), () => game.openLetter(l.id));
   });
   /** 封筒を天板の上に（虫眼鏡と同じく部屋の側。瓶を切り替えても動かない）。カップやスポイトを使っている間は出さない */
   const placeEnvelope = (): void => {
@@ -363,11 +367,11 @@ async function main(): Promise<void> {
     closed: () => game.markJournalRead(),
     readLetter: (id) => {
       const l = game.state.letters.find((x) => x.id === id);
-      if (l) reader.open(l);
+      if (l) reader.open(l, aboutGeneration(l));
     },
     newFacts: () => game.newFacts,
-    speciesShown: () => {
-      game.noteFact('page');
+    speciesShown: (species) => {
+      game.noteFact(species === 'bolinopsis' ? 'bPage' : 'page');
       game.markFactsSeen();
     },
     photo: (id) => game.photo(id),
@@ -678,8 +682,8 @@ async function main(): Promise<void> {
     }
     const id = app.pickAt(x, y, fingerNdc());
     if (id !== null) tag.show(id);
-    // 初めて瓶をつついたとき（の豆知識）
-    else if (app.poke(x, y)) game.noteFact('poke');
+    // 初めてミズクラゲのいる瓶をつついたとき（の豆知識）
+    else if (app.poke(x, y) && game.state.jars[slider.index]?.creatures.some((c) => c.species === 'aurelia')) game.noteFact('poke');
   };
 
   /**
@@ -732,11 +736,13 @@ async function main(): Promise<void> {
   /** 豆知識のきっかけ（画面の出来事）を確かめる間隔の残り（秒） */
   let factTimer = 0;
   /**
-   * 画面の出来事の豆知識：逆さまになった・起き直った（毎フレーム数える）、虫眼鏡を瓶に当てた・エフィラに当てた、プラヌラを抱えた個体を見た（ときどき確かめる）
+   * 画面の出来事の豆知識：逆さまになった・起き直った（毎フレーム数える）、虫眼鏡を瓶に当てた・エフィラ・カブトクラゲの成体と幼生に当てた、
+   * プラヌラを抱えた個体を見た（ときどき確かめる）
    */
   const checkScreenFacts = (dt: number): void => {
     const r = app.takeRighting();
     if (r.flips > 0) game.noteFact('flip');
+    if (r.ctenoRighted > 0) game.noteFact('bRighted');
     for (let i = 0; i < r.righted; i++) game.countRighted();
     factTimer -= dt;
     if (factTimer > 0) return;
@@ -751,11 +757,14 @@ async function main(): Promise<void> {
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     const b = app.jarBounds(w, h);
-    if (lens.x > b.left && lens.x < b.right && lens.y > b.top && lens.y < b.bottom) game.noteFact('loupe');
-    for (const c of game.state.jars[slider.index]?.creatures ?? []) {
-      if (c.stage !== 'ephyra') continue;
+    const creatures = game.state.jars[slider.index]?.creatures ?? [];
+    // 縁の触手の行なので、ミズクラゲのいる瓶だけ
+    if (lens.x > b.left && lens.x < b.right && lens.y > b.top && lens.y < b.bottom && creatures.some((c) => c.species === 'aurelia')) game.noteFact('loupe');
+    for (const c of creatures) {
+      const key = c.stage === 'ephyra' ? 'loupeEphyra' : c.species !== 'bolinopsis' ? null : c.stage === 'larva' ? 'bLoupeLarva' : 'bLoupe';
+      if (!key) continue;
       const a = app.noteAnchor(c.id, w, h);
-      if (a && Math.hypot(a.x - lens.x, a.y - lens.y) < lens.radius) game.noteFact('loupeEphyra');
+      if (a && Math.hypot(a.x - lens.x, a.y - lens.y) < lens.radius) game.noteFact(key);
     }
   };
 

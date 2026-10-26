@@ -463,7 +463,11 @@ function validateBook(v: unknown, createdAt: number): Raw {
   return {
     species,
     factsSeen: isNumber(b.factsSeen) && b.factsSeen >= 0 ? b.factsSeen : 0,
-    counts: { feeds: isNumber(counts.feeds) ? counts.feeds : 0, righted: isNumber(counts.righted) ? counts.righted : 0 },
+    counts: {
+      feeds: isNumber(counts.feeds) ? counts.feeds : 0,
+      righted: isNumber(counts.righted) ? counts.righted : 0,
+      bolinopsisFeeds: isNumber(counts.bolinopsisFeeds) ? counts.bolinopsisFeeds : 0,
+    },
     nextPhotoId: isNumber(b.nextPhotoId) && b.nextPhotoId > maxPhoto ? b.nextPhotoId : maxPhoto + 1,
   };
 }

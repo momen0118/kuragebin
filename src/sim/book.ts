@@ -4,11 +4,11 @@
 // きっかけは、状態から分かるもの（ポリプがいる・日誌に水換えがある・餌をやった回数など）と、画面の出来事（つついた・虫眼鏡を当てた・逆さまから起き直った・プラヌラを抱えた個体を見た）。
 // 状態から分かるものは、進めたあとにまとめて確かめる（すでに遊んでいるデータでも、次に開いたときにまとめて増える。日付はその日）。
 // 状態をその場で書き換える。
-import { BOOK } from '../config';
+import { BOOK, UNCLE } from '../config';
 import type { GameState, Species } from './state';
 
 /** 豆知識のきっかけ（ミズクラゲ） */
-export const FACT_KEYS = [
+export const AURELIA_FACT_KEYS = [
   'open',
   'page',
   'feed1',
@@ -31,7 +31,38 @@ export const FACT_KEYS = [
   'planula',
 ] as const;
 
+/**
+ * 豆知識のきっかけ（カブトクラゲ）：初めて届いた・虫眼鏡を成体に当てた・夜にライトを切り替えた・成体が育ちきった・起き直るのを見た・
+ * 餌（1回・5回）・虫眼鏡を幼生に当てた・幼生が成体になった・崩しの大きい子・種のページを開いた・返事が来た・初めて卵を産んだ・初めて孵った・三代目が生まれた
+ */
+export const BOLINOPSIS_FACT_KEYS = [
+  'bArrive',
+  'bLoupe',
+  'bLamp',
+  'bGrown',
+  'bRighted',
+  'bFeed1',
+  'bFeed5',
+  'bLoupeLarva',
+  'bAdult',
+  'bFlawed',
+  'bPage',
+  'bReply',
+  'bEggs',
+  'bHatch',
+  'bThird',
+] as const;
+
+export const FACT_KEYS = [...AURELIA_FACT_KEYS, ...BOLINOPSIS_FACT_KEYS] as const;
+
 export type FactKey = (typeof FACT_KEYS)[number];
+
+const BOLINOPSIS_SET: ReadonlySet<string> = new Set(BOLINOPSIS_FACT_KEYS);
+
+/** その豆知識の載る種のページ */
+export function factSpecies(key: FactKey): Species {
+  return BOLINOPSIS_SET.has(key) ? 'bolinopsis' : 'aurelia';
+}
 
 export interface FactRecord {
   key: FactKey;
@@ -62,14 +93,14 @@ export interface BookState {
   species: SpeciesRecord[];
   /** 読んだ豆知識の数（これより多ければ未読。付箋「種」と日誌のアイコンに点） */
   factsSeen: number;
-  /** きっかけに回数が要るもの：餌をやった回数、逆さまから起き直るのを見た回数 */
-  counts: { feeds: number; righted: number };
+  /** きっかけに回数が要るもの：餌をやった回数、逆さまから起き直るのを見た回数（ミズクラゲ）、カブトクラゲのいる瓶に餌をやった回数 */
+  counts: { feeds: number; righted: number; bolinopsisFeeds: number };
   /** 次に使う写真の番号 */
   nextPhotoId: number;
 }
 
 export function createBook(since: number): BookState {
-  return { species: [{ species: 'aurelia', since, facts: [], photos: [] }], factsSeen: 0, counts: { feeds: 0, righted: 0 }, nextPhotoId: 1 };
+  return { species: [{ species: 'aurelia', since, facts: [], photos: [] }], factsSeen: 0, counts: { feeds: 0, righted: 0, bolinopsisFeeds: 0 }, nextPhotoId: 1 };
 }
 
 /** 種の記録（なければ作る。初めて瓶に来た日は since） */
@@ -83,13 +114,14 @@ export function speciesRecord(state: GameState, species: Species, since: number)
 }
 
 /** 豆知識をもう見つけているか */
-export function hasFact(state: GameState, key: FactKey, species: Species = 'aurelia'): boolean {
+export function hasFact(state: GameState, key: FactKey): boolean {
+  const species = factSpecies(key);
   return state.book.species.some((r) => r.species === species && r.facts.some((f) => f.key === key));
 }
 
-/** 確認用：すべての豆知識を開く（見つけた日は wall）、すべて閉じる */
+/** 確認用：すべての豆知識を開く（見つけた日は wall。種のページがある種だけ）、すべて閉じる */
 export function openAllFacts(state: GameState, wall: number): void {
-  for (const k of FACT_KEYS) noteFact(state, k, wall);
+  for (const k of FACT_KEYS) if (state.book.species.some((r) => r.species === factSpecies(k))) noteFact(state, k, wall);
 }
 
 export function closeAllFacts(state: GameState): void {
@@ -97,9 +129,9 @@ export function closeAllFacts(state: GameState): void {
   state.book.factsSeen = 0;
 }
 
-/** 豆知識を足す（もうあれば何もしない）。足したら true */
-export function noteFact(state: GameState, key: FactKey, wall: number, species: Species = 'aurelia'): boolean {
-  const r = speciesRecord(state, species, wall);
+/** 豆知識を、その種のページに足す（もうあれば何もしない）。足したら true */
+export function noteFact(state: GameState, key: FactKey, wall: number): boolean {
+  const r = speciesRecord(state, factSpecies(key), wall);
   if (r.facts.some((f) => f.key === key)) return false;
   r.facts.push({ key, wallTime: wall });
   return true;
@@ -140,6 +172,38 @@ export function checkFacts(state: GameState, wall: number): boolean {
   need('leaves', () => creatures.some((x) => x.species === 'aurelia' && x.genes.leaves !== 4) || state.sent.some((x) => x.species === 'aurelia' && x.genes.leaves !== 4));
   need('water', () => journal('water'));
   need('reply', () => state.letters.some((l) => l.kind === 'reply'));
+  for (const k of want) noteFact(state, k, wall);
+  return checkBolinopsisFacts(state, wall) || want.length > 0;
+}
+
+/** カブトクラゲの、状態から分かるきっかけ（カブトクラゲが届いていれば） */
+function checkBolinopsisFacts(state: GameState, wall: number): boolean {
+  const r = state.book.species.find((x) => x.species === 'bolinopsis');
+  if (!r) return false;
+  const has = new Set<string>(r.facts.map((f) => f.key));
+  const want: FactKey[] = [];
+  const need = (k: FactKey, ok: () => boolean): void => {
+    if (!has.has(k) && ok()) want.push(k);
+  };
+  const kabuto = state.jars.flatMap((j) => j.creatures).filter((x) => x.species === 'bolinopsis');
+  const sent = state.sent.filter((x) => x.species === 'bolinopsis');
+  const journal = (kind: string): boolean => state.journal.some((e) => e.kind === kind && e.species === 'bolinopsis');
+  // 瓶で生まれた子がいれば、卵を産んで孵ったことがある（見ていた瓶の出来事は日誌に書かないので、個体からも確かめる）
+  const born = kabuto.some((x) => x.parent !== null) || sent.some((x) => x.generation > 1);
+  const flaw = (g: { warp: number; lobeSkew: number; rowJitter: number }): number => (g.warp + g.lobeSkew + g.rowJitter) / 3;
+  const [f1, f5] = BOOK.bolinopsisFeedsFor;
+  const c = state.book.counts;
+  need('bArrive', () => state.uncle.given.includes('bolinopsis') || kabuto.length > 0);
+  // 届いた子は育ちきって届くので、瓶で生まれた子が育ちきったとき
+  need('bGrown', () => kabuto.some((x) => x.stage === 'adult' && x.parent !== null && x.adultGrowth >= 1));
+  need('bFeed1', () => c.bolinopsisFeeds >= f1);
+  need('bFeed5', () => c.bolinopsisFeeds >= f5);
+  need('bAdult', () => kabuto.some((x) => x.stage === 'adult' && x.parent !== null) || journal('adult'));
+  need('bFlawed', () => [...kabuto, ...sent].some((x) => x.species === 'bolinopsis' && flaw(x.genes) >= UNCLE.rareFlaw));
+  need('bReply', () => state.letters.some((l) => l.kind === 'reply' && sent.some((x) => x.id === l.about)));
+  need('bEggs', () => state.jars.some((j) => j.eggs.length > 0) || journal('eggs') || born);
+  need('bHatch', () => journal('hatch') || born);
+  need('bThird', () => [...kabuto, ...sent].some((x) => x.generation >= BOOK.bolinopsisGeneration));
   for (const k of want) noteFact(state, k, wall);
   return want.length > 0;
 }

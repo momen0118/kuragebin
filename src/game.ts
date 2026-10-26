@@ -137,7 +137,7 @@ export class Game {
     return true;
   }
 
-  /** 逆さまから起き直るのを見た（回数を数え、五回で豆知識） */
+  /** 逆さまから起き直るミズクラゲを見た（回数を数え、五回で豆知識） */
   countRighted(): void {
     const next = structuredClone(this.current);
     next.book.counts.righted++;
@@ -260,8 +260,9 @@ export class Game {
     const next = structuredClone(this.current);
     const result = feedJar(next, jar, this.clock.now());
     if (result !== 'fed') return result;
-    // 餌をやった回数（豆知識のきっかけ）
+    // 餌をやった回数（豆知識のきっかけ）。カブトクラゲのいる瓶なら、そちらも数える
     next.book.counts.feeds++;
+    if (next.jars[jar]?.creatures.some((c) => c.species === 'bolinopsis')) next.book.counts.bolinopsisFeeds++;
     checkFacts(next, this.clock.now());
     this.current = next;
     this.emit();

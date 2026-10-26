@@ -628,7 +628,7 @@ export class DebugPanel {
     const b = state.book;
     const facts = b.species.reduce((n, r) => n + r.facts.length, 0);
     const photos = b.species.reduce((n, r) => n + r.photos.length, 0);
-    const text = `豆知識 ${facts}（読んだ ${b.factsSeen}）　写真 ${photos}　餌 ${b.counts.feeds}回・起き直り ${b.counts.righted}回`;
+    const text = `豆知識 ${facts}（読んだ ${b.factsSeen}）　写真 ${photos}　餌 ${b.counts.feeds}回（カブトクラゲのいる瓶 ${b.counts.bolinopsisFeeds}回）・起き直り ${b.counts.righted}回`;
     if (this.bookEl.textContent !== text) this.bookEl.textContent = text;
   }
 
