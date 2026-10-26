@@ -61,9 +61,15 @@ export function rarity(c: SpeciesGenes & Pick<Creature, 'stage' | 'generation'>)
   return r;
 }
 
-/** 返事で触れる特徴：いちばん目立つもの。カブトクラゲの返事はまだ作っていない（送る流れを作る段階で） */
-export function topicOf(sent: SpeciesGenes & Pick<SentRecord, 'stage'>): LetterTopic {
-  if (sent.species !== 'aurelia') return 'plain';
+/** 返事で触れる特徴：いちばん目立つもの。カブトクラゲは、代を重ねた子（三代目以上）→ 幼生 → 崩しの大きい子 → ほか */
+export function topicOf(sent: SpeciesGenes & Pick<SentRecord, 'stage' | 'generation'>): LetterTopic {
+  if (sent.species === 'bolinopsis') {
+    const g = sent.genes;
+    if (sent.generation >= UNCLE.generationTopic) return 'bGeneration';
+    if (sent.stage === 'larva') return 'bLarva';
+    if ((g.warp + g.lobeSkew + g.rowJitter) / 3 >= UNCLE.rareFlaw) return 'bFlawed';
+    return 'bPlain';
+  }
   const g = sent.genes;
   if (g.leaves === 5) return 'five';
   if (g.leaves === 3) return 'three';

@@ -56,9 +56,10 @@ export class Creatures {
   private readonly tmp = new Vector3();
   /** 瓶底の拾いもの（ポリプと一緒に奥から並べる）。finds.ts が持つ配列をそのまま使う */
   floorExtras: readonly FloorSortable[] = [];
-  /** 逆さまになって起き直りはじめた回数と、起き直った回数（takeRighting で読むと 0 に戻る） */
+  /** 逆さまになって起き直りはじめた回数と、起き直った回数（ミズクラゲ）、起き直ったカブトクラゲの数（takeRighting で読むと 0 に戻る） */
   private flips = 0;
   private righted = 0;
+  private ctenoRighted = 0;
   /** 見せ場で食べる個体（毎フレーム作り直さないよう使い回す） */
   private readonly eaterList: Eater[] = [];
   /** カブトクラゲの卵 */
@@ -262,7 +263,9 @@ export class Creatures {
       v.jelly.water = water;
       v.jelly.update(dt);
       const r = v.jelly.righting;
-      if (r && !v.righting) this.flips++;
+      if (v.jelly instanceof Ctenophore) {
+        if (!r && v.righting) this.ctenoRighted++;
+      } else if (r && !v.righting) this.flips++;
       else if (!r && v.righting) this.righted++;
       v.righting = r;
     }
@@ -278,10 +281,11 @@ export class Creatures {
   }
 
   /** 逆さまになって起き直りはじめた回数と、起き直った回数（読むと 0 に戻る。豆知識のきっかけ） */
-  takeRighting(): { flips: number; righted: number } {
-    const out = { flips: this.flips, righted: this.righted };
+  takeRighting(): { flips: number; righted: number; ctenoRighted: number } {
+    const out = { flips: this.flips, righted: this.righted, ctenoRighted: this.ctenoRighted };
     this.flips = 0;
     this.righted = 0;
+    this.ctenoRighted = 0;
     return out;
   }
 

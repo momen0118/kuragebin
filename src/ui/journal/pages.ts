@@ -227,6 +227,8 @@ export interface RosterRow {
   sex: string | null;
   /** この瓶に来た日（「9月27日」。日は朝4時で区切る） */
   arrived: string;
+  /** 何代目か（「二代目」。一代目は null で出さない） */
+  generation: string | null;
 }
 
 export interface RosterPage {
@@ -254,9 +256,15 @@ export function rosterPages(state: GameState): RosterPage[] {
         stage: STAGE_LABELS[r.stage as Stage],
         sex: r.sex ? SEX_LABELS[r.sex] : null,
         arrived: dayTitle(feedDay(r.sentWallTime)),
+        generation: generationLabel(r.generation),
       })),
   };
   return [...jars, sent];
+}
+
+/** 一覧に出す代（「二代目」。一代目は出さない） */
+export function generationLabel(generation: number): string | null {
+  return generation > 1 ? `${kanji(generation)}代目` : null;
 }
 
 /** 札と一覧に出す雌雄の言葉（成体だけ。ほかは null） */
@@ -278,6 +286,7 @@ function rosterJars(state: GameState): RosterPage[] {
         stage: STAGE_LABELS[c.stage as Stage],
         sex: sexLabel(c),
         arrived: dayTitle(feedDay(c.arrivedWallTime)),
+        generation: generationLabel(c.generation),
       })),
   }));
 }
@@ -314,7 +323,7 @@ export interface SpeciesPagePhoto {
 }
 
 export interface SpeciesPage {
-  species: string;
+  species: Species;
   /** 種の名前（「ミズクラゲ」） */
   title: string;
   /** 初めて瓶に来た日 */

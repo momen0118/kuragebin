@@ -4,6 +4,7 @@
 import { UNCLE } from '../config';
 import type { Letter, LetterTopic, Species } from '../sim/state';
 import { esc } from './html';
+import { kanji } from './journal/pages';
 import { keepToSelf } from './jarActions';
 
 /** 最初の手紙 */
@@ -43,17 +44,30 @@ const REPLIES: Record<LetterTopic, ReadonlyArray<readonly string[]>> = {
   flawed: [['縁の欠けた子、泳ぎは達者です。'], ['少し形の崩れた子が届きました。よく食べます。'], ['いびつなのも、見ていて飽きません。']],
   ephyra: [['小さいのが届きました。', 'もう腕の間が埋まりはじめています。'], ['エフィラ、無事に着きました。よく脈打っています。'], ['小さいの、こちらで育てます。']],
   plain: [['届きました。水槽の隅が気に入ったようです。'], ['送ってくれた子、元気です。'], ['届きました。よく食べます。']],
+  // カブトクラゲ（文面はユーザーから）。{N} は送った子の代（漢数字）
+  bGeneration: [
+    ['瓶の中で{N}代目の子が届きました。', 'こちらでは、なかなかそこまで続きません。'],
+    ['{N}代目が届きました。', 'そちらの瓶は合っているようです。'],
+    ['送ってくれた{N}代目、元気です。', 'こちらの水槽では、代が途切れがちです。'],
+  ],
+  bLarva: [['小さいのが届きました。', '触手を伸ばして漂っています。'], ['幼生、無事に着きました。', 'こちらで育てます。'], ['小さいのが届きました。', 'もう少しで触手が取れそうです。']],
+  bFlawed: [
+    ['左右の揃っていない子が届きました。', '気にせず泳いでいます。'],
+    ['送ってくれた子、どこか形が違って、ほかと見分けがつきます。'],
+    ['形の崩れたカブトクラゲは、こちらではあまり見かけません。'],
+  ],
+  bPlain: [['届きました。', 'こちらの灯りの下でも、よく虹が流れます。'], ['送ってくれたカブトクラゲ、元気です。'], ['届きました。', '水槽の真ん中あたりに浮いています。']],
 };
 
-/** 手紙の本文（署名は別） */
-export function letterLines(l: Pick<Letter, 'kind' | 'topic' | 'pick' | 'gift'>): readonly string[] {
+/** 手紙の本文（署名は別）。generation は返事で触れる送った子の代（文面の {N} に漢数字で入れる） */
+export function letterLines(l: Pick<Letter, 'kind' | 'topic' | 'pick' | 'gift'>, generation = 1): readonly string[] {
   if (l.kind === 'first') return FIRST;
   if (l.kind === 'ask') return ASK;
   if (l.kind === 'gift') {
     return l.gift && l.gift.species !== 'aurelia' ? GIFT[l.gift.species] : GIFT.bolinopsis;
   }
   const list = REPLIES[l.topic ?? 'plain'] ?? REPLIES.plain;
-  return list[l.pick % list.length]!;
+  return list[l.pick % list.length]!.map((line) => line.replace('{N}', kanji(generation)));
 }
 
 /**
@@ -83,9 +97,9 @@ export class LetterReader {
     return this.root.classList.contains('shown');
   }
 
-  /** 手紙を開く。onClose は閉じたとき */
-  open(letter: Pick<Letter, 'kind' | 'topic' | 'pick' | 'gift'>, onClose?: () => void): void {
-    const lines = letterLines(letter)
+  /** 手紙を開く。generation は返事で触れる送った子の代。onClose は閉じたとき */
+  open(letter: Pick<Letter, 'kind' | 'topic' | 'pick' | 'gift'>, generation: number, onClose?: () => void): void {
+    const lines = letterLines(letter, generation)
       .map((l) => `<p>${esc(l)}</p>`)
       .join('');
     this.paper.innerHTML = `${lines}<p class="sign">${esc(UNCLE.signature)}</p>`;

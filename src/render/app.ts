@@ -1005,7 +1005,7 @@ export class App {
   }
 
   /** 表示中の瓶で、逆さまになって起き直りはじめた回数と起き直った回数（読むと 0 に戻る。豆知識のきっかけ） */
-  takeRighting(): { flips: number; righted: number } {
+  takeRighting(): { flips: number; righted: number; ctenoRighted: number } {
     return this.creatures.takeRighting();
   }
 

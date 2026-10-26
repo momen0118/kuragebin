@@ -10,12 +10,12 @@
 import { NOTEBOOK, type RoomName } from '../../config';
 import { NAME_MAX } from '../../sim/actions';
 import { feedDay } from '../../sim/feed';
-import type { GameState, Settings } from '../../sim/state';
+import type { GameState, Settings, Species } from '../../sim/state';
 import { downloadText, exportFilename } from '../download';
 import { esc } from '../html';
 import { keepToSelf } from '../jarActions';
 import { UNNAMED } from '../labels';
-import { dayTitle, journalPages, rosterPages, specimenItems, speciesPages, type DayPage, type RosterPage, type SpeciesPage, type SpecimenItem } from './pages';
+import { dayTitle, journalPages, rosterPages, specimenItems, speciesPages, type DayPage, type RosterPage, type RosterRow, type SpeciesPage, type SpecimenItem } from './pages';
 
 export interface NotebookOptions {
   state(): GameState;
@@ -43,7 +43,7 @@ export interface NotebookOptions {
   readLetter(id: number): void;
   /** 種のページ：まだ読んでいない豆知識があるか（付箋の点）。ページを見た（豆知識を読んだことにする）。写真の画像。写真をはがす */
   newFacts(): boolean;
-  speciesShown(): void;
+  speciesShown(species: Species): void;
   photo(id: number): string | undefined;
   removePhoto(id: number): void;
   /** 標本の物を、見ている瓶に沈める（メモ帳はここで閉じる）。沈められなければ false */
@@ -74,6 +74,12 @@ type Drag = {
   scroll0: number;
   moved: boolean;
 };
+
+/** 一覧の「種・段階・雌雄・代」。雌雄と代の前で折り返せるよう分ける（中黒「・」は前に付ける） */
+function rosterWhat(r: RosterRow): string {
+  const parts = [`${r.species}・${r.stage}`, r.sex, r.generation].filter((x): x is string => x !== null);
+  return parts.map((p, i) => `<span>${esc(p)}${i < parts.length - 1 ? '・' : ''}</span>`).join('');
+}
 
 const RINGS = 11;
 
@@ -270,7 +276,8 @@ export class Notebook {
     this.current.querySelector('.leaf-body')?.scrollTo(0, 0);
     this.rendered = this.signature();
     // 種のページを開いた：豆知識を読んだことにする（「初めて種のページを開いたとき」の行も、ここで増える）
-    if (this.leaves[this.cur]?.kind === 'species') queueMicrotask(() => this.opts.speciesShown());
+    const leaf = this.leaves[this.cur];
+    if (leaf?.kind === 'species') queueMicrotask(() => this.opts.speciesShown(leaf.page.species));
   }
 
   /** 付箋「種」の点（まだ読んでいない豆知識があるとき） */
@@ -320,7 +327,7 @@ export class Notebook {
                 (sent
                   ? `<span class="name${r.name ? '' : ' unnamed'}">${esc(r.name ?? UNNAMED)}</span>`
                   : `<button type="button" class="name${r.name ? '' : ' unnamed'}">${esc(r.name ?? UNNAMED)}</button>`) +
-                `<span class="what"><span>${esc(r.species)}・${esc(r.stage)}${r.sex ? '・' : ''}</span>${r.sex ? `<span>${esc(r.sex)}</span>` : ''}</span><span class="when">${esc(r.arrived)}</span></div>`,
+                `<span class="what">${rosterWhat(r)}</span><span class="when">${esc(r.arrived)}</span></div>`,
             )
             .join('')
         : `<p class="empty">水だけ</p>`;
