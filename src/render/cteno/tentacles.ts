@@ -1,19 +1,22 @@
-// カブトクラゲの幼生の触手2本。体の横（±z）から出る細い糸（verlet の鎖で長さだけを保つ）。
-// 水の抵抗と少しの重さで垂れ、泳げば後ろにたなびく。育つにつれて縮んでなくなる（CTENO.larva.tentacles）。
+// カブトクラゲの幼生の触手2本。体の中の付け根から口の側へ通って体の外へ出て、風鈴の紐のように垂れる細い糸（verlet の鎖で長さだけを保つ）。
+// 体の中の分（付け根から出口まで）は体に固定して、透けて見える。外の分は水の抵抗と少しの重さで垂れ、泳げば後ろにたなびく。
+// 育つにつれて縮んでなくなる（CTENO.larva.tentacles）。
 // 描くのはミズクラゲの縁触手と同じ細い帯（jelly/tentacles.ts の createStrandMesh）
 import { Vector3, type BufferGeometry, type Material, type Mesh } from 'three';
 import { CTENO, JAR } from '../../config';
 import type { Rng } from '../../sim/rng';
-import { createStrandMesh, writeStrands, type RootFrame } from '../jelly/tentacles';
+import { createStrandMesh, writeStrands } from '../jelly/tentacles';
 import { flowAt, type WaterField } from '../slosh';
 import type { SharedUniforms } from '../uniforms';
 
 const T = CTENO.larva.tentacle;
 const INNER_R = JAR.radius - JAR.glassThickness;
 const COUNT = 2;
-/** 体に固定する節の数（根元とその次） */
-const FIXED = 2;
+/** 体に固定する節の数（体の中の付け根・その途中・体の外へ出る所） */
+export const LARVA_FIXED = 3;
+const FIXED = LARVA_FIXED;
 const tmpFlow = new Vector3();
+const tmpA = new Vector3();
 
 export class LarvaTentacles {
   readonly mesh: Mesh;
@@ -46,9 +49,9 @@ export class LarvaTentacles {
     this.geo = this.mesh.geometry;
   }
 
-  /** 長さ（ワールド）と体の大きさ（瓶の高さ単位の体の長さ）。length が 0 なら描かない */
+  /** 体から出た分の長さ（ワールド）と体の大きさ（瓶の高さ単位の体の長さ）。length が 0 なら描かない */
   setLength(length: number, bodyLength: number): void {
-    this.seg = length / (this.nodes - 1);
+    this.seg = length / (this.nodes - FIXED);
     this.scale = Math.sqrt(bodyLength / CTENO.length);
   }
 
@@ -69,8 +72,11 @@ export class LarvaTentacles {
     }
   }
 
-  /** 1ステップ進める。roots(i) は i 本目の根元（体の横から外へ出る向き） */
-  step(dt: number, roots: (i: number) => RootFrame, water: WaterField | null): void {
+  /**
+   * 1ステップ進める。anchor(i, j, out) は i 本目の、体に固定する j 番目の節（0 が体の中の付け根、LARVA_FIXED - 1 が体の外へ出る所。ワールド）。
+   * down は体の口の側の向き（伸ばしなおすとき、出口からこの向きへ並べる）
+   */
+  step(dt: number, anchor: (i: number, j: number, out: Vector3) => Vector3, down: Vector3, water: WaterField | null): void {
     const m = this.nodes;
     const x = this.x;
     const px = this.px;
@@ -91,33 +97,32 @@ export class LarvaTentacles {
         this.alive[i] = 0;
         continue;
       }
-      const root = roots(i);
-      if (!this.alive[i]) {
-        this.alive[i] = 1;
-        for (let j = 0; j < m; j++) {
-          const k = base + j * 3;
-          x[k] = px[k] = root.pos.x + root.dir.x * L * j;
-          x[k + 1] = px[k + 1] = root.pos.y + root.dir.y * L * j;
-          x[k + 2] = px[k + 2] = root.pos.z + root.dir.z * L * j;
-        }
-      }
-      // 根元と次の節は体に固定（鞘から出る向きへまっすぐ。根元で折れ曲がらない）
+      // 体の中の分は体に固定
       for (let j = 0; j < FIXED; j++) {
         const k = base + j * 3;
-        x[k] = px[k] = root.pos.x + root.dir.x * L * j;
-        x[k + 1] = px[k + 1] = root.pos.y + root.dir.y * L * j;
-        x[k + 2] = px[k + 2] = root.pos.z + root.dir.z * L * j;
+        anchor(i, j, tmpA);
+        x[k] = px[k] = tmpA.x;
+        x[k + 1] = px[k + 1] = tmpA.y;
+        x[k + 2] = px[k + 2] = tmpA.z;
       }
-      // 外へ広がる向き（根元から出る向きの、水平な分）
-      const ol = Math.hypot(root.dir.x, root.dir.z) || 1;
-      const sx = (root.dir.x / ol) * T.spread * this.scale;
-      const sz = (root.dir.z / ol) * T.spread * this.scale;
+      if (!this.alive[i]) {
+        // 出口から口の側へまっすぐ並べなおす
+        this.alive[i] = 1;
+        const e = base + (FIXED - 1) * 3;
+        for (let j = FIXED; j < m; j++) {
+          const k = base + j * 3;
+          const d = L * (j - FIXED + 1);
+          x[k] = px[k] = x[e]! + down.x * d;
+          x[k + 1] = px[k + 1] = x[e + 1]! + down.y * d;
+          x[k + 2] = px[k + 2] = x[e + 2]! + down.z * d;
+        }
+      }
       for (let j = FIXED; j < m; j++) {
         const k = base + j * 3;
         const y = x[k + 1]!;
-        const ax = cur * Math.sin(y * 31 + t * 0.6 + i * 2.1) + gx + sx;
+        const ax = cur * Math.sin(y * 31 + t * 0.6 + i * 2.1) + gx;
         const ay = gy;
-        const az = cur * Math.cos(y * 27 - t * 0.5 + i * 1.3) + gz + sz;
+        const az = cur * Math.cos(y * 27 - t * 0.5 + i * 1.3) + gz;
         let vx = (x[k]! - px[k]!) * keep;
         let vy = (x[k + 1]! - px[k + 1]!) * keep;
         let vz = (x[k + 2]! - px[k + 2]!) * keep;

@@ -212,22 +212,42 @@ export function rowPoints(f: CtenoForm, i: number, gap: number): RowPoint[] {
 
 const LV = CTENO.larva;
 
-/** 幼生の丸い体の面の点（θ は頂 0 から口の側 π、φ は胴と同じ） */
+/**
+ * 幼生の体の面の点（θ は頂 0 から口の側 π、φ は胴と同じ）。リンゴのような形：少し角張った丸で、頂の側が広く口の側が少し細く、
+ * 頂の真ん中が少しくぼみ（平衡器のある所）、口の側は少し平たい
+ */
 export function larvaPoint(theta: number, phi: number, out: Vector3): Vector3 {
-  const s = Math.sin(theta);
-  return out.set(LV.rx * s * Math.cos(phi), LV.center + LV.ry * Math.cos(theta), LV.rx * s * Math.sin(phi));
+  // 少し角張った丸（肩が張る）
+  const e = LV.apple.square;
+  const s0 = Math.sin(theta);
+  const c0 = Math.cos(theta);
+  const s = Math.sign(s0) * Math.abs(s0) ** e;
+  const c = Math.sign(c0) * Math.abs(c0) ** e;
+  const r = LV.rx * s * (1 + LV.apple.taper * c);
+  const dimple = LV.apple.dimple * LV.ry * Math.exp(-((theta / LV.apple.dimpleWidth) ** 2));
+  const y = LV.center + LV.ry * c * (c < 0 ? LV.apple.bottom : 1) - dimple;
+  return out.set(r * Math.cos(phi), y, r * Math.sin(phi));
 }
 
-/** 幼生の丸い体の面の外向き */
-export function larvaNormal(theta: number, phi: number, out: Vector3): Vector3 {
-  const s = Math.sin(theta);
-  return out.set((s * Math.cos(phi)) / LV.rx, Math.cos(theta) / LV.ry, (s * Math.sin(phi)) / LV.rx).normalize();
-}
+const H = 1e-3;
+const pa = new Vector3();
+const pb = new Vector3();
+const dTh = new Vector3();
+const dPh = new Vector3();
 
-/** 幼生の丸い体の上で、頂から口の側へ向かう向き */
+/** 幼生の体の上で、頂から口の側へ向かう向き */
 export function larvaTangent(theta: number, phi: number, out: Vector3): Vector3 {
-  const c = Math.cos(theta);
-  return out.set(LV.rx * c * Math.cos(phi), -LV.ry * Math.sin(theta), LV.rx * c * Math.sin(phi)).normalize();
+  const t = Math.min(Math.max(theta, H), Math.PI - H);
+  return out.subVectors(larvaPoint(t + H, phi, pa), larvaPoint(t - H, phi, pb)).normalize();
+}
+
+/** 幼生の体の面の外向き（面の点から差分で求める） */
+export function larvaNormal(theta: number, phi: number, out: Vector3): Vector3 {
+  // 頂と口の真上では φ の向きの差分がなくなるので、少しずらして求める
+  const t = Math.min(Math.max(theta, 0.02), Math.PI - 0.02);
+  larvaTangent(t, phi, dTh);
+  dPh.subVectors(larvaPoint(t, phi + H, pa), larvaPoint(t, phi - H, pb)).normalize();
+  return out.crossVectors(dPh, dTh).normalize();
 }
 
 /** 幼生の口葉・耳状突起がしまわれている所（育つにつれて、ここから外へ広がる）。side は口葉の側 */
