@@ -63,10 +63,10 @@ export function feedJar(state: GameState, jar: number, wallMs: number): FeedResu
   return 'fed';
 }
 
-/** 食べた量 1 のときに食べる粒の数：成体、エフィラ（育つほど多い）、ポリプ */
+/** 食べた量 1 のときに食べる粒の数：成体、エフィラとカブトクラゲの幼生（育つほど多い）、ポリプ */
 function bitesPerMeal(c: Creature): number {
   if (c.stage === 'adult') return FOOD.bitesAdult;
-  if (c.stage === 'ephyra') return FOOD.bitesEphyra[0] + (FOOD.bitesEphyra[1] - FOOD.bitesEphyra[0]) * c.progress;
+  if (c.stage === 'ephyra' || c.stage === 'larva') return FOOD.bitesEphyra[0] + (FOOD.bitesEphyra[1] - FOOD.bitesEphyra[0]) * c.progress;
   if (c.stage === 'polyp') return FOOD.bitesPolyp;
   return 0;
 }

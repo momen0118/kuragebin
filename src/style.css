@@ -1652,6 +1652,14 @@ body {
   content: '・';
 }
 
+/* 押せるとわかるよう、名前に「日誌へ」と同じ下線（中黒には引かない） */
+.leaf .sp-index span {
+  text-decoration: underline;
+  text-decoration-color: rgba(59, 55, 50, 0.3);
+  text-underline-offset: 4px;
+  pointer-events: none;
+}
+
 .leaf .facts {
   padding-top: 4px;
 }

@@ -1,4 +1,4 @@
-// 段階の進みの早まり。餌（食べてから1日、エフィラとポリプ）と、瓶を揺らしたこと（数時間、エフィラだけ）。
+// 段階の進みの早まり。餌（食べてから1日、エフィラ・カブトクラゲの幼生・ポリプ）と、瓶を揺らしたこと（数時間、エフィラだけ）。
 // 二つは足すが、上限（GROWTH.cap）を分け合う。餌で上限に届いている日は、揺らしても何も足されない。
 // 瓶を揺らしたことは状態に「水が動いている間」（stirredUntil）として持つ。何度揺らしても量は増えず、時間が延びるだけ。
 // 状態をその場で書き換える。
@@ -10,7 +10,7 @@ import { gameNow, type Creature, type GameState } from './state';
  */
 export function growthRate(c: Creature, time: number, stirredUntil: number | null = null): number {
   let boost = 0;
-  if (c.meal && (c.stage === 'ephyra' || c.stage === 'polyp')) {
+  if (c.meal && (c.stage === 'ephyra' || c.stage === 'larva' || c.stage === 'polyp')) {
     const since = time - c.meal.at;
     if (since > 0 && since <= FEED.boostSeconds) boost += FEED.growthBoost * c.meal.amount;
   }

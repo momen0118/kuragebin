@@ -82,3 +82,20 @@ describe('揺らしたときの育ちの早まり', () => {
     expect(split.jars).toEqual(once.jars);
   });
 });
+
+describe('カブトクラゲの幼生の餌', () => {
+  test('食べてから1日はエフィラと同じだけ早く育つ。成体は早まらない。揺らしても早まらない', () => {
+    const s = createInitialState(T0);
+    const l = spawnCreature(s, 1, 'larva', undefined, 'bolinopsis');
+    l.meal = { at: 100, amount: 1 };
+    const e = spawnCreature(s, 1, 'ephyra');
+    e.meal = { at: 100, amount: 1 };
+    expect(growthRate(l, 100 + HOUR)).toBeGreaterThan(1);
+    expect(growthRate(l, 100 + HOUR)).toBeCloseTo(growthRate(e, 100 + HOUR));
+    expect(growthRate(l, 100 + FEED.boostSeconds + 60)).toBe(1);
+    const a = spawnCreature(s, 1, 'adult', undefined, 'bolinopsis');
+    a.meal = { at: 100, amount: 1 };
+    expect(growthRate(a, 100 + HOUR)).toBe(1);
+    expect(growthRate({ ...l, meal: null }, 100, 100 + STIR.seconds - 10)).toBe(1);
+  });
+});

@@ -1,6 +1,6 @@
 // 泳ぐ個体の体（種によらない窓口）。ミズクラゲ（jelly/jellyfish.ts）とカブトクラゲ（cteno/ctenophore.ts）が持つ。
 // 瓶の個体（creatures.ts）・カップ（scoop.ts）・スポイト（feeding.ts）・描く順番（app.ts）は、これだけを使う。
-// 餌を食べる見せ場（food.ts）は、まだミズクラゲの体だけを相手にする
+// 餌を食べる見せ場（food.ts）は、種ごとに食べ方が違うので体そのもの（Jellyfish・Ctenophore）を相手にする
 import type { Group, Matrix4, Vector3 } from 'three';
 import type { Sex } from '../sim/state';
 import type { Neighbor, Swimmer } from './jelly/swim';

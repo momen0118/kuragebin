@@ -17,6 +17,8 @@ import { createCtenoBody, type CtenoBody } from './body';
 import { CombDrive } from './drive';
 import { bodyPoint, ctenoForm, larvaPoint, type CtenoForm } from './shape';
 import { LARVA_FIXED, LarvaTentacles } from './tentacles';
+import { CtenoMeal } from './meal';
+import { createRng } from '../../sim/rng';
 
 const STEP = 1 / RENDER.simHz;
 
@@ -45,6 +47,8 @@ export class Ctenophore implements SwimBody {
   private readonly tentacles: LarvaTentacles;
   private readonly anchors = Array.from({ length: 2 * LARVA_FIXED }, () => new Vector3());
   private readonly down = new Vector3();
+  /** 食べたあと胴の中に透ける橙色の粒 */
+  private readonly meal: CtenoMeal;
   private readonly carryTarget = new Vector3();
   private readonly carryUp = new Vector3();
   private size = 1;
@@ -64,6 +68,9 @@ export class Ctenophore implements SwimBody {
     this.group.add(...this.body.meshes);
     this.tentacles = new LarvaTentacles(shared, { uBody: this.body.look.uBody, uGlow: { value: new Vector3() }, uOpacity: this.body.look.uOpacity }, rng);
     this.group.add(this.tentacles.mesh);
+    // 個体の種から（ほかの乱数の並びを変えないよう、別の乱数で）
+    this.meal = new CtenoMeal(shared, createRng((seed ^ 0x3c6ef372) >>> 0), this.body.look.uOpacity);
+    this.group.add(this.meal.points);
     this.setGrowth(growth, undefined, size);
     this.updateMatrix();
     this.sync();
@@ -179,6 +186,7 @@ export class Ctenophore implements SwimBody {
     plates!.renderOrder = base + 0.2;
     front!.renderOrder = base + 0.3;
     this.tentacles.mesh.renderOrder = base + 0.05;
+    this.meal.points.renderOrder = base + 0.15;
   }
 
   /** 拍動しないので水面は揺らさない */
@@ -229,6 +237,26 @@ export class Ctenophore implements SwimBody {
     for (const g of this.body.geometries) g.dispose();
     for (const m of this.body.meshes) (m.material as Material).dispose();
     this.tentacles.dispose();
+    this.meal.dispose();
+  }
+
+  /** 幼生の姿の割合（1 で幼生、0 で成体の形）。餌の食べ方を変える */
+  get larvaAmount(): number {
+    return this.body.look.uLarva.value;
+  }
+
+  /** 幼生の触手の、点 p（ワールド）からの距離（触手がなければ Infinity） */
+  tentacleDistance(p: Vector3): number {
+    return this.tentacles.distanceTo(p);
+  }
+
+  /** 食べたあとの橙色の粒の数と、i 番目の場所（体のローカル）。捕まえた餌はここへ運ばれる */
+  get speckCount(): number {
+    return this.meal.count;
+  }
+
+  speckLocal(i: number, out: Vector3): Vector3 {
+    return this.meal.speckLocal(i, out);
   }
 
   private step(dt: number): void {
@@ -269,5 +297,6 @@ export class Ctenophore implements SwimBody {
     this.body.look.uSway.value.set(a * Math.sin(this.swayT * w) - close, a * Math.sin(this.swayT * w + 0.7) - close);
     this.body.look.uBeatPhase.value = this.drive.beatPhase;
     this.tentacles.updateGeometry();
+    this.meal.sync(this.matrix, CTENO.length * this.size, this.stomach.level);
   }
 }

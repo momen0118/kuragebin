@@ -178,6 +178,21 @@ export class LarvaTentacles {
     }
   }
 
+  /** 体の外に出ている触手の節のうち、点 p（ワールド）にいちばん近いものまでの距離。触手がなければ Infinity */
+  distanceTo(p: Vector3): number {
+    let best = Infinity;
+    const m = this.nodes;
+    for (let i = 0; i < COUNT; i++) {
+      if (!this.alive[i]) continue;
+      for (let j = FIXED - 1; j < m; j++) {
+        const k = (i * m + j) * 3;
+        const d = Math.hypot(this.x[k]! - p.x, this.x[k + 1]! - p.y, this.x[k + 2]! - p.z);
+        if (d < best) best = d;
+      }
+    }
+    return best;
+  }
+
   updateGeometry(): void {
     writeStrands(this.geo, this.x, COUNT, this.nodes, this.alive);
   }
