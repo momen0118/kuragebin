@@ -58,6 +58,7 @@ export interface NotebookOptions {
 type Leaf =
   | { kind: 'day'; key: string; page: DayPage }
   | { kind: 'roster'; key: string; page: RosterPage }
+  | { kind: 'speciesIndex'; key: string; entries: Array<{ species: Species; title: string }> }
   | { kind: 'species'; key: string; page: SpeciesPage }
   | { kind: 'specimens'; key: string; items: SpecimenItem[] }
   | { kind: 'settings'; key: string };
@@ -161,7 +162,7 @@ export class Notebook {
 
     root.querySelector('.journal-scrim')!.addEventListener('click', () => this.close());
     root.querySelector('.to-roster')!.addEventListener('click', () => this.jumpTo(this.leaves.findIndex((l) => l.kind === 'roster')));
-    root.querySelector('.to-species')!.addEventListener('click', () => this.jumpTo(this.leaves.findIndex((l) => l.kind === 'species')));
+    root.querySelector('.to-species')!.addEventListener('click', () => this.jumpTo(this.leaves.findIndex((l) => l.kind === 'speciesIndex')));
     this.viewer = root.querySelector('.photo-view')!;
     this.viewer.addEventListener('click', (e) => this.viewerClick(e));
     root.querySelector('.to-specimens')!.addEventListener('click', () => this.jumpTo(this.leaves.findIndex((l) => l.kind === 'specimens')));
@@ -253,7 +254,7 @@ export class Notebook {
     this.root.style.setProperty('--lum', lum.toFixed(3));
   }
 
-  /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 種のページ → 標本 → 設定 */
+  /** ページの並び：日（新しい日が先）→ 個体一覧（瓶ごと）→ 種の目次 → 種のページ → 標本 → 設定 */
   private build(): void {
     const s = this.opts.state();
     const days: Leaf[] = journalPages(s.journal, { letters: s.letters }).map((page) => ({ kind: 'day', key: `d${page.key}`, page }));
@@ -262,7 +263,12 @@ export class Notebook {
       days.push({ kind: 'day', key: `d${key}`, page: { key, title: dayTitle(key), sections: [], letters: [] } });
     }
     const rosters: Leaf[] = rosterPages(s).map((page) => ({ kind: 'roster', key: `r${page.jar}`, page }));
-    const species: Leaf[] = speciesPages(s).map((page) => ({ kind: 'species', key: `p${page.species}`, page }));
+    const pages = speciesPages(s);
+    // 種のページの前に目次（瓶に来た種。来た種だけ、来た順）
+    const species: Leaf[] = [
+      { kind: 'speciesIndex', key: 'pi', entries: pages.map((p) => ({ species: p.species, title: p.title })) },
+      ...pages.map((page): Leaf => ({ kind: 'species', key: `p${page.species}`, page })),
+    ];
     this.leaves = [...days, ...rosters, ...species, { kind: 'specimens', key: 'k', items: specimenItems(s) }, { kind: 'settings', key: 's' }];
   }
 
@@ -332,6 +338,10 @@ export class Notebook {
             .join('')
         : `<p class="empty">水だけ</p>`;
       return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">${esc(leaf.page.title)}</h2><button type="button" class="to-journal">日誌へ</button></div>${rows}</div>`;
+    }
+    if (leaf.kind === 'speciesIndex') {
+      const list = leaf.entries.map((e) => `<button type="button" class="sp-index" data-species="${e.species}">${esc(e.title)}</button>`).join('');
+      return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">瓶に来た種</h2><button type="button" class="to-journal">日誌へ</button></div><div class="sp-index-list">${list}</div></div>`;
     }
     if (leaf.kind === 'species') {
       const p = leaf.page;
@@ -591,6 +601,12 @@ export class Notebook {
         this.lifted = null;
         this.opts.raiseSpecimen(id);
       }
+      return;
+    }
+    if (t.classList.contains('sp-index')) {
+      // 目次から、その種のページへ
+      const i = this.leaves.findIndex((l) => l.kind === 'species' && l.page.species === t.dataset.species);
+      if (i >= 0) void this.jumpTo(i);
       return;
     }
     if (t.classList.contains('letter-clip')) this.opts.readLetter(Number(t.dataset.letter));
