@@ -156,6 +156,8 @@ export interface RowPoint {
   along: number;
   /** 口葉の上なら、その口葉の側（-1・+1）。胴なら 0 */
   side: number;
+  /** 胴の上なら、胴の高さの割合 v（頂 0 から下端 1）。口葉の上なら NaN */
+  v: number;
 }
 
 /** 櫛板の列 i の上に、間隔 gap で点を並べる（頂の近くから） */
@@ -165,13 +167,13 @@ export function rowPoints(f: CtenoForm, i: number, gap: number): RowPoint[] {
   const attach = lobeAttach(f);
   const end = f.rowEnds[i]!;
   // 道筋を細かくたどる：胴の上（v）、続けて口葉の上（a）
-  const path: Array<{ p: Vector3; side: number; at: (o: Vector3) => Vector3 }> = [];
+  const path: Array<{ p: Vector3; side: number; v: number; at: (o: Vector3) => Vector3 }> = [];
   const steps = 120;
   const vEnd = long ? attach.v : CTENO.rowStart + (CTENO.rowShortEnd - CTENO.rowStart) * end;
   for (let s = 0; s <= steps; s++) {
     const v = CTENO.rowStart + (vEnd - CTENO.rowStart) * (s / steps);
     const at = (o: Vector3): Vector3 => bodyPoint(f, v, phi, o);
-    path.push({ p: at(new Vector3()), side: 0, at });
+    path.push({ p: at(new Vector3()), side: 0, v, at });
   }
   if (long) {
     // 口葉の外の縁に沿って、細い先の手前まで続く（胴の上と同じ前後の側、外形のすぐ内側）
@@ -184,7 +186,7 @@ export function rowPoints(f: CtenoForm, i: number, gap: number): RowPoint[] {
     for (let s = 1; s <= steps; s++) {
       const t = t0 + (t1 - t0) * (s / steps);
       const at = (o: Vector3): Vector3 => lobePoint(f, side, t, psi, o);
-      path.push({ p: at(new Vector3()), side, at });
+      path.push({ p: at(new Vector3()), side, v: NaN, at });
     }
   }
   // 長さに沿って間隔 gap ごとに
@@ -202,7 +204,7 @@ export function rowPoints(f: CtenoForm, i: number, gap: number): RowPoint[] {
       // 外向き：胴は軸から離れる向き、口葉は口葉の芯から離れる向き。列に直角にそろえる
       const radial = b.side === 0 ? new Vector3(pos.x, 0, pos.z / B.flat) : pos.clone().sub(lobeCenter(f, b.side as -1 | 1, new Vector3()));
       const normal = radial.sub(tangent.clone().multiplyScalar(radial.dot(tangent))).normalize();
-      out.push({ pos, normal, tangent, along: next, side: b.side });
+      out.push({ pos, normal, tangent, along: next, side: b.side, v: a.v + (b.v - a.v) * t });
       next += gap;
     }
     along += seg;

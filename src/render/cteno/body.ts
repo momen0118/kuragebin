@@ -39,6 +39,7 @@ import {
   rowAngles,
   rowPoints,
   type CtenoForm,
+  type RowPoint,
 } from './shape';
 
 /** 面の部品の番号（シェーダで見分ける） */
@@ -246,6 +247,7 @@ in vec3 aLarvaC;
 in vec3 aLarvaT;
 in vec3 aLarvaN;
 in float aRowT;
+in float aLarvaFade;
 uniform float uLarva;
 out vec3 vWorldPos;
 out vec3 vT;
@@ -270,8 +272,8 @@ void main() {
   vAcross = aAcross;
   vAlong = aAlong;
   vRowT = aRowT;
-  // 幼生の姿では、列の両端だけを消す（胴から口葉へ移る所は切れない）
-  vFade = mix(aFade, clamp(min(aRowT, 1.0 - aRowT) / 0.08, 0.0, 1.0), uLarva);
+  // 幼生の姿では、列の両端だけを消す（胴から口葉へ移る所は切れない）。口葉の上の板（aLarvaFade が負）は口葉と同じように消える
+  vFade = aLarvaFade < 0.0 ? aFade * pow(1.0 - uLarva, 2.0) : mix(aFade, aLarvaFade, uLarva);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
@@ -542,7 +544,11 @@ function innerGeometry(): BufferGeometry {
   return finishShell(g);
 }
 
-/** 櫛板の列：8本の細い帯（列に沿って細かく区切り、横は2頂点） */
+/**
+ * 櫛板の列：8本の細い帯（列に沿って細かく区切り、横は2頂点）。
+ * 幼生の姿の位置は、胴の上の板は胴の面と同じ割合（高さ v）で幼生の体へ移す（形が移る途中も体の面に載ったまま）。
+ * 口葉の上の板は口葉と一緒にしまわれて消える。口葉の側の4本は、幼生のうちは体の上をそのまま口のそばまで続く（その分は成体では見せない）
+ */
 function plateGeometry(f: CtenoForm): BufferGeometry {
   const center: number[] = [];
   const tangent: number[] = [];
@@ -555,46 +561,89 @@ function plateGeometry(f: CtenoForm): BufferGeometry {
   const lt: number[] = [];
   const ln: number[] = [];
   const rowT: number[] = [];
+  const lfade: number[] = [];
   const idx: number[] = [];
-  const [th0, th1] = CTENO.larva.rows;
+  const vStart = CTENO.rowStart;
+  const vEnd = CTENO.larva.rowEnd;
+  const attach = lobeAttach(f);
   const phis = rowAngles();
-  const q = new Vector3();
+  // 幼生の姿での、列の上の割合と、両端の消え方
+  const larvaRowT = (v: number): number => (v - vStart) / (vEnd - vStart);
+  const larvaFade = (u: number): number => Math.min(Math.max(Math.min(u, 1 - u) / 0.08, 0), 1);
+  const lp = new Vector3();
+  const lT = new Vector3();
+  const lN = new Vector3();
   let n = 0;
+  /** 板の頂点を2つ（帯の両側）足す。group が前の板と同じならつなぐ。lobeFade が負なら口葉の上の板（口葉と一緒に消える） */
+  const push = (pos: Vector3, tan: Vector3, nor: Vector3, al: number, sd: number, fd: number, larva: Vector3, larvaT: Vector3, larvaN: Vector3, rt: number, lf: number, join: boolean): void => {
+    for (const a of [-1, 1]) {
+      center.push(pos.x, pos.y, pos.z);
+      tangent.push(tan.x, tan.y, tan.z);
+      normal.push(nor.x, nor.y, nor.z);
+      across.push(a);
+      along.push(al);
+      side.push(sd);
+      fade.push(fd);
+      lc.push(larva.x, larva.y, larva.z);
+      lt.push(larvaT.x, larvaT.y, larvaT.z);
+      ln.push(larvaN.x, larvaN.y, larvaN.z);
+      rowT.push(rt);
+      lfade.push(lf);
+    }
+    if (join) idx.push(n - 2, n - 1, n, n, n - 1, n + 1);
+    n += 2;
+  };
   for (let r = 0; r < 8; r++) {
     const pts = rowPoints(f, r, CTENO.plateGap * 0.5);
-    const total = pts.length ? pts[pts.length - 1]!.along + CTENO.plateGap * 0.25 : 1;
+    const phi = phis[r]!;
     // 帯の端（列の始まりと終わり、胴から口葉へ移る所）は少しずつ消す
     const ends: number[] = [];
     pts.forEach((pt, i) => {
       if (i === 0 || pts[i - 1]!.side !== pt.side) ends.push(pt.along);
       if (i === pts.length - 1 || pts[i + 1]!.side !== pt.side) ends.push(pt.along);
     });
-    pts.forEach((pt, i) => {
-      const d = Math.min(...ends.map((e) => Math.abs(pt.along - e)));
-      // 幼生の丸い体の上の、同じ列の同じ割合の所
-      const u = pt.along / total;
-      const th = Math.PI * (th0 + (th1 - th0) * u);
-      const phi = phis[r]!;
-      for (const a of [-1, 1]) {
-        larvaPoint(th, phi, q);
-        lc.push(q.x, q.y, q.z);
-        larvaTangent(th, phi, q);
-        lt.push(q.x, q.y, q.z);
-        larvaNormal(th, phi, q);
-        ln.push(q.x, q.y, q.z);
-        rowT.push(u);
-        fade.push(Math.min(1, d / 0.03));
-        center.push(pt.pos.x, pt.pos.y, pt.pos.z);
-        tangent.push(pt.tangent.x, pt.tangent.y, pt.tangent.z);
-        normal.push(pt.normal.x, pt.normal.y, pt.normal.z);
-        across.push(a);
-        along.push(pt.along);
-        side.push(pt.side);
+    const fadeOf = (pt: RowPoint): number => Math.min(1, Math.min(...ends.map((e) => Math.abs(pt.along - e))) / 0.03);
+    let prev: number | null = null;
+    let lastV: number = vStart;
+    let lastAlong = 0;
+    for (const pt of pts.filter((p) => p.side === 0)) {
+      const th = pt.v * Math.PI;
+      larvaPoint(th, phi, lp);
+      larvaTangent(th, phi, lT);
+      larvaNormal(th, phi, lN);
+      const u = larvaRowT(pt.v);
+      push(pt.pos, pt.tangent, pt.normal, pt.along, 0, fadeOf(pt), lp, lT, lN, u, larvaFade(u), prev === 0);
+      prev = 0;
+      lastV = pt.v;
+      lastAlong = pt.along;
+    }
+    // 口葉の側の4本：幼生のうちは、体の上をそのまま口のそばまで続ける（成体では見せない）
+    if (r < 4) {
+      const pos = new Vector3();
+      const tan = new Vector3();
+      const nor = new Vector3();
+      const step = 0.012;
+      for (let v = Math.max(lastV, attach.v) + step; v <= vEnd + 1e-6; v += step) {
+        bodyPoint(f, v, phi, pos);
+        bodyPoint(f, v + 1e-3, phi, tan).sub(pos).normalize();
+        nor.set(pos.x, 0, pos.z / CTENO.body.flat);
+        nor.sub(lT.copy(tan).multiplyScalar(nor.dot(tan))).normalize();
+        const th = v * Math.PI;
+        larvaPoint(th, phi, lp);
+        larvaTangent(th, phi, lT);
+        larvaNormal(th, phi, lN);
+        const u = larvaRowT(v);
+        lastAlong += step;
+        push(pos, tan, nor, lastAlong, 0, 0, lp, lT, lN, u, larvaFade(u), prev === 0);
+        prev = 0;
       }
-      // 胴から口葉へ移る所（side が変わる所）はつながない
-      if (i > 0 && pts[i - 1]!.side === pt.side) idx.push(n - 2, n - 1, n, n, n - 1, n + 1);
-      n += 2;
-    });
+    }
+    // 口葉の上の板：口葉と一緒に、しまわれた所へ縮んで消える
+    for (const pt of pts.filter((p) => p.side !== 0)) {
+      larvaBud(pt.side, lp);
+      push(pt.pos, pt.tangent, pt.normal, pt.along, pt.side, fadeOf(pt), lp, pt.tangent, pt.normal, 0, -1, prev === pt.side);
+      prev = pt.side;
+    }
   }
   const geo = new BufferGeometry();
   // position は使わない（three.js が頂点の数を知るため）
@@ -610,6 +659,7 @@ function plateGeometry(f: CtenoForm): BufferGeometry {
   geo.setAttribute('aLarvaT', new Float32BufferAttribute(lt, 3));
   geo.setAttribute('aLarvaN', new Float32BufferAttribute(ln, 3));
   geo.setAttribute('aRowT', new Float32BufferAttribute(rowT, 1));
+  geo.setAttribute('aLarvaFade', new Float32BufferAttribute(lfade, 1));
   geo.setIndex(idx);
   return geo;
 }

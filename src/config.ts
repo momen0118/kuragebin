@@ -625,7 +625,7 @@ export const CTENO = {
    * 姿：リンゴのような体（中心の高さ center、縦と横の半径 ry・rx。前後もまるい。apple：角張り square（1 で丸、小さいほど肩が張る）、
    * 頂の側を広く口の側を細くする割合 taper、
    * 頂の真ん中のくぼみの深さ dimple（ry に対する割合）と幅 dimpleWidth（θ、ラジアン）、口の側の平たさ bottom）に、
-   * 櫛板の列8本（頂のそば rows[0] から口のそば rows[1] まで、角度 θ/π で。一列に plates 枚の、成体より大きな板、帯の幅 plateWidth）と、
+   * 櫛板の列8本（成体と同じ頂のそばから、口のそば rowEnd まで、角度 θ/π で。一列に plates 枚の、成体より大きな板、帯の幅 plateWidth）と、
    * 体の中から口の側へ出て風鈴の紐のように垂れる細い触手2本（±z の面）。
    * 育ち具合（段階の進み）につれて、shape の範囲で幼生の体から成体の形へ移り（口葉と耳状突起が育つ）、tentacles の範囲で触手が縮んでなくなる。
    * 触手：体の中の付け根 bulb と、体の外へ出る所 exit（どちらも θ/π）、付け根の深さ depth（面から軸へ、半径に対する割合）、
@@ -638,7 +638,7 @@ export const CTENO = {
     ry: 0.32,
     rx: 0.28,
     apple: { square: 0.8, taper: 0.15, dimple: 0.14, dimpleWidth: 0.42, bottom: 0.9 },
-    rows: [0.1, 0.82] as const,
+    rowEnd: 0.82,
     plates: 7,
     plateWidth: 0.05,
     shape: [0.15, 1] as const,
