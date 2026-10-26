@@ -1,6 +1,7 @@
 // 餌の粒（ブラインシュリンプの幼生）。スポイトの先から水の中へ出て、ふわっと広がってゆっくり沈み、ときどきぴくっと跳ねる。
 // 海月は緩むときに傘の下へ吸い込む流れで、近くの粒を縁へ寄せて捕まえ、しばらく縁で持ってから胃へ運ぶ。
 // ポリプは寄ってきた粒や、底に着いた粒を触手で拾って口へ運ぶ。
+// カブトクラゲの成体は、耳状突起の繊毛の流れで口葉のあいだへ粒を寄せて捕まえ、口から胴の中へ運ぶ。幼生は触手か体に触れた粒を捕まえる。
 // 誰がどれだけ食べるかは餌をやった瞬間に決まっている（sim）。ここではその数だけ粒を食べて見せ、胃に届くたびに胃の色を濃くする。
 // 食べられずに底へ着いた粒は、数分で薄れて消える。位置は餌をやった瓶の座標（その瓶の中心が原点）。
 import {
@@ -16,8 +17,9 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
-import { BELL, FOOD, JAR, WATER } from '../config';
+import { BELL, CTENO, FOOD, JAR, WATER } from '../config';
 import type { Rng } from '../sim/rng';
+import type { Ctenophore } from './cteno/ctenophore';
 import type { Jellyfish } from './jelly/jellyfish';
 import { angleDiff } from './jelly/individual';
 import type { Polyp } from './jelly/polyp';
@@ -40,13 +42,27 @@ const POUCH_RING = 0.087;
 const MIN_PULL = 0.05;
 const MIN_CATCH = 0.012;
 
-/** 見せ場で食べる個体（餌をやった瓶の全員）。泳ぐ個体なら jelly、瓶底の個体なら polyp */
+/** 見せ場で食べる個体（餌をやった瓶の全員）。ミズクラゲの泳ぐ個体なら jelly、カブトクラゲなら cteno、瓶底の個体なら polyp */
 export interface Eater {
   id: number;
   stomach: Stomach;
   jelly: Jellyfish | null;
+  cteno: Ctenophore | null;
   polyp: Polyp | null;
 }
+
+/** カブトクラゲごとに、1フレームに一度だけ求めておくもの */
+interface CtenoFrame {
+  eater: Eater;
+  cteno: Ctenophore;
+  inv: Matrix4;
+  /** 幼生の食べ方か */
+  larva: boolean;
+  /** ローカルの長さ 1 に当たる瓶の高さ */
+  scale: number;
+}
+
+const EAT = CTENO.eat;
 
 type State = 'free' | 'held' | 'carry' | 'absorb' | 'floor' | 'gone';
 
@@ -160,6 +176,7 @@ export class Food {
   private readonly info: Float32Array;
   private readonly geo: BufferGeometry;
   private readonly frames: SwimFrame[] = [];
+  private readonly ctenoFrames: CtenoFrame[] = [];
   private readonly byId = new Map<number, Eater>();
   private time = 0;
   private readonly local = new Vector3();
@@ -284,8 +301,19 @@ export class Food {
   private prepare(eaters: readonly Eater[]): void {
     this.byId.clear();
     let n = 0;
+    let nc = 0;
     for (const e of eaters) {
       this.byId.set(e.id, e);
+      if (e.cteno) {
+        let c = this.ctenoFrames[nc];
+        if (!c) this.ctenoFrames[nc] = c = { eater: e, cteno: e.cteno, inv: new Matrix4(), larva: false, scale: 1 };
+        c.eater = e;
+        c.cteno = e.cteno;
+        c.inv.copy(e.cteno.frame).invert();
+        c.larva = e.cteno.larvaAmount > 0.5;
+        c.scale = this.tmp.setFromMatrixScale(e.cteno.frame).x;
+        nc++;
+      }
       if (!e.jelly) continue;
       let f = this.frames[n];
       if (!f) {
@@ -302,6 +330,7 @@ export class Food {
       n++;
     }
     this.frames.length = n;
+    this.ctenoFrames.length = nc;
   }
 
   /** 漂う粒：沈み、跳ね、近くの海月の流れに寄せられ、触れたら捕まる。底に着いたら止まる */
@@ -374,6 +403,10 @@ export class Food {
         p.addScaledVector(target, (Math.min(speed * dt, len) / len));
       }
     }
+    for (const f of this.ctenoFrames) {
+      if (!f.eater.stomach.hungry) continue;
+      if (f.larva ? this.ctenoLarvaCatch(g, f, dt) : this.ctenoAdultCatch(g, f, dt)) return true;
+    }
     for (const e of this.byId.values()) {
       if (!e.polyp || !e.stomach.hungry) continue;
       const crown = e.polyp.top(this.tmp2);
@@ -425,6 +458,64 @@ export class Food {
     f.eater.stomach.catch();
   }
 
+  /** カブトクラゲの成体：口葉のあいだへ繊毛の流れで寄せ、入ったら捕まえる。捕まえたら true */
+  private ctenoAdultCatch(g: Grain, f: CtenoFrame, dt: number): boolean {
+    const q = this.local.copy(g.pos).applyMatrix4(f.inv);
+    const B = EAT.catchBox;
+    const C = EAT.bodyBox;
+    const inLobes = Math.abs(q.x) < B.x && Math.abs(q.z) < B.z && q.y > B.y[0] && q.y < B.y[1];
+    const onBody = Math.abs(q.x) < C.x && Math.abs(q.z) < C.z && q.y > C.y[0] && q.y < C.y[1];
+    if (inLobes || onBody) {
+      this.catchByCteno(g, f, q);
+      return true;
+    }
+    const [tx, ty, tz] = EAT.target;
+    const d = Math.hypot(q.x - tx, q.y - ty, q.z - tz);
+    const range = Math.max(EAT.pullRange, MIN_PULL / f.scale);
+    if (d > range || d < 1e-6) return false;
+    // 流れは口葉に近いほど強い（瓶の高さ単位の速さ。小さな個体ほど弱い）
+    const k = 1 - d / range;
+    const target = this.tmp.set(tx, ty, tz).applyMatrix4(f.cteno.frame).sub(g.pos);
+    const len = target.length();
+    const speed = EAT.pull * Math.max(f.scale / CTENO.length, 0.3) * k;
+    if (len > 1e-6) g.pos.addScaledVector(target, Math.min(speed * dt, len) / len);
+    return false;
+  }
+
+  /** カブトクラゲの幼生：触手か体に触れた粒を捕まえる。体のそばの粒は少し寄せる。捕まえたら true */
+  private ctenoLarvaCatch(g: Grain, f: CtenoFrame, dt: number): boolean {
+    const q = this.local.copy(g.pos).applyMatrix4(f.inv);
+    const cy = CTENO.larva.center;
+    const d = Math.hypot(q.x, q.y - cy, q.z);
+    if (d < EAT.larvaCatch || f.cteno.tentacleDistance(g.pos) < EAT.tentacleCatch) {
+      this.catchByCteno(g, f, q);
+      return true;
+    }
+    const near = (d * f.scale) / EAT.larvaPull;
+    if (near < 1) {
+      const target = this.tmp.set(0, cy, 0).applyMatrix4(f.cteno.frame).sub(g.pos);
+      const len = target.length();
+      const speed = EAT.pull * 0.4 * (1 - near);
+      if (len > 1e-6) g.pos.addScaledVector(target, Math.min(speed * dt, len) / len);
+    }
+    return false;
+  }
+
+  /** カブトクラゲが粒を捕まえた：捕まえた所から口を通って、胴の中の橙色の粒の所へ（体のローカル） */
+  private catchByCteno(g: Grain, f: CtenoFrame, q: Vector3): void {
+    const r = this.rng;
+    g.state = 'held';
+    g.t = 0;
+    g.dur = r.range(FOOD.holdSeconds[0], FOOD.holdSeconds[1]);
+    g.eater = f.eater.id;
+    g.vel.set(0, 0, 0);
+    g.a.copy(q);
+    const mouth = f.larva ? CTENO.larva.center - CTENO.larva.ry * 0.85 : EAT.mouth;
+    g.b.set(q.x * 0.2, mouth, q.z * 0.2);
+    f.cteno.speckLocal(Math.floor(r.next() * f.cteno.speckCount), g.c);
+    f.eater.stomach.catch();
+  }
+
   /** ポリプが粒を捕まえた：触手の冠へ寄せてから口へ運ぶ */
   private catchByPolyp(g: Grain, e: Eater): void {
     const polyp = e.polyp!;
@@ -470,9 +561,10 @@ export class Food {
   /** 捕まった粒：持っている → 胃へ運ぶ → 胃で見えなくなる。持ち主がいなくなったら、その場から漂いはじめる */
   private stepCaught(g: Grain): void {
     const e = this.byId.get(g.eater);
-    const jelly = e?.jelly ?? null;
+    // 泳ぐ個体（ミズクラゲ・カブトクラゲ）は体のローカル、ポリプは足もとからのずれ
+    const body = e?.jelly ?? e?.cteno ?? null;
     const polyp = e?.polyp ?? null;
-    if (!e || (!jelly && !polyp)) {
+    if (!e || (!body && !polyp)) {
       g.state = 'free';
       g.t = 0;
       g.alpha = 1;
@@ -503,7 +595,7 @@ export class Food {
       p.copy(g.c);
       g.alpha = 1 - ease(g.t / FOOD.absorbSeconds);
     }
-    if (jelly) g.pos.copy(p).applyMatrix4(jelly.frame);
+    if (body) g.pos.copy(p).applyMatrix4(body.frame);
     else g.pos.copy(p).add(polyp!.base);
   }
 

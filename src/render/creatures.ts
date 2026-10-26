@@ -361,10 +361,12 @@ export class Creatures {
     out.length = 0;
     for (const [id, v] of this.views) {
       if (v.kind === 'swimmer') {
-        // 餌の見せ場はミズクラゲの体だけ（カブトクラゲの食べ方はまだ作っていない）
-        if (!v.waiting && v.jelly instanceof Jellyfish) out.push({ id, stomach: v.jelly.stomach, jelly: v.jelly, polyp: null });
+        if (v.waiting) continue;
+        const jelly = v.jelly instanceof Jellyfish ? v.jelly : null;
+        const cteno = v.jelly instanceof Ctenophore ? v.jelly : null;
+        out.push({ id, stomach: v.jelly.stomach, jelly, cteno, polyp: null });
       } else {
-        out.push({ id, stomach: v.polyp.stomach, jelly: null, polyp: v.polyp });
+        out.push({ id, stomach: v.polyp.stomach, jelly: null, cteno: null, polyp: v.polyp });
       }
     }
     return out;

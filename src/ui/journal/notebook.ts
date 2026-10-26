@@ -340,7 +340,7 @@ export class Notebook {
       return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">${esc(leaf.page.title)}</h2><button type="button" class="to-journal">日誌へ</button></div>${rows}</div>`;
     }
     if (leaf.kind === 'speciesIndex') {
-      const list = leaf.entries.map((e) => `<button type="button" class="sp-index" data-species="${e.species}">${esc(e.title)}</button>`).join('');
+      const list = leaf.entries.map((e) => `<button type="button" class="sp-index" data-species="${e.species}"><span>${esc(e.title)}</span></button>`).join('');
       return `<div class="leaf-body"><div class="leaf-head"><h2 class="date">瓶に来た種</h2><button type="button" class="to-journal">日誌へ</button></div><div class="sp-index-list">${list}</div></div>`;
     }
     if (leaf.kind === 'species') {
